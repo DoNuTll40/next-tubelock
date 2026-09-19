@@ -9,88 +9,149 @@ const CHUNK_SIZE = 320 * 1024 * 32;
 
 /**
  * Extract client-side video metadata (duration, dimensions, resolution, thumbnail, exact fps)
+ * Fully compatible with Mobile browsers (iOS Safari / Android Chrome)
  */
 export async function extractVideoMetadata(file) {
-  // Parse MP4 container boxes in parallel for exact FPS
+  // Parse MP4 container boxes in parallel for exact FPS (with 800ms max timeout)
   let mp4Meta = null;
   try {
-    mp4Meta = await parseMp4Metadata(file);
+    const mp4Promise = parseMp4Metadata(file);
+    const mp4Timeout = new Promise((resolve) => setTimeout(() => resolve(null), 800));
+    mp4Meta = await Promise.race([mp4Promise, mp4Timeout]);
   } catch (_) {}
 
-  const detectedFps = mp4Meta?.fps || 60;
+  const detectedFps = mp4Meta?.fps || 30;
 
   return new Promise((resolve) => {
+    let isResolved = false;
+
+    const cleanup = (video, blobUrl) => {
+      try {
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        if (video) {
+          video.src = '';
+          video.remove();
+        }
+      } catch (_) {}
+    };
+
+    const safeResolve = (data, video, blobUrl) => {
+      if (isResolved) return;
+      isResolved = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      cleanup(video, blobUrl);
+      resolve(data);
+    };
+
     const video = document.createElement('video');
     video.preload = 'metadata';
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.setAttribute('muted', '');
 
-    const blobUrl = URL.createObjectURL(file);
-    video.src = blobUrl;
-
-    const cleanup = () => {
-      URL.revokeObjectURL(blobUrl);
-      video.remove();
-    };
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      resolve({
+    let blobUrl = '';
+    try {
+      blobUrl = URL.createObjectURL(file);
+      video.src = blobUrl;
+    } catch (err) {
+      safeResolve({
         duration: 0,
-        width: 1920,
-        height: 1080,
-        resolution: '1080p',
+        width: 0,
+        height: 0,
+        resolution: 'Original / Auto',
+        fps: detectedFps,
         thumbnailDataUrl: null,
-      });
-    }, 4000);
+      }, video, blobUrl);
+      return;
+    }
+
+    // 3. Timeout Fallback: 2.5 seconds (never block mobile uploads)
+    const timeoutId = setTimeout(() => {
+      safeResolve({
+        duration: 0,
+        width: 0,
+        height: 0,
+        resolution: 'Original / Auto',
+        fps: detectedFps,
+        thumbnailDataUrl: null,
+      }, video, blobUrl);
+    }, 2500);
 
     video.onloadedmetadata = () => {
-      const width = video.videoWidth || 1920;
-      const height = video.videoHeight || 1080;
+      const width = video.videoWidth || 0;
+      const height = video.videoHeight || 0;
       const duration = video.duration || 0;
-      const resolution = classifyResolution(width, height);
+      const resolution = (width && height) 
+        ? classifyResolution(width, height) 
+        : 'Original / Auto';
 
-      // Seek to 1s to capture a good thumbnail frame
-      video.currentTime = Math.min(1.0, duration > 2 ? 1.0 : 0.1);
-    };
+      // Seek to capture thumbnail, with safety timeout for mobile where onseeked might not fire
+      let seekTimeout = setTimeout(() => {
+        safeResolve({
+          duration,
+          width,
+          height,
+          resolution,
+          fps: detectedFps,
+          thumbnailDataUrl: null,
+        }, video, blobUrl);
+      }, 700);
 
-    video.onseeked = () => {
-      clearTimeout(timeout);
-      let thumbnailDataUrl = null;
+      video.onseeked = () => {
+        clearTimeout(seekTimeout);
+        let thumbnailDataUrl = null;
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.min(640, video.videoWidth || 640);
+          canvas.height = Math.round(canvas.width * ((video.videoHeight || 360) / (video.videoWidth || 640)));
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        } catch (e) {
+          console.warn('Canvas thumbnail capture error:', e);
+        }
+
+        safeResolve({
+          duration,
+          width,
+          height,
+          resolution,
+          fps: detectedFps,
+          thumbnailDataUrl,
+        }, video, blobUrl);
+      };
+
       try {
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.min(640, video.videoWidth || 640);
-        canvas.height = Math.round(canvas.width * ((video.videoHeight || 360) / (video.videoWidth || 640)));
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-      } catch (e) {
-        console.warn('Canvas thumbnail capture error:', e);
+        video.currentTime = Math.min(1.0, duration > 2 ? 1.0 : 0.1);
+      } catch (_) {
+        clearTimeout(seekTimeout);
+        safeResolve({
+          duration,
+          width,
+          height,
+          resolution,
+          fps: detectedFps,
+          thumbnailDataUrl: null,
+        }, video, blobUrl);
       }
-
-      cleanup();
-      resolve({
-        duration: video.duration || 0,
-        width: video.videoWidth || 1920,
-        height: video.videoHeight || 1080,
-        resolution: classifyResolution(video.videoWidth || 1920, video.videoHeight || 1080),
-        fps: detectedFps,
-        thumbnailDataUrl,
-      });
     };
 
     video.onerror = () => {
-      clearTimeout(timeout);
-      cleanup();
-      resolve({
+      safeResolve({
         duration: 0,
-        width: 1920,
-        height: 1080,
-        resolution: '1080p',
+        width: 0,
+        height: 0,
+        resolution: 'Original / Auto',
         fps: detectedFps,
         thumbnailDataUrl: null,
-      });
+      }, video, blobUrl);
     };
+
+    // 1. Force load() for mobile browsers (iOS Safari / Android Chrome)
+    try {
+      video.load();
+    } catch (_) {}
   });
 }
 

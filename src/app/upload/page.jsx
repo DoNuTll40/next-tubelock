@@ -168,12 +168,37 @@ export default function UploadPage() {
 
     addLog(`เลือกไฟล์: "${selectedFile.name}" (${sizeFormatted})`);
 
+    // Instant default fallback: never block user from uploading on mobile
+    const detectedMime = selectedFile.type || (
+      selectedFile.name.toLowerCase().endsWith('.mov') ? 'video/quicktime' :
+      selectedFile.name.toLowerCase().endsWith('.mkv') ? 'video/x-matroska' : 'video/mp4'
+    );
+
+    setFileDetails({
+      name: selectedFile.name,
+      sizeFormatted,
+      sizeBytes: selectedFile.size,
+      width: 0,
+      height: 0,
+      resolution: 'Original / Auto',
+      aspectRatio: 'Auto',
+      durationSec: 0,
+      durationFormatted: '0:00',
+      approxBitrate: 'คำนวณตอน Transcode',
+      fps: 30,
+      codec: 'Source / H.264',
+      mimeType: detectedMime,
+      lastModified: lastModifiedDate,
+    });
+
     try {
       const meta = await extractVideoMetadata(selectedFile);
       const dur = Math.round(meta.duration || 0);
-      const w = meta.width || 1920;
-      const h = meta.height || 1080;
-      const resLabel = meta.resolution || (h >= 2160 ? '4K UHD' : h >= 1080 ? '1080p FHD' : h >= 720 ? '720p HD' : '480p SD');
+      const w = meta.width || 0;
+      const h = meta.height || 0;
+      const resLabel = (w && h)
+        ? (meta.resolution || (h >= 2160 ? '4K UHD' : h >= 1080 ? '1080p FHD' : h >= 720 ? '720p HD' : '480p SD'))
+        : 'Original / Auto';
       const bitrateNum = dur > 0 ? ((selectedFile.size * 8) / dur / 1000000).toFixed(2) : '0';
 
       setFileDetails({
@@ -182,14 +207,14 @@ export default function UploadPage() {
         sizeBytes: selectedFile.size,
         width: w,
         height: h,
-        resolution: `${w} x ${h} (${resLabel})`,
-        aspectRatio: calculateAspectRatio(w, h),
+        resolution: (w && h) ? `${w} x ${h} (${resLabel})` : 'Original / Auto',
+        aspectRatio: (w && h) ? calculateAspectRatio(w, h) : 'Auto',
         durationSec: dur,
         durationFormatted: formatDuration(dur),
-        approxBitrate: `${bitrateNum} Mbps`,
-        fps: meta.fps || 60,
-        codec: 'AVC1 / H.264',
-        mimeType: selectedFile.type || 'video/mp4',
+        approxBitrate: dur > 0 ? `${bitrateNum} Mbps` : 'คำนวณตอน Transcode',
+        fps: meta.fps || 30,
+        codec: 'AVC1 / H.264 / Source',
+        mimeType: detectedMime,
         lastModified: lastModifiedDate,
       });
 
@@ -197,24 +222,13 @@ export default function UploadPage() {
         setThumbnailUrl(meta.thumbnailDataUrl);
       }
 
-      addLog(`วิเคราะห์ข้อมูลวิดีโอ: ${w}x${h} [${resLabel}], ${meta.fps || 60} fps, ความยาว ${formatDuration(dur)}, บิตเรตโดยประมาณ ${bitrateNum} Mbps`);
+      if (w && h) {
+        addLog(`วิเคราะห์ข้อมูลวิดีโอ: ${w}x${h} [${resLabel}], ความยาว ${formatDuration(dur)}`);
+      } else {
+        addLog(`โหมด Mobile Auto Metadata (ส่งต่อให้ ffprobe บน Cloud Runner วิเคราะห์สเปกแท้จริง)`);
+      }
     } catch {
-      setFileDetails({
-        name: selectedFile.name,
-        sizeFormatted,
-        sizeBytes: selectedFile.size,
-        width: 1920,
-        height: 1080,
-        resolution: '1920 x 1080 (1080p)',
-        aspectRatio: '16:9 Widescreen',
-        durationSec: 0,
-        durationFormatted: '0:00',
-        approxBitrate: '-',
-        fps: 60,
-        codec: 'H.264',
-        mimeType: selectedFile.type || 'video/mp4',
-        lastModified: lastModifiedDate,
-      });
+      addLog(`เข้าสู่โหมดอัปโหลดทันที (การวิเคราะห์สเปกวิดีโอจะทำบน Cloud ตอน Transcode)`);
     }
   };
 
@@ -628,7 +642,7 @@ export default function UploadPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="video/mp4,video/quicktime,video/x-matroska"
+                accept="video/mp4,video/quicktime,video/x-matroska,.mov,.mkv,.mp4,video/*"
                 onChange={(e) => handleFile(e.target.files?.[0])}
                 className="hidden"
               />
@@ -638,10 +652,10 @@ export default function UploadPage() {
               </div>
 
               <h2 className="text-base font-bold text-[#212529]">
-                ลากไฟล์วิดีโอมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์จากคอมพิวเตอร์
+                ลากไฟล์วิดีโอมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์ (คอมพิวเตอร์และมือถือ)
               </h2>
               <p className="text-xs text-[#8C857B] mt-1 max-w-md">
-                รองรับไฟล์ .mp4, .mov, .mkv ทุกขนาด ระบบจะส่งตรงเข้า OneDrive Business ด้วยความเร็วอินเทอร์เน็ตเต็มสปีด
+                รองรับไฟล์ .mp4, .mov, .mkv และวิดีโอจากมือถือทุกรูปแบบ (iOS / Android) ระบบจะส่งตรงเข้า OneDrive Business ด้วยความเร็วอินเทอร์เน็ตเต็มสปีด
               </p>
             </div>
           )}
