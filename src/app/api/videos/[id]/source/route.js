@@ -2,92 +2,154 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+// High-speed In-Memory Cache (Global across server restarts/HMR in dev)
+// OneDrive download tokens are valid for multiple hours; cache for 60 minutes.
+const sourceCache = globalThis.__tubelock_source_cache || (globalThis.__tubelock_source_cache = new Map());
+const inFlightRequests = globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
+
 /**
  * GET /api/videos/[id]/source
- * Resolves direct playback URL from OneDrive via Azure Client Secret (No Login Required!)
+ * Resolves direct playback URL from OneDrive via Azure Client Secret with 0ms in-memory cache & request coalescing
  */
 export async function GET(request, context) {
   try {
     const { id } = await context.params;
-    const sql = getDb();
-
-    const rows = await sql`SELECT * FROM videos WHERE id = ${id} LIMIT 1;`;
-    if (!rows || rows.length === 0) {
-      return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404 });
+    if (!id) {
+      return NextResponse.json({ success: false, error: 'Video ID is required' }, { status: 400 });
     }
 
-    const video = rows[0];
+    const cacheKey = String(id);
 
-    // Check if video is still being processed
-    if (video.status && video.status !== 'READY') {
-      return NextResponse.json({
-        success: false,
-        status: video.status,
-        progress: video.transcode_progress || 0,
-        stageDetail: video.stage_detail || '',
-        errorMessage: video.error_message || '',
-        video,
-        error: video.status === 'FAILED'
-          ? `การแปลงวิดีโอล้มเหลว: ${video.error_message || 'ไม่ทราบสาเหตุ'}`
-          : `วิดีโอนี้อยู่ในสถานะ "${video.status}" (${video.stage_detail || 'กำลังประมวลผล'}) กรุณารอสักครู่`,
-      }, { status: 422 });
+    // ⚡ 1. Ultra-fast Cache Hit (<1ms)
+    const cached = sourceCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return NextResponse.json(cached.data);
     }
 
-    const token = await getGraphToken();
-    const driveId = await getUserDriveId(token);
+    // ⚡ 2. In-Flight Request Deduplication (prevents parallel duplicate calls from React StrictMode)
+    if (inFlightRequests.has(cacheKey)) {
+      const data = await inFlightRequests.get(cacheKey);
+      if (data?.status && data.status !== 'READY' && !data.success) {
+        return NextResponse.json(data, { status: 422 });
+      }
+      return NextResponse.json(data);
+    }
 
-    // Case 1: HLS Stream Folder
-    if (video.source_type === 'hls' || video.onedrive_folder_id) {
-      const folderId = video.onedrive_folder_id || video.onedrive_item_id;
+    // ⚡ 3. Cold Fetch with Promise Coalescing
+    const fetchPromise = (async () => {
+      const sql = getDb();
+
+      const rows = await sql`SELECT * FROM videos WHERE id = ${id} LIMIT 1;`;
+      if (!rows || rows.length === 0) {
+        throw new Error('Video not found');
+      }
+
+      const video = rows[0];
+
+      // Check if video is still being processed
+      if (video.status && video.status !== 'READY') {
+        return {
+          success: false,
+          status: video.status,
+          progress: video.transcode_progress || 0,
+          stageDetail: video.stage_detail || '',
+          errorMessage: video.error_message || '',
+          video,
+          error: video.status === 'FAILED'
+            ? `การแปลงวิดีโอล้มเหลว: ${video.error_message || 'ไม่ทราบสาเหตุ'}`
+            : `วิดีโอนี้อยู่ในสถานะ "${video.status}" (${video.stage_detail || 'กำลังประมวลผล'}) กรุณารอสักครู่`,
+        };
+      }
+
+      const token = await getGraphToken();
+      const driveId = await getUserDriveId(token);
+
+      // Case 1: HLS Stream Folder
+      if (video.source_type === 'hls' || video.onedrive_folder_id) {
+        const folderId = video.onedrive_folder_id || video.onedrive_item_id;
+        let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$top=1000`;
+        const allItems = [];
+
+        while (nextUrl) {
+          const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) {
+            throw new Error(`Failed to read HLS folder from OneDrive (${res.status})`);
+          }
+          const data = await res.json();
+          if (Array.isArray(data.value)) {
+            allItems.push(...data.value);
+          }
+          nextUrl = data['@odata.nextLink'] || null;
+        }
+
+        const resultData = {
+          success: true,
+          type: 'hls',
+          video,
+          items: allItems.map(i => ({
+            name: i.name,
+            downloadUrl: i['@microsoft.graph.downloadUrl'],
+          })),
+        };
+
+        // Cache for 60 minutes
+        sourceCache.set(cacheKey, {
+          data: resultData,
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        });
+
+        return resultData;
+      }
+
+      // Case 2: Standalone Video File (MP4, MKV, etc.)
+      const itemId = video.onedrive_item_id;
       const res = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?select=id,name,@microsoft.graph.downloadUrl`,
+        `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}?select=id,@microsoft.graph.downloadUrl`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
       if (!res.ok) {
-        throw new Error(`Failed to read HLS folder from OneDrive (${res.status})`);
+        throw new Error(`Failed to fetch video download link from OneDrive (${res.status})`);
       }
 
       const data = await res.json();
-      const items = data.value || [];
+      const downloadUrl = data['@microsoft.graph.downloadUrl'];
 
-      // Return items with their authenticated download URLs so client player can stream
-      return NextResponse.json({
+      const resultData = {
         success: true,
-        type: 'hls',
+        type: 'mp4',
+        url: downloadUrl,
         video,
-        items: items.map(i => ({
-          name: i.name,
-          downloadUrl: i['@microsoft.graph.downloadUrl'],
-        })),
+      };
+
+      // Cache for 60 minutes
+      sourceCache.set(cacheKey, {
+        data: resultData,
+        expiresAt: Date.now() + 60 * 60 * 1000,
       });
+
+      return resultData;
+    })();
+
+    inFlightRequests.set(cacheKey, fetchPromise);
+
+    try {
+      const data = await fetchPromise;
+      if (data?.status && data.status !== 'READY' && !data.success) {
+        return NextResponse.json(data, { status: 422 });
+      }
+      return NextResponse.json(data);
+    } finally {
+      inFlightRequests.delete(cacheKey);
     }
-
-    // Case 2: Standalone Video File (MP4, MKV, etc.)
-    const itemId = video.onedrive_item_id;
-    const res = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}?select=id,@microsoft.graph.downloadUrl`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (!res.ok) {
-      throw new Error(`Failed to fetch video download link from OneDrive (${res.status})`);
-    }
-
-    const data = await res.json();
-    const downloadUrl = data['@microsoft.graph.downloadUrl'];
-
-    return NextResponse.json({
-      success: true,
-      type: 'mp4',
-      url: downloadUrl,
-      video,
-    });
   } catch (err) {
     console.error('[API_VIDEO_SOURCE_ERROR]:', err);
     return NextResponse.json(
       { success: false, error: err.message },
-      { status: 500 }
+      { status: err.message === 'Video not found' ? 404 : 500 }
     );
   }
 }

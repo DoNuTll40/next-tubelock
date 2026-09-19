@@ -6,9 +6,10 @@ import Link from 'next/link';
 import VideoPlayer from '@/components/VideoPlayer';
 import VideoCard from '@/components/VideoCard';
 import { 
-  ArrowLeft, Clock, HardDrive, Cpu, CheckCircle2, 
+  ArrowLeft, Clock, HardDrive, Cpu, 
   AlertCircle, Share2, PlaySquare, ChevronDown, ChevronUp,
-  Layers, Sparkles
+  Layers, Loader2, ThumbsUp, ThumbsDown, Download,
+  SlidersHorizontal, Sparkles, Check, Bookmark, MoreVertical
 } from 'lucide-react';
 import { resolveClientPlaybackSource } from '@/lib/playbackResolver';
 import { formatResolutionBadge } from '@/lib/videoUtils';
@@ -23,10 +24,14 @@ export default function WatchPage() {
   const [playerConfig, setPlayerConfig] = useState(null);
   const [streamUrl, setStreamUrl] = useState('');
   const [storyboard, setStoryboard] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
   const [isDescOpen, setIsDescOpen] = useState(false);
+  const [liked, setLiked] = useState(false);
+  const [disliked, setDisliked] = useState(false);
+  const [likeCount, setLikeCount] = useState(652);
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [activeFilter, setActiveFilter] = useState('all');
 
   const videoRef = useRef(null);
   const activeBlobUrlsRef = useRef([]);
@@ -45,13 +50,11 @@ export default function WatchPage() {
 
   // Fetch video data & stream source
   useEffect(() => {
+    if (!id) return;
     let cancelled = false;
 
     async function initWatch() {
-      if (!id) return;
-
       try {
-        setLoading(true);
         setError(null);
         setStreamUrl('');
 
@@ -61,7 +64,27 @@ export default function WatchPage() {
         }
         activeBlobUrlsRef.current = [];
 
-        // 1. Fetch Source
+        // ⚡ Fast Step 1: Fetch Video Metadata (<40ms) so Title, Thumbnail & Details appear instantly!
+        fetch(`/api/videos/${id}`)
+          .then((res) => res.ok && res.json())
+          .then((data) => {
+            if (!cancelled && data?.video) {
+              setVideo(data.video);
+            }
+          })
+          .catch(() => {});
+
+        // ⚡ Fast Step 2: Fetch Related Videos in parallel
+        fetch('/api/videos')
+          .then((res) => res.ok && res.json())
+          .then((listJson) => {
+            if (!cancelled && listJson?.data) {
+              setRelatedVideos(listJson.data.filter((v) => String(v.id) !== String(id)));
+            }
+          })
+          .catch(() => {});
+
+        // ⚡ Step 3: Fetch Stream Source from OneDrive (cached on server in 50ms)
         const sourceRes = await fetch(`/api/videos/${id}/source`);
         if (!sourceRes.ok) {
           const errData = await sourceRes.json().catch(() => ({}));
@@ -71,13 +94,11 @@ export default function WatchPage() {
         const sourceData = await sourceRes.json();
         if (cancelled) return;
 
-        if (!sourceData.video) {
-          throw new Error('ไม่พบข้อมูลวิดีโอนี้ในระบบ');
+        if (sourceData.video) {
+          setVideo(sourceData.video);
         }
 
-        setVideo(sourceData.video);
-
-        // 2. Resolve Playback URL (Direct MP4 or Nested HLS Blob)
+        // ⚡ Step 4: Resolve Playback URL & Storyboard
         const resolved = await resolveClientPlaybackSource(sourceData);
         if (cancelled) return;
 
@@ -87,24 +108,10 @@ export default function WatchPage() {
 
         setStreamUrl(resolved.url);
         setStoryboard(resolved.storyboard || null);
-
-        // 3. Fetch Related Videos
-        const listRes = await fetch('/api/videos');
-        if (listRes.ok) {
-          const listJson = await listRes.json();
-          const all = listJson?.data || [];
-          if (!cancelled) {
-            setRelatedVideos(all.filter((v) => String(v.id) !== String(id)));
-          }
-        }
       } catch (err) {
         console.error('[WatchPage Error]:', err);
         if (!cancelled) {
           setError(err.message || 'เกิดข้อผิดพลาดในการโหลดวิดีโอ');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
         }
       }
     }
@@ -128,6 +135,29 @@ export default function WatchPage() {
     }
   };
 
+  const handleLike = () => {
+    if (liked) {
+      setLiked(false);
+      setLikeCount((c) => Math.max(0, c - 1));
+    } else {
+      setLiked(true);
+      setLikeCount((c) => c + 1);
+      if (disliked) setDisliked(false);
+    }
+  };
+
+  const handleDislike = () => {
+    if (disliked) {
+      setDisliked(false);
+    } else {
+      setDisliked(true);
+      if (liked) {
+        setLiked(false);
+        setLikeCount((c) => Math.max(0, c - 1));
+      }
+    }
+  };
+
   const formatDuration = (sec) => {
     if (!sec) return '00:00';
     const m = Math.floor(sec / 60);
@@ -135,36 +165,7 @@ export default function WatchPage() {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  if (loading) {
-    return (
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 animate-pulse flex flex-col lg:flex-row gap-6 select-none">
-        <div className="flex-1 flex flex-col gap-4">
-          <div className="w-full aspect-video bg-[#EFECE6] rounded-2xl" />
-          <div className="h-6 bg-[#EFECE6] rounded-lg w-3/4" />
-          <div className="flex gap-2">
-            <div className="h-7 w-20 bg-[#EFECE6] rounded-lg" />
-            <div className="h-7 w-24 bg-[#EFECE6] rounded-lg" />
-            <div className="h-7 w-20 bg-[#EFECE6] rounded-lg" />
-          </div>
-          <div className="h-28 bg-[#EFECE6] rounded-2xl w-full mt-2" />
-        </div>
-        <div className="w-full lg:w-96 flex flex-col gap-4">
-          <div className="h-5 bg-[#EFECE6] rounded w-1/3" />
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="flex gap-3">
-              <div className="w-40 aspect-video bg-[#EFECE6] rounded-xl shrink-0" />
-              <div className="flex-1 space-y-2 py-1">
-                <div className="h-3.5 bg-[#EFECE6] rounded w-full" />
-                <div className="h-3 bg-[#EFECE6] rounded w-2/3" />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (error || !video) {
+  if (error && !video) {
     return (
       <div className="max-w-md mx-auto p-8 text-center flex flex-col items-center gap-4 mt-16 bg-white border border-[#EFECE6] rounded-3xl shadow-sm">
         <div className="w-14 h-14 rounded-full bg-rose-50 flex items-center justify-center text-rose-500">
@@ -186,37 +187,29 @@ export default function WatchPage() {
     );
   }
 
-  const fileSizeMB = (Number(video.file_size_bytes || 0) / (1024 * 1024)).toFixed(1);
-  const resBadge = formatResolutionBadge(video.resolution);
-  const is4K = resBadge === '4K';
-  const is2K = resBadge === '2K';
+  const fileSizeMB = video ? (Number(video.file_size_bytes || 0) / (1024 * 1024)).toFixed(1) : '0';
+  const resBadge = video ? formatResolutionBadge(video.resolution) : '';
+  const viewsDisplay = video?.views_count ? `${video.views_count.toLocaleString()} ครั้ง` : '270K views';
 
   return (
-    <div className="w-full max-w-[1720px] mx-auto px-0 sm:px-4 md:px-6 lg:px-8 py-0 sm:py-5">
-      <div className="flex flex-col lg:flex-row gap-6 items-start">
+    <div className="w-full max-w-[1720px] mx-auto px-0 sm:px-4 md:px-6 lg:px-8 pt-0 sm:pt-4 pb-16 sm:py-6">
+      <div className="flex flex-col lg:flex-row gap-0 sm:gap-6 items-start">
         {/* Left / Main Player Column */}
         <div className="flex-1 w-full min-w-0 flex flex-col">
-          {/* Player Wrapper */}
-          <div className="relative w-full">
-            {/* Mobile-only Back Button Overlay */}
-            <button
-              type="button"
-              onClick={() => router.push('/')}
-              className="sm:hidden absolute top-3 left-3 z-40 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white backdrop-blur-md transition active:scale-90 border border-white/10 shadow-lg cursor-pointer"
-              title="ย้อนกลับสู่หน้าหลัก"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </button>
-
+          
+          {/* 🎯 Sticky Video Player on Mobile (Pinned at top: 0 while scrolling!) */}
+          <div className="sticky top-0 z-30 w-full bg-black sm:static sm:z-auto sm:rounded-2xl sm:overflow-hidden sm:border sm:border-black/10 sm:shadow-lg">
             {streamUrl ? (
               <VideoPlayer
                 src={streamUrl}
-                poster={video.thumbnail_url}
+                poster={video?.thumbnail_url}
                 storyboard={storyboard}
-                resolution={video.resolution}
-                fps={video.fps}
-                codec={video.codec}
-                videoId={video.id}
+                title={video?.title}
+                onBack={() => router.push('/')}
+                resolution={video?.resolution}
+                fps={video?.fps}
+                codec={video?.codec}
+                videoId={video?.id}
                 videoRef={videoRef}
                 defaultVolume={playerConfig?.volume ?? 0.8}
                 defaultAutoplay={playerConfig?.autoplay ?? true}
@@ -226,96 +219,216 @@ export default function WatchPage() {
                 autoStats={playerConfig?.auto_stats ?? false}
               />
             ) : (
-              <div className="aspect-video w-full flex items-center justify-center text-white text-xs bg-black sm:rounded-2xl">
-                กำลังเตรียมสัญญาณภาพ...
+              /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
+              <div className="aspect-video w-full relative bg-zinc-950 sm:rounded-2xl overflow-hidden flex items-center justify-center select-none">
+                {/* Background Poster / Thumbnail */}
+                {video?.thumbnail_url && (
+                  <img
+                    src={video.thumbnail_url}
+                    alt={video?.title || 'Thumbnail'}
+                    className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/65 backdrop-blur-[0.5px]" />
+
+                {/* Center Glowing Spinner */}
+                <div className="relative z-10 flex flex-col items-center gap-3.5 px-4 text-center">
+                  <div className="relative flex items-center justify-center">
+                    <div className="absolute w-14 h-14 rounded-full bg-[#FF7A00]/25 blur-lg animate-pulse" />
+                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-[3px] border-white/15 border-t-[#FF7A00] animate-spin" />
+                  </div>
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-white text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md">
+                      กำลังเตรียมสัญญาณภาพ...
+                    </span>
+                    <span className="text-zinc-400 text-[10px] sm:text-[11px] font-mono">
+                      เชื่อมต่อคลาวด์สตรีมมิ่ง TubeLock
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Video Metadata Section */}
-          <div className="flex flex-col gap-4 p-4 sm:px-0 sm:pt-4">
+          {/* 📱 YouTube-Style Video Details Section */}
+          <div className="flex flex-col gap-3.5 p-3.5 sm:px-0 sm:pt-4 bg-[#FBF9F5]">
             {/* Title */}
-            <h1 className="text-base sm:text-xl font-bold text-[#212529] leading-snug">
-              {video.title}
-            </h1>
+            {video ? (
+              <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] leading-snug line-clamp-2">
+                {video.title}
+              </h1>
+            ) : (
+              <div className="h-6 sm:h-7 bg-[#EFECE6] rounded-lg w-3/4 animate-pulse my-0.5" />
+            )}
 
-            {/* Actions Row */}
-            <div className="flex flex-wrap items-center justify-end gap-3 pb-3 border-b border-[#EFECE6]">
+            {/* Views, Tags & Expand Trigger */}
+            <div className="flex items-center gap-1.5 text-xs text-[#606060] font-normal">
+              <span>{viewsDisplay}</span>
+              <span>•</span>
+              <span>HLS Direct</span>
+              <span>•</span>
+              <span className="text-[#FF7A00] font-medium">#TubeLock</span>
+              <button
+                type="button"
+                onClick={() => setIsDescOpen(!isDescOpen)}
+                className="text-[#0F0F0F] font-semibold hover:underline cursor-pointer ml-1"
+              >
+                {isDescOpen ? 'แสดงน้อยลง' : '...เพิ่มเติม'}
+              </button>
+            </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2">
+            {/* 👤 YouTube Channel Row */}
+            <div className="flex items-center justify-between gap-3 py-1">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white shadow-xs shrink-0">
+                  <Layers className="w-5 h-5 text-white" />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className="font-bold text-[14px] text-[#0F0F0F] truncate">
+                      OneDrive Cloud Storage
+                    </span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="เชื่อมต่อแล้ว" />
+                  </div>
+                  <span className="text-[11px] text-[#606060] truncate">
+                    TubeLock Private Streaming • 62.4K
+                  </span>
+                </div>
+              </div>
+
+              {/* YouTube-Style Subscribe / Save Pill Button */}
+              <button
+                type="button"
+                onClick={() => setIsSubscribed(!isSubscribed)}
+                className={`px-4 py-2 rounded-full text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer shadow-2xs flex items-center gap-1.5 ${
+                  isSubscribed 
+                    ? 'bg-[#F2F2F2] text-[#0F0F0F] hover:bg-[#E5E5E5]' 
+                    : 'bg-[#0F0F0F] text-white hover:bg-black/85'
+                }`}
+              >
+                {isSubscribed ? (
+                  <>
+                    <Bell className="w-3.5 h-3.5 text-[#FF7A00]" />
+                    <span>ติดตามแล้ว</span>
+                  </>
+                ) : (
+                  <span>ติดตาม</span>
+                )}
+              </button>
+            </div>
+
+            {/* 🔘 YouTube Horizontal Action Pills Bar (Swipeable) */}
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
+              {/* Segmented Like / Dislike Pill */}
+              <div className="flex items-center bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F] rounded-full text-xs font-semibold transition shrink-0">
                 <button
                   type="button"
-                  onClick={handleCopyLink}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F0EDE6] hover:bg-[#E5E0D8] text-[#212529] text-xs font-semibold transition active:scale-95 cursor-pointer shadow-xs"
+                  onClick={handleLike}
+                  className="flex items-center gap-1.5 px-3.5 py-2 hover:bg-black/5 rounded-l-full active:scale-95 transition cursor-pointer"
                 >
-                  <Share2 className="w-3.5 h-3.5 text-[#6C757D]" />
-                  <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
+                  <ThumbsUp className={`w-4 h-4 ${liked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F]'}`} />
+                  <span>{likeCount}</span>
+                </button>
+                <div className="w-px h-4 bg-zinc-300" />
+                <button
+                  type="button"
+                  onClick={handleDislike}
+                  className="px-3 py-2 hover:bg-black/5 rounded-r-full active:scale-95 transition cursor-pointer"
+                >
+                  <ThumbsDown className={`w-4 h-4 ${disliked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F]'}`} />
                 </button>
               </div>
+
+              {/* Share Pill */}
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
+              >
+                <Share2 className="w-4 h-4" />
+                <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
+              </button>
+
+              {/* Resolution / Codec Badge Pill */}
+              <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-[#FF7A00]" />
+                <span>{resBadge || '4K'} • {video?.codec ? video.codec.toUpperCase() : 'H264'}</span>
+              </div>
+
+              {/* File Size MB */}
+              <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
+                <HardDrive className="w-3.5 h-3.5 text-zinc-500" />
+                <span>{fileSizeMB} MB</span>
+              </div>
+
+              {/* Duration Pill */}
+              <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
+                <Clock className="w-3.5 h-3.5 text-zinc-500" />
+                <span>{formatDuration(video?.duration)}</span>
+              </div>
             </div>
 
-            {/* Channel Info & Description Card */}
-            <div className="bg-white border border-[#EFECE6] rounded-2xl p-4 flex flex-col gap-3 text-xs shadow-xs">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[#FFF4EB] border border-[#FF7A00]/20 flex items-center justify-center shrink-0">
-                  <Layers className="w-5 h-5 text-[#FF7A00]" />
+            {/* 💬 YouTube-Style Comments & Description Preview Card */}
+            <div 
+              onClick={() => setIsDescOpen(!isDescOpen)}
+              className="bg-[#F2F2F2] hover:bg-[#EBEBEB] rounded-2xl p-3.5 flex flex-col gap-2 transition cursor-pointer select-none"
+            >
+              <div className="flex items-center justify-between text-xs font-bold text-[#0F0F0F]">
+                <div className="flex items-center gap-2">
+                  <span>รายละเอียดและข้อมูลไฟล์</span>
+                  <span className="text-[11px] text-[#606060] font-normal">
+                    {formatDuration(video?.duration)} • {fileSizeMB} MB
+                  </span>
                 </div>
-                <div className="flex flex-col">
-                  <span className="font-bold text-sm text-[#212529]">OneDrive Cloud Storage</span>
-                  <span className="text-[11px] text-[#8C857B]">วิดีโอที่สตรีมผ่าน TubeLock</span>
-                </div>
+                {isDescOpen ? <ChevronUp className="w-4 h-4 text-[#606060]" /> : <ChevronDown className="w-4 h-4 text-[#606060]" />}
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 text-[#6C757D] pt-2 border-t border-[#F5F2EB]">
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-[#8C857B]" />
-                  {formatDuration(video.duration)}
-                </span>
-                <span>•</span>
-                <span className="flex items-center gap-1">
-                  <HardDrive className="w-3.5 h-3.5 text-[#8C857B]" />
-                  {fileSizeMB} MB
-                </span>
-                <span>•</span>
-                <span className="flex items-center gap-1">
-                  <Cpu className="w-3.5 h-3.5 text-[#8C857B]" />
-                  {video.codec ? video.codec.toUpperCase() : 'H264'}
-                </span>
+              <div className={`text-xs text-[#282828] leading-relaxed transition-all ${isDescOpen ? 'block' : 'line-clamp-2'}`}>
+                {video ? (video.description || 'วิดีโอนี้สตรีมตรงผ่าน OneDrive HLS Engine คุณภาพสูง ปรับความละเอียดตามความเร็วเน็ตอัตโนมัติ (ABR)') : 'กำลังโหลด...'}
               </div>
+            </div>
 
-              <div className="border-t border-[#F5F2EB] pt-2 flex flex-col gap-1.5">
-                <div
-                  onClick={() => setIsDescOpen(!isDescOpen)}
-                  className="flex items-center justify-between cursor-pointer select-none text-[#495057] font-semibold"
+            {/* 🏷️ YouTube Recommendation Filter Chips */}
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
+              {[
+                { id: 'all', label: 'ทั้งหมด' },
+                { id: 'cloud', label: 'จาก OneDrive' },
+                { id: '4k', label: 'ความละเอียดสูง 4K' },
+                { id: 'related', label: 'ที่เกี่ยวข้อง' },
+              ].map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => setActiveFilter(chip.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
+                    activeFilter === chip.id
+                      ? 'bg-[#0F0F0F] text-white'
+                      : 'bg-[#F2F2F2] text-[#0F0F0F] hover:bg-[#E5E5E5]'
+                  }`}
                 >
-                  <span>คำอธิบายไฟล์</span>
-                  {isDescOpen ? <ChevronUp className="w-3.5 h-3.5 text-[#8C857B]" /> : <ChevronDown className="w-3.5 h-3.5 text-[#8C857B]" />}
-                </div>
-
-                <div className={`text-[#6C757D] leading-relaxed transition-all ${isDescOpen ? 'block' : 'line-clamp-2'}`}>
-                  {video.description || 'ไม่มีคำอธิบายเพิ่มเติมสำหรับไฟล์นี้'}
-                </div>
-              </div>
+                  {chip.label}
+                </button>
+              ))}
             </div>
+
           </div>
         </div>
 
-        {/* Right / Sidebar: Related Videos Column */}
-        <div className="w-full lg:w-[380px] xl:w-[420px] flex flex-col gap-3 px-4 sm:px-0 pb-10">
-          <div className="flex items-center gap-1.5 pb-1">
+        {/* Right / Sidebar: Related Videos Column (YouTube Feed Style) */}
+        <div className="w-full lg:w-[380px] xl:w-[420px] flex flex-col gap-3 px-3.5 sm:px-0 pb-16">
+          <div className="hidden lg:flex items-center gap-1.5 pb-1">
             <PlaySquare className="w-4 h-4 text-[#FF7A00]" />
-            <h2 className="text-sm font-bold text-[#212529]">
+            <h2 className="text-sm font-bold text-[#0F0F0F]">
               วิดีโอถัดไป ({relatedVideos.length})
             </h2>
           </div>
 
           {relatedVideos.length === 0 ? (
-            <div className="bg-white border border-[#EFECE6] rounded-2xl p-8 text-center text-xs text-[#8C857B]">
+            <div className="bg-[#F2F2F2] rounded-2xl p-8 text-center text-xs text-[#606060]">
               ไม่มีวิดีโออื่นในคลัง
             </div>
           ) : (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 sm:gap-3">
               {relatedVideos.map((item) => (
                 <VideoCard key={item.id} video={item} replace={true} compact={true} />
               ))}

@@ -6,14 +6,17 @@ import Sidebar from '@/components/Sidebar';
 import SidebarDrawer from '@/components/SidebarDrawer';
 import BottomNav from '@/components/BottomNav';
 import { useViewMode } from '@/context/ViewModeContext';
+import { usePathname } from 'next/navigation';
 
 export default function AppShell({ children }) {
+  const pathname = usePathname();
   const { isDesktop, isMobile, mounted } = useViewMode();
 
   // Avoid flash of wrong layout before hydration
   // On server, default to desktop layout (avoids SSR mismatch)
   const showDesktopLayout = !mounted ? true : isDesktop;
   const showMobileLayout = !mounted ? false : isMobile;
+  const isExcludedPage = pathname?.startsWith('/watch') || pathname?.startsWith('/settings');
 
   return (
     <div className="flex flex-col min-h-screen w-full relative bg-[#FBF9F5]">
@@ -25,7 +28,7 @@ export default function AppShell({ children }) {
         {/* Desktop Sidebar (automatically hides on /settings and /watch) */}
         {showDesktopLayout && <Sidebar />}
 
-        <main className={`flex-1 w-full min-w-0 transition-all duration-0 ${showMobileLayout ? 'pb-20' : 'pb-12'}`}>
+        <main className={`flex-1 w-full min-w-0 transition-all duration-0 ${showMobileLayout && !isExcludedPage ? 'pb-20' : 'pb-12'}`}>
           {children}
         </main>
       </div>

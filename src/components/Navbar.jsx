@@ -54,8 +54,8 @@ export default function Navbar() {
     }
   };
 
-  // On watch page: show on PC / Desktop, hide on mobile
-  if (pathname?.startsWith('/watch') && !isDesktop) {
+  // On mobile: hide navbar on /watch and /settings
+  if ((pathname?.startsWith('/watch') || pathname?.startsWith('/settings')) && !isDesktop) {
     return null;
   }
 

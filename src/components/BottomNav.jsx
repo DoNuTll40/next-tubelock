@@ -7,8 +7,8 @@ import { Home, History, Plus, RefreshCw, Settings } from 'lucide-react';
 export default function BottomNav() {
   const pathname = usePathname();
 
-  // Hide BottomNav when watching a video
-  if (pathname?.startsWith('/watch')) {
+  // Hide BottomNav when watching a video or in settings
+  if (pathname?.startsWith('/watch') || pathname?.startsWith('/settings')) {
     return null;
   }
 

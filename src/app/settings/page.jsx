@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, ChevronRight, PlayCircle, Folder,
   Database, Monitor, Save, CheckCircle, Loader2
@@ -63,11 +64,10 @@ function SaveButton({ saveStatus, isDirty, onSave }) {
       type="button"
       onClick={onSave}
       disabled={!isDirty}
-      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition active:scale-95 select-none ${
-        isDirty
+      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition active:scale-95 select-none ${isDirty
           ? 'bg-[#FF7A00] hover:bg-[#E06C00] text-white shadow-[0_4px_12px_rgba(255,122,0,0.35)] cursor-pointer'
           : 'bg-[#EFECE6] text-[#8C857B] cursor-not-allowed'
-      }`}
+        }`}
     >
       <Save className="w-4 h-4" />
       <span>บันทึกการตั้งค่า</span>
@@ -77,6 +77,7 @@ function SaveButton({ saveStatus, isDirty, onSave }) {
 
 // ─── Main Settings Page ───────────────────────────────────────────────────────
 export default function SettingsPage() {
+  const router = useRouter();
   // ALL HOOKS MUST BE AT TOP LEVEL (Rules of Hooks)
   const { isDesktop, isMobile, setMode } = useViewMode();
 
@@ -317,7 +318,7 @@ export default function SettingsPage() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 py-8 select-none min-h-[85vh]">
+    <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 sm:py-8 select-none min-h-[85vh]">
       <ActionSheetModal sheet={sheet} onClose={() => setSheet(null)} />
 
       {/* ── DESKTOP ──────────────────────────────────────────────────────────── */}
@@ -351,7 +352,17 @@ export default function SettingsPage() {
             <div className="flex flex-col gap-4">
               {/* Header + Save */}
               <div className="flex items-center justify-between py-2 px-1">
-                <h1 className="text-xl font-bold text-[#212529] tracking-tight">การตั้งค่า</h1>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => router.push('/')}
+                    className="p-1.5 -ml-1 rounded-full hover:bg-[#EFECE6] active:scale-90 transition text-[#212529] cursor-pointer"
+                    title="ย้อนกลับ"
+                  >
+                    <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
+                  </button>
+                  <h1 className="text-xl font-bold text-[#212529] tracking-tight">การตั้งค่า</h1>
+                </div>
                 <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
               </div>
 

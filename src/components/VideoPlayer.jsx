@@ -6,7 +6,9 @@ import {
   Play, Pause, Volume2, VolumeX, Volume1, Maximize, Minimize, 
   Settings, Check, ChevronRight, ChevronLeft, Loader2, Info, X,
   Scan, Expand, Crop, PictureInPicture2, Copy, Activity, Zap,
-  AlertTriangle, Gauge, Sparkles, ShieldCheck
+  AlertTriangle, Gauge, Sparkles, ShieldCheck, RotateCcw, RotateCw,
+  ThumbsUp, ThumbsDown, MessageSquare, Share2, Subtitles, ChevronDown, Plus,
+  Cast, MoreHorizontal, Bookmark, ArrowLeft
 } from 'lucide-react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
 
@@ -14,6 +16,9 @@ export default function VideoPlayer({
   src, 
   poster, 
   storyboard = null,
+  title = '',
+  channelName = 'TubeLock',
+  onBack = null,
   resolution,
   fps,
   codec = 'h264',
@@ -60,6 +65,29 @@ export default function VideoPlayer({
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+
+  // Responsive device view & popup placement
+  const [isMobileView, setIsMobileView] = useState(false);
+  const [settingsPlacement, setSettingsPlacement] = useState('bottom'); // 'bottom' | 'top'
+
+  useEffect(() => {
+    const checkIsMobile = () => {
+      const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+      const isSmall = typeof window !== 'undefined' && window.innerWidth < 768;
+      const isMediumTouch = isTouch && typeof window !== 'undefined' && window.innerWidth < 1024;
+      setIsMobileView(isSmall || isMediumTouch);
+    };
+    checkIsMobile();
+    window.addEventListener('resize', checkIsMobile);
+    return () => window.removeEventListener('resize', checkIsMobile);
+  }, []);
+
+  // YouTube Mobile UI states
+  const [isAutoplay, setIsAutoplay] = useState(defaultAutoplay);
+  const [isCcActive, setIsCcActive] = useState(false);
+  const [isLiked, setIsLiked] = useState(false);
+  const [isDisliked, setIsDisliked] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
 
   // Speed and Aspect Mode: 'fit' | 'crop' | 'fill'
   const [playbackRate, setPlaybackRate] = useState(defaultSpeed);
@@ -800,7 +828,17 @@ export default function VideoPlayer({
     clickStateRef.current = { time: now, zone };
 
     singleClickTimerRef.current = setTimeout(() => {
-      togglePlay();
+      // On mobile touch view: single tap reveals or hides YouTube overlay controls!
+      // On PC (both windowed & fullscreen): clicking video directly toggles Play/Pause!
+      if (isMobileView) {
+        setShowControls((prev) => {
+          const next = !prev;
+          if (next) resetControlsTimer();
+          return next;
+        });
+      } else {
+        togglePlay();
+      }
       singleClickTimerRef.current = null;
       clickStateRef.current = { time: 0, zone: null };
     }, 220);
@@ -816,20 +854,52 @@ export default function VideoPlayer({
     setContextMenu({ x: Math.max(10, x), y: Math.max(10, y) });
   };
 
-  // Fullscreen & PiP
+  // Fullscreen & PiP with Mobile Orientation Auto-Lock
   const toggleFullscreen = async () => {
     if (!containerRef.current) return;
-    if (!document.fullscreenElement) {
+    const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+
+    if (!isFull) {
       try {
-        await containerRef.current.requestFullscreen();
+        if (containerRef.current.requestFullscreen) {
+          await containerRef.current.requestFullscreen();
+        } else if (containerRef.current.webkitRequestFullscreen) {
+          await containerRef.current.webkitRequestFullscreen();
+        } else if (video.current?.webkitEnterFullscreen) {
+          video.current.webkitEnterFullscreen();
+          return;
+        }
         setIsFullscreen(true);
+
+        // 📱 Auto orientation lock: Rotate mobile to landscape automatically when video is widescreen!
+        if (typeof window !== 'undefined' && window.screen?.orientation?.lock) {
+          try {
+            if (videoRatio >= 1) {
+              await window.screen.orientation.lock('landscape');
+            } else {
+              await window.screen.orientation.lock('portrait');
+            }
+          } catch (orientErr) {
+            console.log('Orientation lock notice:', orientErr);
+          }
+        }
       } catch (err) {
         console.warn('Fullscreen error:', err);
       }
     } else {
       try {
-        await document.exitFullscreen();
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen();
+        }
         setIsFullscreen(false);
+
+        if (typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
+          try {
+            window.screen.orientation.unlock();
+          } catch (_) {}
+        }
       } catch (err) {
         console.warn('Exit fullscreen error:', err);
       }
@@ -851,10 +921,25 @@ export default function VideoPlayer({
 
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      setIsFullscreen(isFull);
+      if (!isFull && typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
+        try {
+          window.screen.orientation.unlock();
+        } catch (_) {}
+      }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      if (typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
+        try {
+          window.screen.orientation.unlock();
+        } catch (_) {}
+      }
+    };
   }, []);
 
   // Aspect Mode Toggle
@@ -973,7 +1058,7 @@ export default function VideoPlayer({
       className={`relative bg-black select-none overflow-hidden group/player ${
         isFullscreen 
           ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none' 
-          : 'rounded-none sm:rounded-2xl border border-black/10 shadow-md'
+          : 'rounded-2xl border border-black/10 shadow-md'
       } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
         width: isFullscreen ? '100vw' : '100%',
@@ -1091,28 +1176,214 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {/* Center Spinner or Play Button ONLY when paused */}
+      {/* Top Bar: On PC Desktop fullscreen, shows only the Title text at top-left. On Mobile, shows Mobile Top Bar */}
+      {(showControls || !isPlaying) && (
+        <div 
+          className={`absolute top-0 left-0 right-0 px-4 sm:px-6 pt-3.5 sm:pt-4 pb-8 bg-gradient-to-b from-black/85 via-black/35 to-transparent flex items-center justify-between z-30 transition-opacity duration-150 ${
+            !isFullscreen && !isMobileView ? 'hidden' : ''
+          }`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Top-Left: Title in Fullscreen (Matches Screenshot 2), or Back Button in Mobile Portrait */}
+          {isFullscreen ? (
+            <div className="flex items-center gap-2 max-w-[75%] min-w-0">
+              <div className="flex flex-col min-w-0 text-left">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-white text-xs sm:text-base font-semibold truncate drop-shadow-md select-none">
+                    {title || 'วิดีโอ TubeLock'}
+                  </span>
+                  {isMobileView && <ChevronRight className="w-3.5 h-3.5 text-zinc-400 shrink-0" />}
+                </div>
+                {isMobileView && (
+                  <span className="text-[10px] sm:text-[11px] text-zinc-400 truncate select-none">
+                    {channelName} • Cloud Stream
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : isMobileView && onBack ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onBack();
+              }}
+              className="p-2 -ml-1 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-xs transition active:scale-90 cursor-pointer"
+              title="ย้อนกลับ"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          ) : (
+            <div className="w-8" />
+          )}
+
+          {/* Top-Right: Shown ONLY on Mobile (On PC desktop, controls live exclusively in bottom bar like real YouTube!) */}
+          {isMobileView ? (
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0 text-white">
+              {/* Autoplay switch */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isAutoplay;
+                  setIsAutoplay(next);
+                  showToast(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
+                }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                  isAutoplay ? 'bg-white' : 'bg-white/30'
+                }`}
+                title={isAutoplay ? 'การเล่นอัตโนมัติเปิดอยู่' : 'การเล่นอัตโนมัติปิดอยู่'}
+              >
+                <span 
+                  className={`inline-flex items-center justify-center h-3.5 w-3.5 transform rounded-full transition-transform ${
+                    isAutoplay ? 'translate-x-4.5 bg-black' : 'translate-x-1 bg-white'
+                  }`}
+                >
+                  {isAutoplay ? (
+                    <Play className="w-2 h-2 fill-current text-white" />
+                  ) : (
+                    <Pause className="w-2 h-2 fill-current text-black" />
+                  )}
+                </span>
+              </button>
+
+              {/* Cast */}
+              <button
+                type="button"
+                onClick={() => showToast('เชื่อมต่ออุปกรณ์ Cast / TV')}
+                className="p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white"
+                title="เล่นบนทีวี (Cast)"
+              >
+                <Cast className="w-4.5 h-4.5" />
+              </button>
+
+              {/* CC */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCcActive(!isCcActive);
+                  showToast(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
+                }}
+                className={`p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer ${
+                  isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-300 hover:text-white'
+                }`}
+                title="คำบรรยาย (CC)"
+              >
+                <Subtitles className="w-4.5 h-4.5" />
+              </button>
+
+              {/* Settings */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsPlacement('top');
+                  setShowSettingsMenu(!showSettingsMenu);
+                  setActiveMenuTab('main');
+                }}
+                className="p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white relative"
+                title="การตั้งค่า"
+              >
+                <Settings className="w-4.5 h-4.5" />
+                {is4K ? (
+                  <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-1 py-0.5 rounded shadow pointer-events-none">
+                    4K
+                  </span>
+                ) : isHD ? (
+                  <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-0.5 py-0.5 rounded shadow pointer-events-none">
+                    HD
+                  </span>
+                ) : null}
+              </button>
+            </div>
+          ) : (
+            <div />
+          )}
+        </div>
+      )}
+
+      {/* Center Controls: Mobile shows Trio (-10s, Play/Pause, +10s), Desktop remains clean while playing */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
         {hlsError ? (
           <div className="pointer-events-auto flex flex-col items-center gap-2 bg-[#121110]/95 rounded-2xl px-5 py-3.5 text-center max-w-[85%] border border-rose-500/30 shadow-2xl">
             <span className="text-rose-400 text-xs font-mono break-words">{hlsError}</span>
           </div>
         ) : isBuffering ? (
-          <div className="p-3 bg-black/60 rounded-full border border-white/15 shadow-xl">
+          <div className="p-3 bg-black/60 rounded-full border border-white/15 shadow-xl backdrop-blur-md">
             <Loader2 className="w-7 h-7 text-[#FF7A00] animate-spin" />
           </div>
         ) : (
-          !isPlaying && showControls && !doubleTapSide && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                togglePlay();
-              }}
-              className="pointer-events-auto w-14 h-14 rounded-full bg-black/60 hover:bg-[#FF7A00] text-white flex items-center justify-center transition shadow-2xl active:scale-90 border border-white/20 cursor-pointer"
-            >
-              <Play className="w-6 h-6 fill-white ml-0.5" />
-            </button>
+          (showControls || !isPlaying) && !doubleTapSide && (
+            <>
+              {/* Mobile View: YouTube Trio (-10s, Play/Pause, +10s) */}
+              {isMobileView ? (
+                <div className="flex items-center gap-7 sm:gap-14 pointer-events-auto select-none">
+                  {/* Skip -10s */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const cur = video.current?.currentTime || 0;
+                      commitSeek(Math.max(0, cur - seekStep));
+                      showToast(`-${seekStep} วินาที`);
+                      resetControlsTimer();
+                    }}
+                    className="w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-black/55 hover:bg-black/80 active:scale-90 border border-white/15 text-white flex flex-col items-center justify-center transition shadow-xl backdrop-blur-xs cursor-pointer"
+                    title={`ย้อนหลัง ${seekStep} วินาที`}
+                  >
+                    <RotateCcw className="w-4.5 h-4.5 sm:w-5.5 sm:h-5.5" />
+                    <span className="text-[8px] sm:text-[9px] font-mono font-bold leading-none -mt-0.5">10</span>
+                  </button>
+
+                  {/* Big Center Play/Pause */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePlay();
+                    }}
+                    className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-black/65 hover:bg-[#FF7A00] active:scale-95 border border-white/25 text-white flex items-center justify-center transition-all duration-150 shadow-[0_8px_32px_rgba(0,0,0,0.6)] backdrop-blur-xs cursor-pointer"
+                    title={isPlaying ? 'หยุดชั่วคราว' : 'เล่น'}
+                  >
+                    {isPlaying ? (
+                      <Pause className="w-6 h-6 sm:w-7 sm:h-7 fill-white" />
+                    ) : (
+                      <Play className="w-6 h-6 sm:w-7 sm:h-7 fill-white ml-0.5" />
+                    )}
+                  </button>
+
+                  {/* Skip +10s */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const cur = video.current?.currentTime || 0;
+                      commitSeek(Math.min(duration, cur + seekStep));
+                      showToast(`+${seekStep} วินาที`);
+                      resetControlsTimer();
+                    }}
+                    className="w-11 h-11 sm:w-13 sm:h-13 rounded-full bg-black/55 hover:bg-black/80 active:scale-90 border border-white/15 text-white flex flex-col items-center justify-center transition shadow-xl backdrop-blur-xs cursor-pointer"
+                    title={`ไปข้างหน้า ${seekStep} วินาที`}
+                  >
+                    <RotateCw className="w-4.5 h-4.5 sm:w-5.5 sm:h-5.5" />
+                    <span className="text-[8px] sm:text-[9px] font-mono font-bold leading-none -mt-0.5">10</span>
+                  </button>
+                </div>
+              ) : (
+                /* Desktop View (Both Windowed & Fullscreen): Clean center while playing; Play button when paused */
+                !isPlaying && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePlay();
+                    }}
+                    className="pointer-events-auto w-16 h-16 rounded-full bg-black/70 hover:bg-[#FF7A00] hover:scale-110 active:scale-95 border border-white/25 text-white flex items-center justify-center transition-all duration-200 shadow-2xl backdrop-blur-xs cursor-pointer group"
+                    title="เล่น (k)"
+                  >
+                    <Play className="w-7 h-7 fill-white ml-0.5 group-hover:scale-105 transition-transform" />
+                  </button>
+                )
+              )}
+            </>
           )
         )}
       </div>
@@ -1123,7 +1394,7 @@ export default function VideoPlayer({
           {/* HUD Header */}
           <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2 font-sans">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-lg bg-[#FF7A00]/20 flex items-center justify-center text-[#FF7A00]">
+              <div className="w-6 h-6 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500">
                 <Activity className="w-3.5 h-3.5" />
               </div>
               <div>
@@ -1140,7 +1411,7 @@ export default function VideoPlayer({
                 onClick={copyTelemetry}
                 className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-zinc-200 text-[10px] font-sans flex items-center gap-1 transition cursor-pointer"
               >
-                <Copy className="w-3 h-3 text-[#FF7A00]" />
+                <Copy className="w-3 h-3 text-red-500" />
                 <span>{statsCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
               </button>
               <button
@@ -1177,7 +1448,7 @@ export default function VideoPlayer({
 
             <div className="flex justify-between items-center py-0.5 border-b border-white/5">
               <span className="text-zinc-400">Native Resolution:</span>
-              <span className="text-[#FF7A00] font-bold">{nerdStats.optimalRes}</span>
+              <span className="text-red-500 font-bold">{nerdStats.optimalRes}</span>
             </div>
 
             <div className="flex justify-between items-center py-0.5 border-b border-white/5">
@@ -1311,10 +1582,14 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {/* Multi-Tab Settings Menu */}
+      {/* Multi-Tab Settings Menu (Positioned dynamically above or below clicked gear button) */}
       {showSettingsMenu && (
         <div 
-          className="absolute bottom-16 right-4 bg-[#18181B]/98 border border-white/15 rounded-2xl py-1.5 w-54 text-xs text-zinc-200 z-40 shadow-2xl overflow-hidden"
+          className={`absolute ${
+            settingsPlacement === 'top' 
+              ? 'top-14 right-3 sm:right-6' 
+              : 'bottom-16 right-3 sm:right-6'
+          } bg-[#18181B]/98 border border-white/15 rounded-2xl py-1.5 w-56 text-xs text-zinc-200 z-40 shadow-2xl overflow-hidden backdrop-blur-md`}
           onClick={(e) => e.stopPropagation()}
         >
           {activeMenuTab === 'main' && (
@@ -1354,18 +1629,6 @@ export default function VideoPlayer({
                   {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
                   <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
                 </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowStats(true);
-                  setShowSettingsMenu(false);
-                }}
-                className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition border-t border-white/5 text-zinc-300 cursor-pointer"
-              >
-                <span>สถิติสำหรับเด็กเนิร์ด</span>
-                <Activity className="w-3.5 h-3.5 text-emerald-400" />
               </button>
             </div>
           )}
@@ -1550,7 +1813,7 @@ export default function VideoPlayer({
                   style={{ width: `${hoverPercent}%` }}
                 />
               )}
-              {/* Playback Progress (Direct DOM) */}
+              {/* Playback Progress (Direct DOM - TubeLock Orange) */}
               <div 
                 ref={progressBarRef}
                 className="absolute left-0 top-0 bottom-0 bg-[#FF7A00]"
@@ -1558,139 +1821,406 @@ export default function VideoPlayer({
               />
             </div>
 
-            {/* Scrubber Knob (Direct DOM) */}
+            {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
             <div 
               ref={scrubberKnobRef}
-              className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
-                isScrubbing ? 'scale-125' : 'scale-0 group-hover/seek:scale-100'
+              className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
+                isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
               }`}
               style={{ left: '0%' }}
             />
           </div>
 
-          {/* Bottom Icons Row */}
-          <div className="flex items-center justify-between text-white text-xs pt-0.5">
-            {/* Left Controls */}
-            <div className="flex items-center gap-3 sm:gap-4">
-              <button 
-                type="button"
-                onClick={togglePlay} 
-                className="active:scale-90 transition cursor-pointer p-1 rounded-lg hover:bg-white/10"
-                title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่น (k)'}
-              >
-                {isPlaying ? <Pause className="w-4.5 h-4.5 fill-white" /> : <Play className="w-4.5 h-4.5 fill-white ml-0.5" />}
-              </button>
-
-              {/* YouTube-Style Expandable Volume Slider */}
-              <div 
-                className="flex items-center group/vol relative"
-                onMouseEnter={() => setShowVolumeSlider(true)}
-                onMouseLeave={() => setShowVolumeSlider(false)}
-              >
+          {/* Bottom Bar: Clean division between Desktop (Windowed & Fullscreen) and Mobile */}
+          {!isMobileView ? (
+            /* ============================================================ */
+            /* PC DESKTOP BOTTOM BAR (Matches YouTube Screenshots 2 & 3)    */
+            /* ============================================================ */
+            <div className="flex items-center justify-between text-white text-xs pt-1 px-1 sm:px-2 select-none">
+              {/* Left Controls: Play/Pause, Volume + Hover Slider, Time Display */}
+              <div className="flex items-center gap-2 sm:gap-3.5">
+                {/* Play/Pause */}
                 <button 
                   type="button"
-                  onClick={toggleMute} 
-                  className="cursor-pointer p-1.5 rounded-lg hover:bg-white/10 transition"
-                  title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
+                  onClick={togglePlay} 
+                  className="active:scale-90 transition cursor-pointer p-1.5 rounded-lg hover:bg-white/15"
+                  title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่น (k)'}
                 >
-                  {isMuted || volume === 0 ? (
-                    <VolumeX className="w-4.5 h-4.5 fill-white text-white" />
-                  ) : volume < 0.5 ? (
-                    <Volume1 className="w-4.5 h-4.5 fill-white text-white" />
-                  ) : (
-                    <Volume2 className="w-4.5 h-4.5 fill-white text-white" />
-                  )}
+                  {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white ml-0.5" />}
                 </button>
 
-                <div className={`overflow-hidden transition-all duration-200 flex items-center ${
-                  showVolumeSlider ? 'w-20 sm:w-24 opacity-100 ml-1' : 'w-0 opacity-0 pointer-events-none'
-                }`}>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={isMuted ? 0 : volume}
-                    onChange={handleVolumeChange}
-                    className="w-full h-1 bg-white/30 rounded-full cursor-pointer accent-white appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white"
-                  />
+                {/* YouTube Expandable Volume Slider */}
+                <div 
+                  className="flex items-center group/vol relative"
+                  onMouseEnter={() => setShowVolumeSlider(true)}
+                  onMouseLeave={() => setShowVolumeSlider(false)}
+                >
+                  <button 
+                    type="button"
+                    onClick={toggleMute} 
+                    className="cursor-pointer p-1.5 rounded-lg hover:bg-white/15 transition"
+                    title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
+                  >
+                    {isMuted || volume === 0 ? (
+                      <VolumeX className="w-5 h-5 fill-white text-white" />
+                    ) : volume < 0.5 ? (
+                      <Volume1 className="w-5 h-5 fill-white text-white" />
+                    ) : (
+                      <Volume2 className="w-5 h-5 fill-white text-white" />
+                    )}
+                  </button>
+
+                  <div className={`overflow-hidden transition-all duration-200 flex items-center ${
+                    showVolumeSlider ? 'w-20 sm:w-24 opacity-100 ml-1' : 'w-0 opacity-0 pointer-events-none'
+                  }`}>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={isMuted ? 0 : volume}
+                      onChange={handleVolumeChange}
+                      className="w-full h-1 bg-white/30 rounded-full cursor-pointer accent-white appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white"
+                    />
+                  </div>
                 </div>
+
+                {/* Time Display */}
+                <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 select-none font-medium ml-1">
+                  00:00 / {formatTime(duration)}
+                </span>
               </div>
 
-              {/* Direct DOM Time Display */}
-              <span ref={timeDisplayRef} className="font-mono text-[11px] text-zinc-300 select-none">
+              {/* Right Controls: Desktop Fullscreen vs Desktop Windowed */}
+              <div className="flex items-center gap-1 sm:gap-2">
+                {/* On PC Fullscreen: Like, Dislike, Comment, Share, More (Matches Screenshot 2) */}
+                {isFullscreen && (
+                  <div className="flex items-center gap-1 sm:gap-2 mr-2 border-r border-white/15 pr-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isLiked;
+                        setIsLiked(next);
+                        if (next && isDisliked) setIsDisliked(false);
+                        showToast(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
+                      }}
+                      className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
+                        isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                      }`}
+                      title="ถูกใจ"
+                    >
+                      <ThumbsUp className="w-4.5 h-4.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isDisliked;
+                        setIsDisliked(next);
+                        if (next && isLiked) setIsLiked(false);
+                        showToast(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
+                      }}
+                      className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
+                        isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
+                      }`}
+                      title="ไม่ชอบ"
+                    >
+                      <ThumbsDown className="w-4.5 h-4.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => showToast('ส่วนความคิดเห็น')}
+                      className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                      title="ความคิดเห็น"
+                    >
+                      <MessageSquare className="w-4.5 h-4.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined') {
+                          navigator.clipboard.writeText(window.location.href);
+                          showToast('คัดลอกลิงก์วิดีโอแล้ว');
+                        }
+                      }}
+                      className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                      title="แชร์วิดีโอ"
+                    >
+                      <Share2 className="w-4.5 h-4.5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setContextMenu({ x: rect.left, y: Math.max(10, rect.top - 180) });
+                      }}
+                      className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                      title="เพิ่มเติม"
+                    >
+                      <MoreHorizontal className="w-4.5 h-4.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Autoplay Switch (YouTube Style) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isAutoplay;
+                    setIsAutoplay(next);
+                    showToast(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
+                  }}
+                  className={`relative inline-flex h-4.5 w-8 items-center rounded-full transition-colors cursor-pointer mr-1 ${
+                    isAutoplay ? 'bg-white' : 'bg-white/30'
+                  }`}
+                  title={isAutoplay ? 'การเล่นอัตโนมัติเปิดอยู่' : 'การเล่นอัตโนมัติปิดอยู่'}
+                >
+                  <span 
+                    className={`inline-flex items-center justify-center h-3 w-3 transform rounded-full transition-transform ${
+                      isAutoplay ? 'translate-x-4 bg-black' : 'translate-x-1 bg-white'
+                    }`}
+                  >
+                    {isAutoplay ? (
+                      <Play className="w-1.5 h-1.5 fill-current text-white" />
+                    ) : (
+                      <Pause className="w-1.5 h-1.5 fill-current text-black" />
+                    )}
+                  </span>
+                </button>
+
+                {/* CC (Subtitles) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCcActive(!isCcActive);
+                    showToast(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
+                  }}
+                  className={`p-1.5 rounded-lg hover:bg-white/15 transition cursor-pointer ${
+                    isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                  }`}
+                  title="คำบรรยาย (c)"
+                >
+                  <Subtitles className="w-4.5 h-4.5" />
+                </button>
+
+                {/* Settings Gear with 4K Badge */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsPlacement('bottom');
+                    setShowSettingsMenu(!showSettingsMenu);
+                    setActiveMenuTab('main');
+                  }}
+                  title="การตั้งค่าเครื่องเล่น"
+                  className={`relative p-1.5 rounded-lg transition cursor-pointer ${
+                    showSettingsMenu ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
+                  }`}
+                >
+                  <Settings className="w-4.5 h-4.5" />
+                  {is4K ? (
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-1 py-0.5 rounded shadow pointer-events-none">
+                      4K
+                    </span>
+                  ) : isHD ? (
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-0.5 py-0.5 rounded shadow pointer-events-none">
+                      HD
+                    </span>
+                  ) : null}
+                </button>
+
+                {/* Miniplayer (PiP - Only in windowed mode) */}
+                {!isFullscreen && (
+                  <button
+                    type="button"
+                    onClick={togglePiP}
+                    title="เล่นแบบหน้าต่างลอย (PiP)"
+                    className="p-1.5 rounded-lg text-zinc-200 hover:text-white hover:bg-white/15 transition cursor-pointer"
+                  >
+                    <PictureInPicture2 className="w-4.5 h-4.5" />
+                  </button>
+                )}
+
+                {/* Aspect Ratio */}
+                <button
+                  type="button"
+                  onClick={cycleAspectMode}
+                  title={`สัดส่วน: ${aspectMode.toUpperCase()} (คลิกเพื่อเปลี่ยน)`}
+                  className={`px-2 py-1 rounded-lg transition cursor-pointer flex items-center gap-1 font-mono uppercase text-[11px] font-semibold ${
+                    aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
+                  }`}
+                >
+                  {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
+                  <span>{aspectMode}</span>
+                </button>
+
+                {/* Fullscreen Toggle */}
+                <button 
+                  type="button"
+                  onClick={toggleFullscreen} 
+                  title={isFullscreen ? 'ออกจากเต็มจอ (f)' : 'เต็มจอ (f)'}
+                  className="p-1.5 rounded-lg text-white hover:bg-white/15 transition cursor-pointer active:scale-90"
+                >
+                  {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+          ) : isFullscreen ? (
+            /* ============================================================ */
+            /* MOBILE FULLSCREEN BOTTOM BAR                                 */
+            /* ============================================================ */
+            <div className="flex items-center justify-between text-white text-xs pt-1 px-1">
+              {/* Left Action Buttons */}
+              <div className="flex items-center gap-1.5">
+                <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 font-medium mr-1 select-none">
+                  00:00 / {formatTime(duration)}
+                </span>
+
+                {/* Like */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isLiked;
+                    setIsLiked(next);
+                    if (next && isDisliked) setIsDisliked(false);
+                    showToast(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
+                  }}
+                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
+                    isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                  }`}
+                  title="ถูกใจ"
+                >
+                  <ThumbsUp className="w-4.5 h-4.5" />
+                </button>
+
+                {/* Dislike */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isDisliked;
+                    setIsDisliked(next);
+                    if (next && isLiked) setIsLiked(false);
+                    showToast(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
+                  }}
+                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
+                    isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
+                  }`}
+                  title="ไม่ชอบ"
+                >
+                  <ThumbsDown className="w-4.5 h-4.5" />
+                </button>
+
+                {/* Comments */}
+                <button
+                  type="button"
+                  onClick={() => showToast('ส่วนความคิดเห็น')}
+                  className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                  title="ความคิดเห็น"
+                >
+                  <MessageSquare className="w-4.5 h-4.5" />
+                </button>
+
+                {/* Save */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !isSaved;
+                    setIsSaved(next);
+                    showToast(next ? 'บันทึกในเพลย์ลิสต์แล้ว' : 'นำออกจากเพลย์ลิสต์');
+                  }}
+                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
+                    isSaved ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                  }`}
+                  title="บันทึกในเพลย์ลิสต์"
+                >
+                  <Plus className="w-4.5 h-4.5" />
+                </button>
+
+                {/* Share */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      navigator.clipboard.writeText(window.location.href);
+                      showToast('คัดลอกลิงก์วิดีโอแล้ว');
+                    }
+                  }}
+                  className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                  title="แชร์วิดีโอ"
+                >
+                  <Share2 className="w-4.5 h-4.5" />
+                </button>
+
+                {/* More */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setContextMenu({ x: rect.left, y: Math.max(10, rect.top - 180) });
+                  }}
+                  className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                  title="เพิ่มเติม"
+                >
+                  <MoreHorizontal className="w-4.5 h-4.5" />
+                </button>
+              </div>
+
+              {/* Right: Aspect ratio + Exit Fullscreen */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={cycleAspectMode}
+                  title={`สัดส่วน: ${aspectMode.toUpperCase()}`}
+                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-mono uppercase text-[11px] font-semibold transition active:scale-90 cursor-pointer flex items-center gap-1"
+                >
+                  {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
+                  <span>{aspectMode}</span>
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={toggleFullscreen} 
+                  title="ออกจากเต็มจอ"
+                  className="p-1.5 rounded-lg text-white hover:bg-white/15 transition active:scale-90 cursor-pointer"
+                >
+                  <Minimize className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* ============================================================ */
+            /* MOBILE PORTRAIT BOTTOM BAR                                   */
+            /* ============================================================ */
+            <div className="flex items-center justify-between text-white text-xs pt-0.5">
+              <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-300 font-medium select-none">
                 00:00 / {formatTime(duration)}
               </span>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={cycleAspectMode}
+                  title={`สัดส่วน: ${aspectMode.toUpperCase()}`}
+                  className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${
+                    aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-zinc-200'
+                  }`}
+                >
+                  {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={toggleFullscreen} 
+                  title="เต็มจอ"
+                  className="p-1.5 rounded-lg text-white hover:bg-white/15 transition active:scale-90 cursor-pointer"
+                >
+                  <Maximize className="w-4.5 h-4.5" />
+                </button>
+              </div>
             </div>
-
-            {/* Right Controls */}
-            <div className="flex items-center gap-1 sm:gap-1.5">
-              {/* PiP */}
-              <button
-                type="button"
-                onClick={togglePiP}
-                title="เล่นแบบหน้าต่างลอย (PiP)"
-                className="p-1.5 rounded-lg text-white hover:bg-white/10 transition active:scale-90 cursor-pointer"
-              >
-                <PictureInPicture2 className="w-4 h-4" />
-              </button>
-
-              {/* Aspect Ratio */}
-              <button
-                type="button"
-                onClick={cycleAspectMode}
-                title={`สัดส่วน: ${aspectMode.toUpperCase()} (คลิกเพื่อเปลี่ยน)`}
-                className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${
-                  aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-white hover:bg-white/10'
-                }`}
-              >
-                {aspectMode === 'crop' ? (
-                  <Crop className="w-4 h-4" />
-                ) : aspectMode === 'fill' ? (
-                  <Scan className="w-4 h-4" />
-                ) : (
-                  <Expand className="w-4 h-4" />
-                )}
-                <span className="hidden sm:inline font-mono uppercase text-[10px]">
-                  {aspectMode}
-                </span>
-              </button>
-
-              {/* Settings with HD / 4K Badge */}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSettingsMenu(!showSettingsMenu);
-                  setActiveMenuTab('main');
-                }}
-                title="การตั้งค่าเครื่องเล่น"
-                className={`relative p-1.5 rounded-lg transition cursor-pointer ${
-                  showSettingsMenu ? 'text-[#FF7A00] bg-white/10' : 'text-white hover:bg-white/10'
-                }`}
-              >
-                <Settings className="w-4 h-4" />
-                {is4K ? (
-                  <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-1 py-0.5 rounded shadow pointer-events-none">
-                    4K
-                  </span>
-                ) : isHD ? (
-                  <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-0.5 py-0.5 rounded shadow pointer-events-none">
-                    HD
-                  </span>
-                ) : null}
-              </button>
-
-              {/* Fullscreen */}
-              <button 
-                type="button"
-                onClick={toggleFullscreen} 
-                title={isFullscreen ? 'ออกจากเต็มจอ (f)' : 'เต็มจอ (f)'}
-                className="p-1.5 rounded-lg text-white hover:bg-white/10 transition active:scale-90 cursor-pointer"
-              >
-                {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </div>

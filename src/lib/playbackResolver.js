@@ -133,7 +133,19 @@ export async function resolveStoryboard(items) {
   }
 
   const primarySD = vttSD || vttDefault;
-  if (!primarySD && !vttHD) return null;
+  if (!primarySD && !vttHD) {
+    // Fallback: If sprite sheets exist in spriteMap, enable math-based scrubbing
+    if (Object.keys(spriteMap).length > 0) {
+      return {
+        cues: [],
+        cuesSD: [],
+        cuesHD: null,
+        spriteMap,
+        interval: 5,
+      };
+    }
+    return null;
+  }
 
   try {
     const [cuesSD, cuesHD] = await Promise.all([
@@ -151,6 +163,9 @@ export async function resolveStoryboard(items) {
     };
   } catch (err) {
     console.warn('[Storyboard Resolver Warning]:', err.message);
+    if (Object.keys(spriteMap).length > 0) {
+      return { cues: [], cuesSD: [], cuesHD: null, spriteMap, interval: 5 };
+    }
     return null;
   }
 }
