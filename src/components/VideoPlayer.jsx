@@ -356,16 +356,24 @@ export default function VideoPlayer({
     return () => clearInterval(interval);
   }, [showStats, video, src, codec, fps]);
 
+  const showControlsRef = useRef(showControls);
+  useEffect(() => {
+    showControlsRef.current = showControls;
+  }, [showControls]);
+
   // Controls Auto-Hide
-  const resetControlsTimer = useCallback(() => {
+  const resetControlsTimer = useCallback((customDelay = null) => {
+    showControlsRef.current = true;
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     if (isPlaying && !isScrubbing && !showSettingsMenu && !showStats) {
+      const delay = customDelay || (isMobileView ? 4500 : 2800);
       controlsTimeoutRef.current = setTimeout(() => {
+        showControlsRef.current = false;
         setShowControls(false);
-      }, 2500);
+      }, delay);
     }
-  }, [isPlaying, isScrubbing, showSettingsMenu, showStats]);
+  }, [isPlaying, isScrubbing, showSettingsMenu, showStats, isMobileView]);
 
   // Initialize HLS or Native Player
   useEffect(() => {
@@ -766,7 +774,7 @@ export default function VideoPlayer({
     const now = Date.now();
 
     const prev = clickStateRef.current;
-    const isDouble = (e.detail >= 2) || ((now - prev.time < 280) && (prev.zone === zone || (zone === 'center' && prev.zone === 'center')));
+    const isDouble = (e.detail >= 2) || ((now - prev.time < 340) && (prev.zone === zone || (zone === 'center' && prev.zone === 'center')));
 
     if (isDouble) {
       // Cancel pending single click immediately! (Play/Pause will NEVER be triggered)
@@ -795,6 +803,7 @@ export default function VideoPlayer({
         }, 650);
 
         showToast(`-${seekStep} วินาที`);
+        resetControlsTimer(4500);
       } else if (zone === 'right') {
         const currentTime = pendingTargetTimeRef.current !== null 
           ? pendingTargetTimeRef.current 
@@ -814,13 +823,14 @@ export default function VideoPlayer({
         }, 650);
 
         showToast(`+${seekStep} วินาที`);
+        resetControlsTimer(4500);
       } else {
         toggleFullscreen();
       }
       return;
     }
 
-    // First click: cancel any previous timeout, record state, and debounce Play/Pause by ~220ms
+    // First click: cancel any previous timeout, record state, and debounce by ~240ms
     if (singleClickTimerRef.current) {
       clearTimeout(singleClickTimerRef.current);
       singleClickTimerRef.current = null;
@@ -828,20 +838,25 @@ export default function VideoPlayer({
     clickStateRef.current = { time: now, zone };
 
     singleClickTimerRef.current = setTimeout(() => {
-      // On mobile touch view: single tap reveals or hides YouTube overlay controls!
+      // On mobile touch view: single tap reliably reveals or hides YouTube overlay controls!
       // On PC (both windowed & fullscreen): clicking video directly toggles Play/Pause!
       if (isMobileView) {
-        setShowControls((prev) => {
-          const next = !prev;
-          if (next) resetControlsTimer();
-          return next;
-        });
+        if (showControlsRef.current) {
+          showControlsRef.current = false;
+          setShowControls(false);
+          if (controlsTimeoutRef.current) {
+            clearTimeout(controlsTimeoutRef.current);
+            controlsTimeoutRef.current = null;
+          }
+        } else {
+          resetControlsTimer(4500);
+        }
       } else {
         togglePlay();
       }
       singleClickTimerRef.current = null;
       clickStateRef.current = { time: 0, zone: null };
-    }, 220);
+    }, 240);
   };
 
   // YouTube-Style Right-Click Context Menu
@@ -904,6 +919,7 @@ export default function VideoPlayer({
         console.warn('Exit fullscreen error:', err);
       }
     }
+    resetControlsTimer();
   };
 
   const togglePiP = async () => {
@@ -1052,7 +1068,11 @@ export default function VideoPlayer({
       ref={containerRef}
       onContextMenu={handleContextMenu}
       onClick={() => { if (contextMenu) setContextMenu(null); }}
-      onMouseMove={resetControlsTimer}
+      onMouseMove={(e) => {
+        if (isMobileView) return;
+        if (e?.nativeEvent?.pointerType === 'touch') return;
+        resetControlsTimer();
+      }}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}
       className={`relative bg-black select-none overflow-hidden group/player ${
@@ -1227,6 +1247,7 @@ export default function VideoPlayer({
                   const next = !isAutoplay;
                   setIsAutoplay(next);
                   showToast(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
+                  resetControlsTimer();
                 }}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
                   isAutoplay ? 'bg-white' : 'bg-white/30'
@@ -1249,7 +1270,10 @@ export default function VideoPlayer({
               {/* Cast */}
               <button
                 type="button"
-                onClick={() => showToast('เชื่อมต่ออุปกรณ์ Cast / TV')}
+                onClick={() => {
+                  showToast('เชื่อมต่ออุปกรณ์ Cast / TV');
+                  resetControlsTimer();
+                }}
                 className="p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white"
                 title="เล่นบนทีวี (Cast)"
               >
@@ -1262,6 +1286,7 @@ export default function VideoPlayer({
                 onClick={() => {
                   setIsCcActive(!isCcActive);
                   showToast(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
+                  resetControlsTimer();
                 }}
                 className={`p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer ${
                   isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-300 hover:text-white'
@@ -1278,6 +1303,7 @@ export default function VideoPlayer({
                   setSettingsPlacement('top');
                   setShowSettingsMenu(!showSettingsMenu);
                   setActiveMenuTab('main');
+                  resetControlsTimer();
                 }}
                 className="p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white relative"
                 title="การตั้งค่า"
