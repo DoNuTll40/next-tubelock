@@ -152,12 +152,10 @@ export default function UploadPage() {
   // Handle File Selection
   const handleFile = async (selectedFile) => {
     if (!selectedFile) return;
-    fileRef.current = selectedFile;
     setErrorMsg(null);
     setCompletedVideo(null);
     setCurrentStatus(null);
     setTranscodeProgress(0);
-    setFile(selectedFile);
 
     const cleanBaseName = selectedFile.name.replace(/\.[^/.]+$/, '');
     setTitle(cleanBaseName);
@@ -203,9 +201,37 @@ export default function UploadPage() {
       (navigator.maxTouchPoints && navigator.maxTouchPoints > 1)
     );
 
+    // In-Memory Clone Workaround for Android SAF Permission Revocation:
+    // บน Android Content URI จะถูกเพิกถอนสิทธิ์ทันทีหากปล่อยให้มี Async Delay (เช่น รอ fetch API)
+    // ดังนั้นเราต้องดึง ArrayBuffer เข้า RAM ทันทีตั้งแต่ใน User Event Tick ก่อนที่จะมี Network Delay ใดๆ
+    let activeFile = selectedFile;
+    if (isMobile || selectedFile.size <= 250 * 1024 * 1024) {
+      try {
+        addLog(`กำลังอ่านไฟล์เข้า Memory Cache ทันที เพื่อป้องกัน Android SAF Revoke (${sizeFormatted})...`);
+        const buffer = await selectedFile.arrayBuffer();
+        activeFile = new File([buffer], selectedFile.name, {
+          type: detectedMime,
+          lastModified: selectedFile.lastModified || Date.now(),
+        });
+        addLog(`โหลดไฟล์เข้าหน่วยความจำสำเร็จ ปลดล็อกสิทธิ์ Android เรียบร้อย`);
+      } catch (readErr) {
+        console.error("In-memory clone error:", readErr);
+        if (readErr?.name === 'NotReadableError' || String(readErr).includes('NotReadableError')) {
+          const msg = 'ไม่สามารถเข้าถึงข้อมูลไฟล์นี้ได้ เนื่องจากไฟล์ถูกเก็บไว้บน Cloud (เช่น Google Photos หรือ Google Drive) ที่ยังไม่ได้ดาวน์โหลดลงตัวเครื่องจริง กรุณาเลือกไฟล์ที่บันทึกอยู่ในเครื่องโดยตรง (เช่น จากโฟลเดอร์ "ดาวน์โหลด" หรือเปิด Google Photos แล้วกด "ดาวน์โหลด" ลงเครื่องก่อน)';
+          setErrorMsg(msg);
+          addLog(`❌ ${msg}`);
+          return;
+        }
+        addLog(`คำเตือน: โคลนเข้าหน่วยความจำไม่สำเร็จ (${readErr.message}) จะใช้สตรีมไฟล์โดยตรง`);
+      }
+    }
+
+    fileRef.current = activeFile;
+    setFile(activeFile);
+
     if (isMobile) {
-      addLog(`โหมด Mobile Direct Stream: เริ่มต้นอัปโหลดไฟล์เข้า OneDrive ทันที เพื่อป้องกัน Android File Permission Lock (NotReadableError)`);
-      handleStartPipeline(selectedFile);
+      addLog(`โหมด Mobile Direct Stream: เริ่มส่งไฟล์เข้า OneDrive ทันที`);
+      handleStartPipeline(activeFile);
       return;
     }
 
@@ -543,9 +569,14 @@ export default function UploadPage() {
     } catch (err) {
       setIsUploading(false);
       console.error('[Upload Error]:', err);
-      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการอัปโหลดหรือแปลงไฟล์');
+      let userFriendlyMsg = err.message || 'เกิดข้อผิดพลาดในการอัปโหลดหรือแปลงไฟล์';
+      if (err?.name === 'NotReadableError' || String(err).includes('NotReadableError')) {
+        userFriendlyMsg = 'ไม่สามารถเข้าถึงไฟล์ได้เนื่องจากสิทธิ์ของ Android (ไฟล์อาจอยู่บน Google Photos/Drive ที่ยังไม่ได้ดาวน์โหลดลงเครื่องจริง) กรุณาเลือกไฟล์ที่บันทึกอยู่ในเครื่องโดยตรง หรือเปิด Google Photos แล้วกดดาวน์โหลดลงเครื่องก่อนครับ';
+      }
+      setErrorMsg(userFriendlyMsg);
       setCurrentStatus('FAILED');
-      addLog(`ข้อผิดพลาด: ${err.message}`);
+      setStageDetail(userFriendlyMsg);
+      addLog(`ข้อผิดพลาด: ${userFriendlyMsg}`);
     }
   };
 
@@ -736,6 +767,9 @@ export default function UploadPage() {
               <p className="text-xs text-[#8C857B] mt-1 max-w-md">
                 รองรับไฟล์ .mp4, .mov, .mkv และวิดีโอจากมือถือทุกรูปแบบ (iOS / Android) ระบบจะส่งตรงเข้า OneDrive Business ด้วยความเร็วอินเทอร์เน็ตเต็มสปีด
               </p>
+              <div className="mt-3 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200/80 text-[11px] text-amber-900 flex items-center gap-1.5 max-w-md text-left">
+                <span>💡 <strong>คำแนะนำสำหรับ Android:</strong> แนะนำให้เลือกไฟล์ที่บันทึกอยู่ในเครื่องโดยตรง (เช่น ในโฟลเดอร์ &quot;ดาวน์โหลด&quot; หรือแกลเลอรีในเครื่อง) หากไฟล์อยู่ใน Google Photos หรือ Cloud Drive ให้กดดาวน์โหลดลงเครื่องก่อนครับ</span>
+              </div>
             </div>
           )}
 
@@ -744,6 +778,29 @@ export default function UploadPage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               {/* LEFT COLUMN: Main Form & Execution (8 Cols) */}
               <div className="lg:col-span-8 flex flex-col gap-5">
+                {/* Error Banner */}
+                {errorMsg && (
+                  <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-3 shadow-xs">
+                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 text-xs">
+                      <h4 className="font-bold text-rose-900">เกิดข้อผิดพลาดในการเข้าถึงไฟล์</h4>
+                      <p className="text-rose-700 mt-1 leading-relaxed">{errorMsg}</p>
+                      <div className="mt-2.5 pt-2.5 border-t border-rose-200 text-[11px] text-rose-800 flex flex-col gap-1">
+                        <span className="font-semibold">💡 วิธีแก้ไขสำหรับมือถือ Android:</span>
+                        <span>1. เปิดแอป <strong>Google Photos</strong> หรือ <strong>Google Drive</strong></span>
+                        <span>2. แตะเปิดคลิปวิดีโอที่ต้องการ &gt; กดเมนู 3 จุด &gt; เลือก <strong>&quot;ดาวน์โหลด (Download)&quot;</strong></span>
+                        <span>3. กลับมาที่หน้านี้ กดปุ่ม &quot;เปลี่ยนไฟล์&quot; แล้วเลือกไฟล์จากโฟลเดอร์ <strong>&quot;ดาวน์โหลด&quot;</strong> ในเครื่อง</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setErrorMsg(null)}
+                      className="text-rose-400 hover:text-rose-600 p-1 text-sm font-bold"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
                 {/* Form Card */}
                 <div className="bg-white border border-[#EFECE6] rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col gap-4">
                   <div className="flex items-center justify-between pb-3 border-b border-[#EFECE6]">
