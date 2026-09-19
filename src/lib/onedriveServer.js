@@ -5,10 +5,10 @@
 import { classifyResolution, formatResolutionBadge, detectCodec } from './videoUtils';
 
 function getEnvConfig() {
-  const tenantId = (process.env.AZURE_TENANT_ID || process.env.NEXT_AZURE_TENANT_ID || '').replace(/['"]/g, '');
-  const clientId = (process.env.AZURE_CLIENT_ID || process.env.NEXT_AZURE_CLIENT_ID || '').replace(/['"]/g, '');
-  const clientSecret = (process.env.AZURE_CLIENT_SECRET || process.env.NEXT_AZURE_CLIENT_SECRET || '').replace(/['"]/g, '');
-  let userId = (process.env.ONEDRIVE_USER_ID || process.env.NEXT_ONEDRIVE_USER_ID || '').replace(/['"]/g, '');
+  const tenantId = (process.env.AZURE_TENANT_ID || process.env.NEXT_AZURE_TENANT_ID || '').replace(/['"]/g, '').trim();
+  const clientId = (process.env.AZURE_CLIENT_ID || process.env.NEXT_AZURE_CLIENT_ID || '').replace(/['"]/g, '').trim();
+  const clientSecret = (process.env.AZURE_CLIENT_SECRET || process.env.NEXT_AZURE_CLIENT_SECRET || '').replace(/['"]/g, '').trim();
+  let userId = (process.env.ONEDRIVE_USER_ID || process.env.NEXT_ONEDRIVE_USER_ID || '').replace(/['"]/g, '').trim();
   userId = userId.replace('@donuttll40.', '@donutll40.');
 
   return { tenantId, clientId, clientSecret, userId };
@@ -19,14 +19,23 @@ let tokenExpiresAt = 0;
 
 /**
  * Get Microsoft Graph Access Token using OAuth 2.0 Client Credentials Grant
+ * Supports forceRefresh for auto-retry when encountering 401 Unauthorized
  */
-export async function getGraphToken() {
+export async function getGraphToken(forceRefresh = false) {
   const now = Date.now();
-  if (cachedToken && tokenExpiresAt > now + 60000) {
+  if (!forceRefresh && cachedToken && tokenExpiresAt > now + 60000) {
     return cachedToken;
   }
 
   const { tenantId, clientId, clientSecret } = getEnvConfig();
+
+  if (!tenantId || !clientId || !clientSecret) {
+    const missing = [];
+    if (!tenantId) missing.push('AZURE_TENANT_ID');
+    if (!clientId) missing.push('AZURE_CLIENT_ID');
+    if (!clientSecret) missing.push('AZURE_CLIENT_SECRET');
+    throw new Error(`Azure credentials missing on server: ${missing.join(', ')}. Please check Vercel environment variables.`);
+  }
 
   const tokenRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
     method: 'POST',
@@ -41,6 +50,9 @@ export async function getGraphToken() {
 
   if (!tokenRes.ok) {
     const err = await tokenRes.text();
+    cachedToken = null;
+    tokenExpiresAt = 0;
+    console.error(`[Azure Token Authentication Error] Status: ${tokenRes.status}, Body: ${err}`);
     throw new Error(`Failed to authenticate with Microsoft Graph (${tokenRes.status}): ${err}`);
   }
 
@@ -287,16 +299,39 @@ export async function ensureFolderExists(token, driveId, folderPath = '/Videos')
 /**
  * Request Microsoft Graph to create a Direct Upload Session
  * Pre-authenticates an uploadUrl that the client can directly PUT chunks to!
+ * Features automatic token refresh on 401 and explicit error reporting.
  */
 export async function createUploadSession(fileName, targetFolder = '/Videos') {
-  const token = await getGraphToken();
-  const driveId = await getUserDriveId(token);
+  let token = await getGraphToken();
+  let driveId;
+  try {
+    driveId = await getUserDriveId(token);
+  } catch (err) {
+    if (err.message?.includes('401') || err.message?.includes('CompactToken')) {
+      console.warn('[OneDrive] Token rejected (401), refreshing token...');
+      token = await getGraphToken(true);
+      driveId = await getUserDriveId(token);
+    } else {
+      throw err;
+    }
+  }
 
-  const folderId = await ensureFolderExists(token, driveId, targetFolder);
+  let folderId;
+  try {
+    folderId = await ensureFolderExists(token, driveId, targetFolder);
+  } catch (err) {
+    if (err.message?.includes('401')) {
+      console.warn('[OneDrive] Folder check returned 401, refreshing token...');
+      token = await getGraphToken(true);
+      folderId = await ensureFolderExists(token, driveId, targetFolder);
+    } else {
+      throw err;
+    }
+  }
 
   const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
 
-  const sessionRes = await fetch(sessionUrl, {
+  let sessionRes = await fetch(sessionUrl, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -310,9 +345,28 @@ export async function createUploadSession(fileName, targetFolder = '/Videos') {
     }),
   });
 
+  if (sessionRes.status === 401) {
+    console.warn('[OneDrive] createUploadSession returned 401, retrying with fresh token...');
+    token = await getGraphToken(true);
+    sessionRes = await fetch(sessionUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        item: {
+          '@microsoft.graph.conflictBehavior': 'replace',
+          name: fileName,
+        },
+      }),
+    });
+  }
+
   if (!sessionRes.ok) {
-    const err = await sessionRes.text();
-    throw new Error(`Failed to create upload session (${sessionRes.status}): ${err}`);
+    const errText = await sessionRes.text();
+    console.error(`[Microsoft Graph createUploadSession Error] Status: ${sessionRes.status}, Endpoint: ${sessionUrl}, Response: ${errText}`);
+    throw new Error(`Microsoft Graph createUploadSession failed (${sessionRes.status}): ${errText}`);
   }
 
   const sessionData = await sessionRes.json();

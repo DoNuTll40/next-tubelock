@@ -77,11 +77,16 @@ export async function POST(request) {
       message: 'เปิด Upload Session กับ Microsoft Graph สำเร็จ',
     });
   } catch (err) {
-    console.error('[Upload Session Error]:', err);
+    console.error('[Upload Session Error Details]:', {
+      message: err.message,
+      stack: err.stack,
+      name: err.name,
+    });
     return NextResponse.json(
       { 
         success: false, 
-        error: err.message || 'ไม่สามารถเปิด Upload Session กับ Microsoft Graph ได้' 
+        error: err.message || 'ไม่สามารถเปิด Upload Session กับ Microsoft Graph ได้',
+        details: err.stack || err.toString(),
       },
       { status: 500 }
     );

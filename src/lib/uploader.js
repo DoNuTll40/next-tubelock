@@ -234,14 +234,15 @@ export async function uploadVideoFile(file, options = {}) {
 
   // Step 3: Chunk Loop
   const fileSize = file.size;
+  const effectiveChunkSize = Math.min(CHUNK_SIZE, fileSize);
   let start = 0;
   let chunkIndex = 1;
-  const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+  const totalChunks = Math.max(1, Math.ceil(fileSize / effectiveChunkSize));
   const uploadStartTime = Date.now();
   let lastDriveItem = null;
 
   while (start < fileSize) {
-    const end = Math.min(start + CHUNK_SIZE, fileSize);
+    const end = Math.min(start + effectiveChunkSize, fileSize);
     const chunkBlob = file.slice(start, end);
     const contentRange = `bytes ${start}-${end - 1}/${fileSize}`;
 
