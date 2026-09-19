@@ -101,7 +101,14 @@ export default function VideoPlayer({
   const [hoverPercent, setHoverPercent] = useState(0);
   const scrubPreviewRef = useRef(null);
   const scrubBadgeRef = useRef(null);
-  const scrubThumbSpriteRef = useRef(null);
+  const scrubThumbSdRef = useRef(null);
+  const scrubThumbHdRef = useRef(null);
+  const hdDwellTimerRef = useRef(null);
+
+  // Desktop Click Debounce & Context Menu
+  const desktopClickTimerRef = useRef(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [isLooping, setIsLooping] = useState(false);
 
   // Double Tap Seeking
   const [doubleTapSide, setDoubleTapSide] = useState(null);
@@ -537,30 +544,63 @@ export default function VideoPlayer({
     pendingTargetTimeRef.current = null;
   }, [duration, video]);
 
-  // YouTube-Style Sprite Sheet Thumbnail Lookup (Direct DOM)
+  // Two-Tier YouTube-Style Sprite Sheet Thumbnail Lookup (Direct DOM)
   const updateStoryboardThumbnail = useCallback((targetSec) => {
-    if (!scrubThumbSpriteRef.current) return;
-    const el = scrubThumbSpriteRef.current;
+    const elSd = scrubThumbSdRef.current;
+    const elHd = scrubThumbHdRef.current;
+    if (!elSd) return;
 
-    if (!storyboard?.cues || storyboard.cues.length === 0) {
-      el.style.opacity = '0';
+    const cuesSD = storyboard?.cuesSD || storyboard?.cues || [];
+    if (cuesSD.length === 0) {
+      elSd.style.opacity = '0';
+      if (elHd) elHd.style.opacity = '0';
       return;
     }
 
     const interval = storyboard.interval || 5;
-    const idx = Math.min(storyboard.cues.length - 1, Math.max(0, Math.floor(targetSec / interval)));
-    const cue = storyboard.cues[idx];
-    if (!cue) return;
 
-    const col = cue.col ?? 0;
-    const row = cue.row ?? 0;
-    const posX = (col / 9) * 100;
-    const posY = (row / 9) * 100;
+    // Tier 1: Instant Fast SD Preview (0ms latency, 10x10 grid)
+    const sdIdx = Math.min(cuesSD.length - 1, Math.max(0, Math.floor(targetSec / interval)));
+    const sdCue = cuesSD[sdIdx];
+    if (sdCue) {
+      const col = sdCue.col ?? 0;
+      const row = sdCue.row ?? 0;
+      const posX = (col / 9) * 100;
+      const posY = (row / 9) * 100;
 
-    el.style.backgroundImage = `url("${cue.url}")`;
-    el.style.backgroundPosition = `${posX}% ${posY}%`;
-    el.style.backgroundSize = '1000% 1000%';
-    el.style.opacity = '1';
+      elSd.style.backgroundImage = `url("${sdCue.url}")`;
+      elSd.style.backgroundPosition = `${posX}% ${posY}%`;
+      elSd.style.backgroundSize = '1000% 1000%';
+      elSd.style.opacity = '1';
+    }
+
+    // Tier 2: Sharp HD Preview (Crossfades when pointer pauses/dwells > 300ms, 5x5 grid)
+    if (hdDwellTimerRef.current) {
+      clearTimeout(hdDwellTimerRef.current);
+      hdDwellTimerRef.current = null;
+    }
+
+    const cuesHD = storyboard?.cuesHD || [];
+    if (cuesHD.length > 0 && elHd) {
+      // Keep HD hidden while scrubbing fast so low-latency SD is displayed
+      elHd.style.opacity = '0';
+
+      hdDwellTimerRef.current = setTimeout(() => {
+        const hdIdx = Math.min(cuesHD.length - 1, Math.max(0, Math.floor(targetSec / interval)));
+        const hdCue = cuesHD[hdIdx];
+        if (hdCue && scrubThumbHdRef.current) {
+          const col = hdCue.col ?? 0;
+          const row = hdCue.row ?? 0;
+          const posX = (col / 4) * 100;
+          const posY = (row / 4) * 100;
+
+          scrubThumbHdRef.current.style.backgroundImage = `url("${hdCue.url}")`;
+          scrubThumbHdRef.current.style.backgroundPosition = `${posX}% ${posY}%`;
+          scrubThumbHdRef.current.style.backgroundSize = '500% 500%';
+          scrubThumbHdRef.current.style.opacity = '1';
+        }
+      }, 300);
+    }
   }, [storyboard]);
 
   // Scrubbing calculation
@@ -680,6 +720,34 @@ export default function VideoPlayer({
         if (!showControls) resetControlsTimer();
       }
     }, 200);
+  };
+
+  // Desktop Single-Click (Play/Pause) vs Double-Click (Fullscreen) with 220ms Debounce
+  const handleDesktopClick = (e) => {
+    if (contextMenu) {
+      setContextMenu(null);
+      return;
+    }
+    if (desktopClickTimerRef.current) {
+      clearTimeout(desktopClickTimerRef.current);
+      desktopClickTimerRef.current = null;
+      toggleFullscreen();
+      return;
+    }
+    desktopClickTimerRef.current = setTimeout(() => {
+      togglePlay();
+      desktopClickTimerRef.current = null;
+    }, 220);
+  };
+
+  // YouTube-Style Right-Click Context Menu
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = Math.min(e.clientX - rect.left, rect.width - 250);
+    const y = Math.min(e.clientY - rect.top, rect.height - 200);
+    setContextMenu({ x: Math.max(10, x), y: Math.max(10, y) });
   };
 
   // Fullscreen & PiP
@@ -823,11 +891,16 @@ export default function VideoPlayer({
 
   const targetFpsNumber = Number(fps) || 30;
   const currentFpsNumber = Number(realtimeFps);
+  const is4K = (resolution && resolution.toString().includes('2160')) || 
+               (activeLevelLabel && (activeLevelLabel.includes('4K') || activeLevelLabel.includes('2160p')));
+  const isHD = is4K || (resolution && (resolution.toString().includes('1080') || resolution.toString().includes('720') || resolution.toString().includes('1440'))) ||
+               (activeLevelLabel && (activeLevelLabel.includes('1080') || activeLevelLabel.includes('720') || activeLevelLabel.includes('1440')));
 
   return (
     <div 
       ref={containerRef}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={handleContextMenu}
+      onClick={() => { if (contextMenu) setContextMenu(null); }}
       onMouseMove={resetControlsTimer}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}
@@ -898,8 +971,14 @@ export default function VideoPlayer({
         }}
       />
 
-      {/* 3-Zone Click / Touch overlay */}
-      <div className="absolute inset-0 grid grid-cols-3 z-10">
+      {/* Desktop Full-Area Click / Double-Click Layer (Single: Play/Pause, Double: Fullscreen) */}
+      <div 
+        onClick={handleDesktopClick}
+        className="hidden md:block absolute inset-0 z-10 cursor-pointer" 
+      />
+
+      {/* Mobile 3-Zone Touch Overlay (Double Tap Seek Left -10s, Center Play/Pause, Right +10s) */}
+      <div className="md:hidden absolute inset-0 grid grid-cols-3 z-10">
         <div onClick={() => handleTouchZone('left')} className="h-full cursor-pointer" />
         <div onClick={() => handleTouchZone('center')} className="h-full cursor-pointer" />
         <div onClick={() => handleTouchZone('right')} className="h-full cursor-pointer" />
@@ -1081,6 +1160,79 @@ export default function VideoPlayer({
               </div>
             </div>
           </div>
+        </div>
+      )}
+ 
+      {/* YouTube-Style Context Menu */}
+      {contextMenu && (
+        <div 
+          className="absolute z-50 bg-[#1f1f1f]/95 border border-white/15 rounded-xl py-1.5 w-56 text-xs text-zinc-200 shadow-2xl backdrop-blur-md"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              if (video.current) {
+                const nextLoop = !isLooping;
+                video.current.loop = nextLoop;
+                setIsLooping(nextLoop);
+                showToast(nextLoop ? 'เปิดการเล่นวนซ้ำ' : 'ปิดการเล่นวนซ้ำ');
+              }
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer"
+          >
+            <span>เล่นวนซ้ำ (Loop)</span>
+            {isLooping && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                navigator.clipboard.writeText(window.location.href);
+                showToast('คัดลอก URL ของวิดีโอแล้ว');
+              }
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5"
+          >
+            <Copy className="w-3.5 h-3.5 text-zinc-400" />
+            <span>คัดลอก URL ของวิดีโอ</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined' && video.current) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('t', Math.floor(video.current.currentTime || 0));
+                navigator.clipboard.writeText(url.toString());
+                showToast(`คัดลอก URL ที่เวลา ${formatTime(video.current.currentTime)} แล้ว`);
+              }
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer"
+          >
+            <Copy className="w-3.5 h-3.5 text-zinc-400" />
+            <span>คัดลอก URL ตามเวลาปัจจุบัน</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowStats(!showStats);
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5"
+          >
+            <span className="flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5 text-emerald-400" />
+              <span>สถิติสำหรับเด็กเนิร์ด</span>
+            </span>
+            {showStats && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
+          </button>
         </div>
       )}
 
@@ -1282,14 +1434,15 @@ export default function VideoPlayer({
                     className="absolute inset-0 w-full h-full object-cover opacity-75"
                   />
                 )}
-                {/* YouTube-Style WebVTT Sprite Sheet Thumbnail Box */}
+                {/* Tier 1: Fast SD Sprite Sheet Layer (0ms Scrubbing) */}
                 <div
-                  ref={scrubThumbSpriteRef}
-                  className="absolute inset-0 w-full h-full bg-no-repeat transition-opacity duration-75 relative z-10 opacity-0"
-                  style={{
-                    backgroundSize: '1000% 1000%',
-                    backgroundPosition: '0% 0%',
-                  }}
+                  ref={scrubThumbSdRef}
+                  className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0"
+                />
+                {/* Tier 2: Sharp HD Sprite Sheet Layer (Fade in when hovering > 300ms) */}
+                <div
+                  ref={scrubThumbHdRef}
+                  className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-200"
                 />
                 {/* Subtle vignette */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none z-20" />
@@ -1350,16 +1503,16 @@ export default function VideoPlayer({
                 {isPlaying ? <Pause className="w-4.5 h-4.5 fill-white" /> : <Play className="w-4.5 h-4.5 fill-white ml-0.5" />}
               </button>
 
-              {/* Volume Slider */}
+              {/* YouTube-Style Expandable Volume Slider */}
               <div 
-                className="flex items-center gap-2 group/vol"
+                className="flex items-center group/vol relative"
                 onMouseEnter={() => setShowVolumeSlider(true)}
                 onMouseLeave={() => setShowVolumeSlider(false)}
               >
                 <button 
                   type="button"
                   onClick={toggleMute} 
-                  className="cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                  className="cursor-pointer p-1.5 rounded-lg hover:bg-white/10 transition"
                   title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
                 >
                   {isMuted || volume === 0 ? (
@@ -1372,7 +1525,7 @@ export default function VideoPlayer({
                 </button>
 
                 <div className={`overflow-hidden transition-all duration-200 flex items-center ${
-                  showVolumeSlider ? 'w-18 sm:w-22 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+                  showVolumeSlider ? 'w-20 sm:w-24 opacity-100 ml-1' : 'w-0 opacity-0 pointer-events-none'
                 }`}>
                   <input
                     type="range"
@@ -1381,7 +1534,7 @@ export default function VideoPlayer({
                     step="0.05"
                     value={isMuted ? 0 : volume}
                     onChange={handleVolumeChange}
-                    className="w-full h-1 accent-[#FF7A00] bg-white/30 rounded-full cursor-pointer"
+                    className="w-full h-1 bg-white/30 rounded-full cursor-pointer accent-white appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white"
                   />
                 </div>
               </div>
@@ -1425,7 +1578,7 @@ export default function VideoPlayer({
                 </span>
               </button>
 
-              {/* Settings */}
+              {/* Settings with HD / 4K Badge */}
               <button
                 type="button"
                 onClick={() => {
@@ -1433,11 +1586,20 @@ export default function VideoPlayer({
                   setActiveMenuTab('main');
                 }}
                 title="การตั้งค่าเครื่องเล่น"
-                className={`p-1.5 rounded-lg transition cursor-pointer ${
+                className={`relative p-1.5 rounded-lg transition cursor-pointer ${
                   showSettingsMenu ? 'text-[#FF7A00] bg-white/10' : 'text-white hover:bg-white/10'
                 }`}
               >
                 <Settings className="w-4 h-4" />
+                {is4K ? (
+                  <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-1 py-0.5 rounded shadow pointer-events-none">
+                    4K
+                  </span>
+                ) : isHD ? (
+                  <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-0.5 py-0.5 rounded shadow pointer-events-none">
+                    HD
+                  </span>
+                ) : null}
               </button>
 
               {/* Fullscreen */}

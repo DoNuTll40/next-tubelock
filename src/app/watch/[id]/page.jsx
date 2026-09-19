@@ -239,36 +239,8 @@ export default function WatchPage() {
               {video.title}
             </h1>
 
-            {/* Badges & Actions Row */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#EFECE6]">
-              {/* Badges */}
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={`font-bold text-xs px-2.5 py-1 rounded-lg uppercase tracking-wide ${
-                    is4K
-                      ? 'bg-[#FF7A00] text-white shadow-xs'
-                      : is2K
-                      ? 'bg-amber-500 text-white'
-                      : 'bg-[#F0EDE6] text-[#212529]'
-                  }`}
-                >
-                  {resBadge}
-                </span>
-
-                {Number(video.fps) > 0 && (
-                  <span className="bg-[#F0EDE6] text-[#212529] font-medium text-xs px-2.5 py-1 rounded-lg font-mono">
-                    {Number(video.fps).toFixed(0)} FPS
-                  </span>
-                )}
-
-                <span className="bg-[#FFF4EB] text-[#FF7A00] font-semibold text-xs px-2.5 py-1 rounded-lg uppercase">
-                  {video.codec ? video.codec.toUpperCase() : 'H264'}
-                </span>
-
-                <span className="bg-[#F0EDE6] text-[#6C757D] font-medium text-xs px-2.5 py-1 rounded-lg">
-                  {video.source_type === 'hls' ? 'HLS Adaptive' : 'Direct Stream'}
-                </span>
-              </div>
+            {/* Actions Row */}
+            <div className="flex flex-wrap items-center justify-end gap-3 pb-3 border-b border-[#EFECE6]">
 
               {/* Action Buttons */}
               <div className="flex items-center gap-2">

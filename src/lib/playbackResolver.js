@@ -39,26 +39,9 @@ function parseVttTimeToSeconds(timeStr) {
   return Number(timeStr) || 0;
 }
 
-export async function resolveStoryboard(items) {
-  if (!Array.isArray(items)) return null;
-
-  let vttItem = null;
-  const spriteMap = {};
-
-  for (const item of items) {
-    if (!item.downloadUrl) continue;
-    const lower = item.name.toLowerCase();
-    if (lower === 'thumbnails.vtt' || lower.endsWith('.vtt')) {
-      vttItem = item;
-    } else if (lower.startsWith('sprite_') && (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp') || lower.endsWith('.png'))) {
-      spriteMap[item.name] = item.downloadUrl;
-    }
-  }
-
-  if (!vttItem) return null;
-
+async function parseSingleVtt(vttUrl, spriteMap, defaultW, defaultH, colsCount) {
   try {
-    const res = await fetch(vttItem.downloadUrl);
+    const res = await fetch(vttUrl);
     if (!res.ok) return null;
     const text = await res.text();
 
@@ -83,17 +66,57 @@ export async function resolveStoryboard(items) {
           url: resolvedSpriteUrl,
           x,
           y,
-          w: w || 160,
-          h: h || 90,
-          col: Math.round(x / (w || 160)),
-          row: Math.round(y / (h || 90)),
+          w: w || defaultW,
+          h: h || defaultH,
+          col: Math.round(x / (w || defaultW)),
+          row: Math.round(y / (h || defaultH)),
+          cols: colsCount,
         });
       }
     }
+    return cues;
+  } catch (_) {
+    return null;
+  }
+}
 
+export async function resolveStoryboard(items) {
+  if (!Array.isArray(items)) return null;
+
+  let vttDefault = null;
+  let vttSD = null;
+  let vttHD = null;
+  const spriteMap = {};
+
+  for (const item of items) {
+    if (!item.downloadUrl) continue;
+    const lower = item.name.toLowerCase();
+    if (lower === 'thumbnails_hd.vtt') {
+      vttHD = item;
+    } else if (lower === 'thumbnails_sd.vtt') {
+      vttSD = item;
+    } else if (lower === 'thumbnails.vtt' || lower.endsWith('.vtt')) {
+      vttDefault = item;
+    } else if (lower.startsWith('sprite_') && (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp') || lower.endsWith('.png'))) {
+      spriteMap[item.name] = item.downloadUrl;
+    }
+  }
+
+  const primarySD = vttSD || vttDefault;
+  if (!primarySD && !vttHD) return null;
+
+  try {
+    const [cuesSD, cuesHD] = await Promise.all([
+      primarySD ? parseSingleVtt(primarySD.downloadUrl, spriteMap, 160, 90, 10) : null,
+      vttHD ? parseSingleVtt(vttHD.downloadUrl, spriteMap, 320, 180, 5) : null,
+    ]);
+
+    const activeCues = cuesSD || cuesHD || [];
     return {
-      cues,
-      interval: cues.length > 1 ? Math.max(1, cues[1].start - cues[0].start) : 5,
+      cues: activeCues, // Default SD
+      cuesSD: cuesSD || activeCues,
+      cuesHD: cuesHD || null,
+      interval: activeCues.length > 1 ? Math.max(1, activeCues[1].start - activeCues[0].start) : 5,
     };
   } catch (err) {
     console.warn('[Storyboard Resolver Warning]:', err.message);

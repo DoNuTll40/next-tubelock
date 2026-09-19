@@ -338,7 +338,7 @@ function formatVttTime(sec) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
 }
 
-function generateWebVTT({ duration, interval = 5, cols = 10, rows = 10, width = 160, height = 90 }) {
+function generateWebVTT({ duration, interval = 5, cols = 10, rows = 10, width = 160, height = 90, prefix = 'sprite_' }) {
   const totalFrames = Math.max(1, Math.ceil(duration / interval));
   const tilesPerSheet = cols * rows;
   let vtt = 'WEBVTT\n\n';
@@ -347,7 +347,7 @@ function generateWebVTT({ duration, interval = 5, cols = 10, rows = 10, width = 
     const startSec = i * interval;
     const endSec = Math.min((i + 1) * interval, duration);
     const sheetIdx = Math.floor(i / tilesPerSheet) + 1;
-    const sheetName = `sprite_${String(sheetIdx).padStart(3, '0')}.jpg`;
+    const sheetName = `${prefix}${String(sheetIdx).padStart(3, '0')}.jpg`;
     const indexInSheet = i % tilesPerSheet;
     const col = indexInSheet % cols;
     const row = Math.floor(indexInSheet / cols);
@@ -527,31 +527,33 @@ async function main() {
     const masterPath = path.join(hlsOutputDir, 'master.m3u8');
     fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
-    // Generate YouTube-style Storyboard Sprite Sheet & WebVTT metadata
-    console.log('📸 Generating YouTube-style Storyboard Sprite Sheets & WebVTT...');
-    const spritePattern = path.join(hlsOutputDir, 'sprite_%03d.jpg');
+    // Generate YouTube-style Two-Tier Storyboard Sprite Sheets (SD 160x90 + HD 320x180) & WebVTT
+    console.log('📸 Generating YouTube-style Two-Tier Storyboard Sprite Sheets (SD + HD) & WebVTT...');
     let hasStoryboard = false;
     try {
       await runFFmpeg([
         '-y',
         '-ss', '0',
         '-i', rawFilePath,
-        '-vf', 'fps=1/5,scale=160:90,tile=10x10',
-        '-q:v', '3',
-        '-an',
-        spritePattern,
+        '-filter_complex',
+        '[0:v]fps=1/5,scale=160:90,tile=10x10[sd];[0:v]fps=1/5,scale=320:180,tile=5x5[hd]',
+        '-map', '[sd]', '-q:v', '4', path.join(hlsOutputDir, 'sprite_sd_%03d.jpg'),
+        '-map', '[hd]', '-q:v', '2', path.join(hlsOutputDir, 'sprite_hd_%03d.jpg'),
       ]);
-      const vttContent = generateWebVTT({ duration, interval: 5, cols: 10, rows: 10, width: 160, height: 90 });
-      fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails.vtt'), vttContent);
+      const vttSD = generateWebVTT({ duration, interval: 5, cols: 10, rows: 10, width: 160, height: 90, prefix: 'sprite_sd_' });
+      const vttHD = generateWebVTT({ duration, interval: 5, cols: 5, rows: 5, width: 320, height: 180, prefix: 'sprite_hd_' });
+      fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails_sd.vtt'), vttSD);
+      fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails_hd.vtt'), vttHD);
+      fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails.vtt'), vttSD);
       hasStoryboard = true;
-      console.log('✅ Storyboard Sprite Sheets and thumbnails.vtt created successfully!');
+      console.log('✅ Two-Tier Storyboard Sprite Sheets (SD + HD) and WebVTT created successfully!');
     } catch (spriteErr) {
-      console.warn('⚠️ Storyboard generation warning:', spriteErr.message);
+      console.warn('⚠️ Two-Tier Storyboard generation warning:', spriteErr.message);
     }
 
     // Upload 144p files + master.m3u8 + thumbnails/sprites
     const pass1Files = fs.readdirSync(hlsOutputDir).filter((f) => 
-      f.includes('144p') || f === 'master.m3u8' || f === 'thumbnails.vtt' || f.startsWith('sprite_')
+      f.includes('144p') || f === 'master.m3u8' || f.includes('thumbnails') || f.startsWith('sprite_')
     );
     for (const f of pass1Files) {
       await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
