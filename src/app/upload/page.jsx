@@ -164,7 +164,7 @@ export default function UploadPage() {
         durationSec: dur,
         durationFormatted: formatDuration(dur),
         approxBitrate: `${bitrateNum} Mbps`,
-        fps: 30,
+        fps: meta.fps || 60,
         codec: 'AVC1 / H.264',
         mimeType: selectedFile.type || 'video/mp4',
         lastModified: lastModifiedDate,
@@ -174,7 +174,7 @@ export default function UploadPage() {
         setThumbnailUrl(meta.thumbnailDataUrl);
       }
 
-      addLog(`วิเคราะห์ข้อมูลวิดีโอ: ${w}x${h} [${resLabel}], ความยาว ${formatDuration(dur)}, บิตเรตโดยประมาณ ${bitrateNum} Mbps`);
+      addLog(`วิเคราะห์ข้อมูลวิดีโอ: ${w}x${h} [${resLabel}], ${meta.fps || 60} fps, ความยาว ${formatDuration(dur)}, บิตเรตโดยประมาณ ${bitrateNum} Mbps`);
     } catch {
       setFileDetails({
         name: selectedFile.name,
@@ -187,7 +187,7 @@ export default function UploadPage() {
         durationSec: 0,
         durationFormatted: '0:00',
         approxBitrate: '-',
-        fps: 30,
+        fps: 60,
         codec: 'H.264',
         mimeType: selectedFile.type || 'video/mp4',
         lastModified: lastModifiedDate,

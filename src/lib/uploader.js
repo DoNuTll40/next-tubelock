@@ -1,4 +1,5 @@
 import { classifyResolution } from './videoUtils';
+import { parseMp4Metadata } from './mp4Parser';
 
 /**
  * Multiple of 320 KiB required by Microsoft Graph createUploadSession
@@ -7,9 +8,17 @@ import { classifyResolution } from './videoUtils';
 const CHUNK_SIZE = 320 * 1024 * 32;
 
 /**
- * Extract client-side video metadata (duration, dimensions, resolution, thumbnail)
+ * Extract client-side video metadata (duration, dimensions, resolution, thumbnail, exact fps)
  */
 export async function extractVideoMetadata(file) {
+  // Parse MP4 container boxes in parallel for exact FPS
+  let mp4Meta = null;
+  try {
+    mp4Meta = await parseMp4Metadata(file);
+  } catch (_) {}
+
+  const detectedFps = mp4Meta?.fps || 60;
+
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
@@ -65,6 +74,7 @@ export async function extractVideoMetadata(file) {
         width: video.videoWidth || 1920,
         height: video.videoHeight || 1080,
         resolution: classifyResolution(video.videoWidth || 1920, video.videoHeight || 1080),
+        fps: detectedFps,
         thumbnailDataUrl,
       });
     };
@@ -77,6 +87,7 @@ export async function extractVideoMetadata(file) {
         width: 1920,
         height: 1080,
         resolution: '1080p',
+        fps: detectedFps,
         thumbnailDataUrl: null,
       });
     };
