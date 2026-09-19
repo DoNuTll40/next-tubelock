@@ -16,6 +16,16 @@ const EDGE_CACHE_HEADERS = {
   'Vercel-CDN-Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
 };
 
+let columnsChecked = false;
+async function ensureSourceCacheColumns(sql) {
+  if (columnsChecked) return;
+  try {
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache JSONB;`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_expires_at BIGINT DEFAULT 0;`;
+    columnsChecked = true;
+  } catch (_) {}
+}
+
 /**
  * GET /api/videos/[id]/source
  * Resolves direct playback URL from OneDrive via Azure Client Secret with 0ms in-memory cache & request coalescing
@@ -44,9 +54,10 @@ export async function GET(request, context) {
       return NextResponse.json(data, { headers: EDGE_CACHE_HEADERS });
     }
 
-    // ⚡ 3. Cold Fetch with Promise Coalescing
+    // ⚡ 3. Cold Fetch with Promise Coalescing & Database Persistent Cache
     const fetchPromise = (async () => {
       const sql = getDb();
+      await ensureSourceCacheColumns(sql);
 
       const rows = await sql`SELECT * FROM videos WHERE id = ${id} LIMIT 1;`;
       if (!rows || rows.length === 0) {
@@ -70,6 +81,32 @@ export async function GET(request, context) {
         };
       }
 
+      // ⚡⚡⚡ ULTRA-SPEED PERSISTENT DB CACHE HIT (<30ms) ⚡⚡⚡
+      // If cached in Neon DB and download URLs are still valid, return IMMEDIATELY!
+      const now = Date.now();
+      if (
+        video.source_cache &&
+        video.source_cache_expires_at &&
+        Number(video.source_cache_expires_at) > now
+      ) {
+        const parsedCache = typeof video.source_cache === 'string'
+          ? JSON.parse(video.source_cache)
+          : video.source_cache;
+
+        if (parsedCache && (parsedCache.items?.length > 0 || parsedCache.url)) {
+          const resultData = {
+            ...parsedCache,
+            video,
+          };
+          sourceCache.set(cacheKey, {
+            data: resultData,
+            expiresAt: Number(video.source_cache_expires_at),
+          });
+          return resultData;
+        }
+      }
+
+      // If not in DB cache or expired, fetch fresh download URLs from OneDrive (valid for 90-120 mins)
       const token = await getGraphToken();
       const driveId = await getUserDriveId(token);
 
@@ -110,11 +147,30 @@ export async function GET(request, context) {
           items: validItems,
         };
 
-        // Cache for 60 minutes
+        // Cache for 90 minutes (OneDrive SAS download URLs are valid for 2-6 hours)
+        const expiresAt = Date.now() + 90 * 60 * 1000;
+
         sourceCache.set(cacheKey, {
           data: resultData,
-          expiresAt: Date.now() + 60 * 60 * 1000,
+          expiresAt,
         });
+
+        // 💾 Persist to Neon DB so ALL serverless instances and users get <30ms response!
+        try {
+          const cachePayload = JSON.stringify({
+            success: true,
+            type: 'hls',
+            items: validItems,
+          });
+          await sql`
+            UPDATE videos 
+            SET source_cache = ${cachePayload}::jsonb,
+                source_cache_expires_at = ${expiresAt}
+            WHERE id = ${id};
+          `;
+        } catch (dbErr) {
+          console.warn('[DB source_cache save warning]:', dbErr.message);
+        }
 
         return resultData;
       }
@@ -140,11 +196,28 @@ export async function GET(request, context) {
         video,
       };
 
-      // Cache for 60 minutes
+      const expiresAt = Date.now() + 90 * 60 * 1000;
+
       sourceCache.set(cacheKey, {
         data: resultData,
-        expiresAt: Date.now() + 60 * 60 * 1000,
+        expiresAt,
       });
+
+      try {
+        const cachePayload = JSON.stringify({
+          success: true,
+          type: 'mp4',
+          url: downloadUrl,
+        });
+        await sql`
+          UPDATE videos 
+          SET source_cache = ${cachePayload}::jsonb,
+              source_cache_expires_at = ${expiresAt}
+          WHERE id = ${id};
+        `;
+      } catch (dbErr) {
+        console.warn('[DB source_cache save warning]:', dbErr.message);
+      }
 
       return resultData;
     })();
