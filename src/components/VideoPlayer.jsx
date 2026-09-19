@@ -600,15 +600,28 @@ export default function VideoPlayer({
     showToast(nextMuted ? 'ปิดเสียง' : `ระดับเสียง: ${Math.round((nextMuted ? 0 : volume) * 100)}%`);
   };
 
-  // Fast Seek Commit
+  // Fast Seek Commit (Direct currentTime assignment with instant DOM sync)
   const commitSeek = useCallback((targetTime) => {
     if (!video.current) return;
-    const clamped = Math.min(Math.max(targetTime, 0), duration);
-    if ('fastSeek' in video.current) {
-      video.current.fastSeek(clamped);
-    } else {
+    const dur = video.current.duration || duration;
+    const clamped = Math.min(Math.max(targetTime, 0), dur > 0 ? dur : targetTime);
+    
+    // Always assign currentTime directly for 100% reliable seeking across all browsers
+    try {
       video.current.currentTime = clamped;
+    } catch (_) {}
+
+    // Immediate DOM updates so timeline and counter update instantly even when video is paused
+    if (dur > 0) {
+      const pct = (clamped / dur) * 100;
+      if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
+      if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
+      if (timeDisplayRef.current) {
+        timeDisplayRef.current.textContent = `${formatTime(clamped)} / ${formatTime(dur)}`;
+      }
     }
+    setPreviewTime(clamped);
+    setPreviewPercent(dur > 0 ? (clamped / dur) * 100 : 0);
     pendingTargetTimeRef.current = null;
   }, [duration, video]);
 
@@ -785,6 +798,7 @@ export default function VideoPlayer({
       latestScrubTimeRef.current = null;
       isScrubbingRef.current = false;
       setIsScrubbing(false);
+      setIsHoveringSeek(false);
       resetControlsTimer();
     }
   };
@@ -1843,7 +1857,21 @@ export default function VideoPlayer({
           onPointerMove={handleSeekMouseMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
-          onMouseEnter={() => setIsHoveringSeek(true)}
+          onClick={(e) => {
+            e.stopPropagation();
+            calculateScrubPosition(e.clientX);
+            const target = latestScrubTimeRef.current !== null ? latestScrubTimeRef.current : previewTime;
+            commitSeek(target);
+            latestScrubTimeRef.current = null;
+            setIsScrubbing(false);
+            isScrubbingRef.current = false;
+            setIsHoveringSeek(false);
+          }}
+          onMouseEnter={(e) => {
+            if (!isMobileView && e?.pointerType !== 'touch') {
+              setIsHoveringSeek(true);
+            }
+          }}
           onMouseLeave={() => setIsHoveringSeek(false)}
           className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
         >
