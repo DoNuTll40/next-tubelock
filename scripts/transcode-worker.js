@@ -439,8 +439,9 @@ async function main() {
     const fps = vStream.r_frame_rate ? Math.round(eval(vStream.r_frame_rate) || 30) : 30;
     const codec = vStream.codec_name || 'h264';
     const resolutionLabel = (srcHeight >= 2160 || srcWidth >= 3840) ? '4K' : (srcHeight >= 1440 || srcWidth >= 2560) ? '2K' : srcHeight >= 1080 ? '1080p' : srcHeight >= 720 ? '720p' : '480p';
+    const gopSize = String(fps > 0 ? Math.round(fps * 2) : 60);
 
-    console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, codec: ${codec}`);
+    console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, GOP: ${gopSize}, codec: ${codec}`);
 
     // Create HLS Destination Folder on OneDrive
     const streamFolderName = `stream_vid_${VIDEO_ID}`;
@@ -475,6 +476,7 @@ async function main() {
     console.log('📸 Generating poster thumbnail...');
     await runFFmpeg([
       '-y',
+      '-threads', '0',
       '-ss', Math.min(1.5, Math.max(0.5, duration * 0.1)).toFixed(1),
       '-i', rawFilePath,
       '-vframes', '1',
@@ -498,12 +500,16 @@ async function main() {
     console.log('⚡ Slicing 144p for instant playback (fastest pass)...');
     let lastProgressUpdate = 0;
     await runFFmpeg([
-      '-y', '-i', rawFilePath,
+      '-y',
+      '-threads', '0',
+      '-i', rawFilePath,
       '-vf', 'scale=w=256:h=144:force_original_aspect_ratio=decrease,pad=256:144:(ow-iw)/2:(oh-ih)/2',
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
+      '-c:v', 'libx264', '-preset', 'ultrafast',
+      '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+      '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
       '-c:a', 'aac', '-b:a', '64k',
       '-f', 'hls',
-      '-hls_time', '6',
+      '-hls_time', '4',
       '-hls_playlist_type', 'vod',
       '-hls_flags', 'independent_segments',
       '-hls_segment_type', 'mpegts',
@@ -533,11 +539,12 @@ async function main() {
     try {
       await runFFmpeg([
         '-y',
+        '-threads', '0',
         '-ss', '0',
         '-i', rawFilePath,
         '-filter_complex',
         '[0:v]fps=1/5,scale=160:90,tile=10x10[sd];[0:v]fps=1/5,scale=320:180,tile=5x5[hd]',
-        '-map', '[sd]', '-q:v', '4', path.join(hlsOutputDir, 'sprite_sd_%03d.jpg'),
+        '-map', '[sd]', '-q:v', '3', path.join(hlsOutputDir, 'sprite_sd_%03d.jpg'),
         '-map', '[hd]', '-q:v', '2', path.join(hlsOutputDir, 'sprite_hd_%03d.jpg'),
       ]);
       const vttSD = generateWebVTT({ duration, interval: 5, cols: 10, rows: 10, width: 160, height: 90, prefix: 'sprite_sd_' });
@@ -545,6 +552,14 @@ async function main() {
       fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails_sd.vtt'), vttSD);
       fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails_hd.vtt'), vttHD);
       fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails.vtt'), vttSD);
+
+      // Create standard sprite_%03d.jpg aliases for backward compatibility
+      const sdSprites = fs.readdirSync(hlsOutputDir).filter((f) => f.startsWith('sprite_sd_'));
+      for (const f of sdSprites) {
+        const stdName = f.replace('sprite_sd_', 'sprite_');
+        fs.copyFileSync(path.join(hlsOutputDir, f), path.join(hlsOutputDir, stdName));
+      }
+
       hasStoryboard = true;
       console.log('✅ Two-Tier Storyboard Sprite Sheets (SD + HD) and WebVTT created successfully!');
     } catch (spriteErr) {
@@ -582,12 +597,16 @@ async function main() {
     if (srcHeight >= 360) {
       console.log('⚡ Slicing 360p in background...');
       await runFFmpeg([
-        '-y', '-i', rawFilePath,
+        '-y',
+        '-threads', '0',
+        '-i', rawFilePath,
         '-vf', 'scale=w=640:h=360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
         '-c:a', 'aac', '-b:a', '96k',
         '-f', 'hls',
-        '-hls_time', '6',
+        '-hls_time', '4',
         '-hls_playlist_type', 'vod',
         '-hls_flags', 'independent_segments',
         '-hls_segment_type', 'mpegts',
@@ -622,12 +641,16 @@ async function main() {
     if (srcHeight >= 480) {
       console.log('⚡ Slicing 480p in background...');
       await runFFmpeg([
-        '-y', '-i', rawFilePath,
+        '-y',
+        '-threads', '0',
+        '-i', rawFilePath,
         '-vf', 'scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
         '-c:a', 'aac', '-b:a', '96k',
         '-f', 'hls',
-        '-hls_time', '6',
+        '-hls_time', '4',
         '-hls_playlist_type', 'vod',
         '-hls_flags', 'independent_segments',
         '-hls_segment_type', 'mpegts',
@@ -662,12 +685,16 @@ async function main() {
     if (srcHeight >= 720) {
       console.log('⚡ Slicing 720p in background...');
       await runFFmpeg([
-        '-y', '-i', rawFilePath,
+        '-y',
+        '-threads', '0',
+        '-i', rawFilePath,
         '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '4000k',
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '4000k',
         '-c:a', 'aac', '-b:a', '128k',
         '-f', 'hls',
-        '-hls_time', '6',
+        '-hls_time', '4',
         '-hls_playlist_type', 'vod',
         '-hls_flags', 'independent_segments',
         '-hls_segment_type', 'mpegts',
@@ -702,12 +729,16 @@ async function main() {
     if (srcHeight >= 1080) {
       console.log('⚡ Slicing 1080p in background...');
       await runFFmpeg([
-        '-y', '-i', rawFilePath,
+        '-y',
+        '-threads', '0',
+        '-i', rawFilePath,
         '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '4500k', '-maxrate', '5000k', '-bufsize', '7500k',
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '4500k', '-maxrate', '5000k', '-bufsize', '7500k',
         '-c:a', 'aac', '-b:a', '128k',
         '-f', 'hls',
-        '-hls_time', '6',
+        '-hls_time', '4',
         '-hls_playlist_type', 'vod',
         '-hls_flags', 'independent_segments',
         '-hls_segment_type', 'mpegts',
@@ -742,12 +773,16 @@ async function main() {
     if (srcHeight >= 1440 || srcWidth >= 2560) {
       console.log('⚡ Slicing 1440p (2K) in background...');
       await runFFmpeg([
-        '-y', '-i', rawFilePath,
+        '-y',
+        '-threads', '0',
+        '-i', rawFilePath,
         '-vf', 'scale=w=2560:h=1440:force_original_aspect_ratio=decrease,pad=2560:1440:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '8500k', '-maxrate', '9500k', '-bufsize', '14000k',
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '8500k', '-maxrate', '9500k', '-bufsize', '14000k',
         '-c:a', 'aac', '-b:a', '192k',
         '-f', 'hls',
-        '-hls_time', '6',
+        '-hls_time', '4',
         '-hls_playlist_type', 'vod',
         '-hls_flags', 'independent_segments',
         '-hls_segment_type', 'mpegts',
@@ -782,12 +817,16 @@ async function main() {
     if (srcHeight >= 2160 || srcWidth >= 3840) {
       console.log('⚡ Slicing 2160p (4K UHD) in background...');
       await runFFmpeg([
-        '-y', '-i', rawFilePath,
+        '-y',
+        '-threads', '0',
+        '-i', rawFilePath,
         '-vf', 'scale=w=3840:h=2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '14000k', '-maxrate', '16000k', '-bufsize', '24000k',
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '14000k', '-maxrate', '16000k', '-bufsize', '24000k',
         '-c:a', 'aac', '-b:a', '192k',
         '-f', 'hls',
-        '-hls_time', '6',
+        '-hls_time', '4',
         '-hls_playlist_type', 'vod',
         '-hls_flags', 'independent_segments',
         '-hls_segment_type', 'mpegts',

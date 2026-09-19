@@ -1,4 +1,4 @@
-name: TubeLock Serverless HLS Transcoding
+name: "Transcode HLS Multi-bitrate (Ubuntu 4-Core / 16GB)"
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
 
 jobs:
   transcode:
-    name: Transcode HLS Multi-bitrate (Ubuntu 2-Core / 7GB)
+    name: "Transcode HLS Multi-bitrate (Ubuntu 4-Core / 16GB)"
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
