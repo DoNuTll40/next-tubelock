@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 /**
  * GET /api/videos/queue
  * Returns videos currently in the transcoding lifecycle or recently failed
@@ -40,6 +43,10 @@ export async function GET() {
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       })),
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      },
     });
   } catch (err) {
     console.error('[API_VIDEOS_QUEUE_ERROR]:', err);

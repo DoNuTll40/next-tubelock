@@ -6,7 +6,7 @@ import {
   Upload, Film, CheckCircle2, AlertCircle, RefreshCw,
   Play, HardDrive, Folder, Clock, ChevronDown, ChevronUp,
   Copy, Check, FileVideo, ListOrdered, ArrowRight, RotateCcw,
-  Sliders, Database, Terminal
+  Sliders, Database, Terminal, Trash2, XCircle
 } from 'lucide-react';
 import { extractVideoMetadata } from '@/lib/uploader';
 
@@ -467,6 +467,46 @@ export default function UploadPage() {
       setErrorMsg(err.message);
       addLog(`ลองใหม่ไม่สำเร็จ: ${err.message}`);
     }
+  };
+
+  // Delete queue item permanently from DB and OneDrive
+  const handleDeleteQueueItem = async (id, itemTitle) => {
+    if (!confirm(`ต้องการยกเลิกและลบคิว "${itemTitle || '#' + id}" ออกจากระบบถาวรใช่หรือไม่?`)) return;
+
+    // Optimistically remove from state immediately (Zero Cache!)
+    setQueueItems((prev) => prev.filter((item) => item.id !== id));
+    addLog(`ลบคิว #${id} ออกจากระบบ...`);
+
+    try {
+      const res = await fetch(`/api/videos/${id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        addLog(`ลบคิว #${id} สำเร็จเรียบร้อย`);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'ลบคิวไม่สำเร็จ');
+      }
+    } catch (err) {
+      addLog(`ข้อผิดพลาดในการลบคิว: ${err.message}`);
+    } finally {
+      loadQueue();
+    }
+  };
+
+  // Clear all failed queue items
+  const handleClearAllFailed = async () => {
+    const failedItems = queueItems.filter((i) => i.status === 'FAILED');
+    if (failedItems.length === 0) return;
+    if (!confirm(`ต้องการลบคิวที่ล้มเหลวทั้งหมด (${failedItems.length} รายการ) หรือไม่?`)) return;
+
+    setQueueItems((prev) => prev.filter((item) => item.status !== 'FAILED'));
+    for (const item of failedItems) {
+      try {
+        await fetch(`/api/videos/${item.id}`, { method: 'DELETE' });
+      } catch (_) {}
+    }
+    loadQueue();
   };
 
   const copyLogText = () => {
@@ -1005,19 +1045,32 @@ export default function UploadPage() {
                 คิวงานแปลงไฟล์ทั้งหมด (Transcode Queue Dashboard)
               </h2>
               <p className="text-xs text-[#8C857B] mt-0.5">
-                รายการวิดีโอที่กำลังอยู่ในคิวหรือประมวลผลบน GitHub Actions
+                รายการวิดีโอที่กำลังอยู่ในคิวหรือประมวลผลบน GitHub Actions (สามารถยกเลิกหรือลบออกได้ทันที)
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={loadQueue}
-              disabled={loadingQueue}
-              className="flex items-center gap-1.5 text-xs text-[#8C857B] hover:text-[#212529] px-3 py-1.5 rounded-xl border border-[#EFECE6] hover:bg-[#FBF9F5] transition"
-            >
-              <RefreshCw className={`w-3 h-3 ${loadingQueue ? 'animate-spin' : ''}`} />
-              <span>รีเฟรชสถานะ</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {queueItems.some((i) => i.status === 'FAILED') && (
+                <button
+                  type="button"
+                  onClick={handleClearAllFailed}
+                  className="flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 transition font-medium"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>ล้างที่ล้มเหลว</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={loadQueue}
+                disabled={loadingQueue}
+                className="flex items-center gap-1.5 text-xs text-[#8C857B] hover:text-[#212529] px-3 py-1.5 rounded-xl border border-[#EFECE6] hover:bg-[#FBF9F5] transition"
+              >
+                <RefreshCw className={`w-3 h-3 ${loadingQueue ? 'animate-spin' : ''}`} />
+                <span>รีเฟรช</span>
+              </button>
+            </div>
           </div>
 
           {queueItems.length === 0 ? (
@@ -1034,11 +1087,11 @@ export default function UploadPage() {
                   className="p-4 rounded-xl border border-[#EFECE6] bg-[#FBF9F5] flex flex-col gap-3"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-[#212529] line-clamp-1">{item.title}</span>
+                        <span className="text-xs font-bold text-[#212529] truncate">{item.title}</span>
                         <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
                             item.status === 'TRANSCODING'
                               ? 'bg-orange-100 text-orange-800'
                               : item.status === 'PROCESSING'
@@ -1053,21 +1106,33 @@ export default function UploadPage() {
                           {item.status}
                         </span>
                       </div>
-                      <span className="text-[11px] text-[#8C857B] mt-0.5 block">
+                      <span className="text-[11px] text-[#8C857B] mt-0.5 block truncate">
                         ไฟล์ดิบ: {item.rawFileName} • ID: #{item.id}
                       </span>
                     </div>
 
-                    {item.status === 'FAILED' && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {item.status === 'FAILED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleRetryTrigger(item.id, item.rawFileName, item.title)}
+                          className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold transition"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>ลองใหม่</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        onClick={() => handleRetryTrigger(item.id, item.rawFileName, item.title)}
-                        className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold transition shrink-0"
+                        onClick={() => handleDeleteQueueItem(item.id, item.title)}
+                        title="ยกเลิกและลบคิวนี้ถาวร"
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-lg font-medium transition"
                       >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>ลองใหม่</span>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>ลบคิว</span>
                       </button>
-                    )}
+                    </div>
                   </div>
 
                   <div className="w-full bg-[#EFECE6] h-1.5 rounded-full overflow-hidden">

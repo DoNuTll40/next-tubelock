@@ -288,11 +288,28 @@ async function uploadFileToOneDrive(token, driveId, folderId, fileName, filePath
   return uploadResult;
 }
 
-function runFFmpeg(args) {
+function formatTime(sec) {
+  if (!sec || isNaN(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+
+function runFFmpeg(args, onProgress) {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', args);
     let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.stderr.on('data', (d) => {
+      const str = d.toString();
+      stderr += str;
+      if (onProgress) {
+        const timeMatch = str.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+        if (timeMatch) {
+          const sec = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
+          onProgress(sec);
+        }
+      }
+    });
     proc.on('close', (code) => {
       if (code === 0) resolve();
       else reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
@@ -446,6 +463,7 @@ async function main() {
     });
 
     console.log('⚡ Slicing 480p for instant playback...');
+    let lastProgressUpdate = 0;
     await runFFmpeg([
       '-y', '-i', rawFilePath,
       '-vf', 'scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',
@@ -458,7 +476,18 @@ async function main() {
       '-hls_segment_type', 'mpegts',
       '-hls_segment_filename', path.join(hlsOutputDir, 'stream_480p_%03d.ts'),
       path.join(hlsOutputDir, '480p.m3u8'),
-    ]);
+    ], (sec) => {
+      if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+        lastProgressUpdate = Date.now();
+        const pct = Math.min(99, Math.round((sec / duration) * 100));
+        const overall = Math.min(48, 30 + Math.round(pct * 0.18));
+        updateDbStatus({
+          status: 'TRANSCODING',
+          progress: overall,
+          stageDetail: `กำลังหั่น 480p SD: ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+        });
+      }
+    });
 
     readyQualities.push({ name: '480p', width: 854, height: 480, bitrate: 1000000 });
 
@@ -493,12 +522,6 @@ async function main() {
     // =========================================================================
     if (srcHeight >= 720) {
       console.log('⚡ Slicing 720p in background...');
-      await updateDbStatus({
-        status: 'READY',
-        progress: 70,
-        stageDetail: '⚡ เปิดดูได้แล้ว (กำลังแปลง 720p HD เพิ่มเติมในพื้นหลัง...)',
-      });
-
       await runFFmpeg([
         '-y', '-i', rawFilePath,
         '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
@@ -511,7 +534,18 @@ async function main() {
         '-hls_segment_type', 'mpegts',
         '-hls_segment_filename', path.join(hlsOutputDir, 'stream_720p_%03d.ts'),
         path.join(hlsOutputDir, '720p.m3u8'),
-      ]);
+      ], (sec) => {
+        if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+          lastProgressUpdate = Date.now();
+          const pct = Math.min(99, Math.round((sec / duration) * 100));
+          const overall = Math.min(78, 52 + Math.round(pct * 0.25));
+          updateDbStatus({
+            status: 'READY',
+            progress: overall,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 720p HD: ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+          });
+        }
+      });
 
       readyQualities.unshift({ name: '720p', width: 1280, height: 720, bitrate: 2500000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
@@ -528,12 +562,6 @@ async function main() {
     // =========================================================================
     if (srcHeight >= 1080) {
       console.log('⚡ Slicing 1080p in background...');
-      await updateDbStatus({
-        status: 'READY',
-        progress: 88,
-        stageDetail: '⚡ เปิดดูได้แล้ว (กำลังแปลง 1080p Full HD เพิ่มเติมในพื้นหลัง...)',
-      });
-
       await runFFmpeg([
         '-y', '-i', rawFilePath,
         '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
@@ -546,7 +574,18 @@ async function main() {
         '-hls_segment_type', 'mpegts',
         '-hls_segment_filename', path.join(hlsOutputDir, 'stream_1080p_%03d.ts'),
         path.join(hlsOutputDir, '1080p.m3u8'),
-      ]);
+      ], (sec) => {
+        if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+          lastProgressUpdate = Date.now();
+          const pct = Math.min(99, Math.round((sec / duration) * 100));
+          const overall = Math.min(96, 80 + Math.round(pct * 0.16));
+          updateDbStatus({
+            status: 'READY',
+            progress: overall,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 1080p Full HD: ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+          });
+        }
+      });
 
       readyQualities.unshift({ name: '1080p', width: 1920, height: 1080, bitrate: 4500000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
