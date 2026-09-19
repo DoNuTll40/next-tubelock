@@ -47,6 +47,9 @@ function calculateAspectRatio(w, h) {
 
 export default function UploadPage() {
   const fileInputRef = useRef(null);
+  const fileRef = useRef(null);
+  const titleRef = useRef('');
+  const descriptionRef = useRef('');
   const logEndRef = useRef(null);
   const pollingTimerRef = useRef(null);
 
@@ -149,6 +152,7 @@ export default function UploadPage() {
   // Handle File Selection
   const handleFile = async (selectedFile) => {
     if (!selectedFile) return;
+    fileRef.current = selectedFile;
     setErrorMsg(null);
     setCompletedVideo(null);
     setCurrentStatus(null);
@@ -157,7 +161,10 @@ export default function UploadPage() {
 
     const cleanBaseName = selectedFile.name.replace(/\.[^/.]+$/, '');
     setTitle(cleanBaseName);
-    setDescription(`สตรีมมิ่งผ่าน HLS Multi-bitrate (Serverless HLS Engine)`);
+    titleRef.current = cleanBaseName;
+    const defaultDesc = `สตรีมมิ่งผ่าน HLS Multi-bitrate (Serverless HLS Engine)`;
+    setDescription(defaultDesc);
+    descriptionRef.current = defaultDesc;
 
     const sizeFormatted = formatBytes(selectedFile.size);
     const lastModifiedDate = selectedFile.lastModified
@@ -197,7 +204,8 @@ export default function UploadPage() {
     );
 
     if (isMobile) {
-      addLog(`โหมด Mobile Direct Stream: ข้ามการอ่าน FileReader หน้าบ้านเพื่อป้องกัน Android File Lock (NotReadableError) พร้อมส่งขึ้น OneDrive ทันที`);
+      addLog(`โหมด Mobile Direct Stream: เริ่มต้นอัปโหลดไฟล์เข้า OneDrive ทันที เพื่อป้องกัน Android File Permission Lock (NotReadableError)`);
+      handleStartPipeline(selectedFile);
       return;
     }
 
@@ -249,6 +257,9 @@ export default function UploadPage() {
 
   const handleReset = () => {
     if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
+    fileRef.current = null;
+    titleRef.current = '';
+    descriptionRef.current = '';
     setFile(null);
     setTitle('');
     setDescription('');
@@ -331,8 +342,9 @@ export default function UploadPage() {
   }, [activeTab, loadQueue]);
 
   // Start Pipeline: Direct Full-Speed Upload to OneDrive
-  const handleStartPipeline = async () => {
-    if (!file || isUploading) return;
+  const handleStartPipeline = async (overrideFile = null) => {
+    const activeFile = overrideFile || fileRef.current || file;
+    if (!activeFile || isUploading) return;
 
     setIsUploading(true);
     setErrorMsg(null);
@@ -343,15 +355,18 @@ export default function UploadPage() {
     addLog(`เริ่มต้น: ขอ Direct Upload Session เข้า OneDrive Business (/raw/)`);
 
     try {
+      const activeTitle = (titleRef.current || title || '').trim() || activeFile.name.replace(/\.[^/.]+$/, '');
+      const activeDesc = (descriptionRef.current || description || '').trim();
+
       // 1. Session Request
       const sessionRes = await fetch('/api/upload/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fileName: file.name,
-          title: title.trim() || file.name.replace(/\.[^/.]+$/, ''),
-          description: description.trim(),
-          fileSize: file.size,
+          fileName: activeFile.name,
+          title: activeTitle,
+          description: activeDesc,
+          fileSize: activeFile.size,
         }),
       });
 
@@ -376,7 +391,7 @@ export default function UploadPage() {
       );
 
       // บังคับใช้ Chunk Size ขนาดปลอดภัยสำหรับ Mobile (หรือขนาดไฟล์ต่ำกว่า 200MB) ไม่เกิน 10 MB เพื่อไม่ให้หน่วยความจำในมือถือล้น
-      const activeChunkSizeMB = (isMobile || file.size < 200 * 1024 * 1024)
+      const activeChunkSizeMB = (isMobile || activeFile.size < 200 * 1024 * 1024)
         ? Math.min(chunkSizeMB, 10)
         : chunkSizeMB;
 
@@ -386,7 +401,7 @@ export default function UploadPage() {
         ? 64 * 327680  // 20,971,520 bytes (20 MiB, exactly 64 x 320 KiB)
         : 32 * 327680; // 10,485,760 bytes (10 MiB, exactly 32 x 320 KiB)
 
-      const totalSize = file.size;
+      const totalSize = activeFile.size;
       const totalChunks = Math.max(1, Math.ceil(totalSize / CHUNK_SIZE));
       let start = 0;
       let chunkIndex = 0;
@@ -394,12 +409,20 @@ export default function UploadPage() {
 
       while (start < totalSize) {
         // ตัด Chunk (Slicing) ตามมาตรฐาน Microsoft Graph API:
-        // end = Math.min(start + CHUNK_SIZE, file.size) - 1
-        // chunkBlob = file.slice(start, end + 1)
+        // end = Math.min(start + CHUNK_SIZE, activeFile.size) - 1
+        // chunkBlob = activeFile.slice(start, end + 1)
         const end = Math.min(start + CHUNK_SIZE, totalSize) - 1;
-        const chunkBlob = file.slice(start, end + 1);
-        // แปลง Blob เป็น ArrayBuffer เสมอก่อนส่งเข้า XHR เพื่อให้อ่าน byte ตรงเข้า RAM และปลดล็อก Android ContentProvider stream
-        const chunkBuffer = await chunkBlob.arrayBuffer();
+
+        let chunkBuffer;
+        try {
+          const chunkBlob = activeFile.slice(start, end + 1);
+          // แปลง Blob เป็น ArrayBuffer เสมอก่อนส่งเข้า XHR เพื่อให้อ่าน byte ตรงเข้า RAM และปลดล็อก Android ContentProvider stream
+          chunkBuffer = await chunkBlob.arrayBuffer();
+        } catch (err) {
+          console.error("Chunk read error:", err);
+          throw new Error(`ไม่สามารถอ่านข้อมูลไบนารีจากอุปกรณ์ได้ (Android SAF/NotReadableError): ${err?.message || err}`);
+        }
+
         const rangeHeader = `bytes ${start}-${end}/${totalSize}`;
 
         await new Promise((resolve, reject) => {
@@ -479,14 +502,18 @@ export default function UploadPage() {
       setStageDetail('กำลังส่ง Webhook สั่งรัน GitHub Actions Transcoder...');
       addLog(`เรียก POST /api/upload/complete เพื่อ Trigger GitHub Actions...`);
 
-      // 3. Trigger Complete & Dispatch
+      // 3. Trigger Complete & Dispatch with latest edited title & description
+      const finalTitle = (titleRef.current || title || '').trim() || activeFile.name.replace(/\.[^/.]+$/, '');
+      const finalDesc = (descriptionRef.current || description || '').trim();
+
       const completeRes = await fetch('/api/upload/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           videoId,
           rawFileName: serverRawName,
-          title: title.trim() || file.name.replace(/\.[^/.]+$/, ''),
+          title: finalTitle,
+          description: finalDesc,
           clientMeta: {
             duration: fileDetails.durationSec,
             resolution: fileDetails.resolution,
@@ -691,8 +718,11 @@ export default function UploadPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="video/mp4,video/quicktime,video/x-matroska,.mov,.mkv,.mp4,video/*"
-                onChange={(e) => handleFile(e.target.files?.[0])}
+                accept="video/*"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFile(f);
+                }}
                 className="hidden"
               />
 
@@ -737,8 +767,11 @@ export default function UploadPage() {
                     <input
                       type="text"
                       value={title}
-                      disabled={isUploading}
-                      onChange={(e) => setTitle(e.target.value)}
+                      disabled={currentStatus && currentStatus !== 'UPLOADING'}
+                      onChange={(e) => {
+                        setTitle(e.target.value);
+                        titleRef.current = e.target.value;
+                      }}
                       placeholder="ระบุชื่อวิดีโอ"
                       className="w-full bg-[#FBF9F5] border border-[#EFECE6] rounded-xl px-3.5 py-2.5 text-xs text-[#212529] outline-none focus:border-[#FF7A00] focus:bg-white transition"
                     />
@@ -749,8 +782,11 @@ export default function UploadPage() {
                     <textarea
                       rows={3}
                       value={description}
-                      disabled={isUploading}
-                      onChange={(e) => setDescription(e.target.value)}
+                      disabled={currentStatus && currentStatus !== 'UPLOADING'}
+                      onChange={(e) => {
+                        setDescription(e.target.value);
+                        descriptionRef.current = e.target.value;
+                      }}
                       placeholder="ใส่รายละเอียดหรือคำอธิบายวิดีโอ"
                       className="w-full bg-[#FBF9F5] border border-[#EFECE6] rounded-xl px-3.5 py-2.5 text-xs text-[#212529] outline-none focus:border-[#FF7A00] focus:bg-white transition"
                     />
@@ -761,7 +797,7 @@ export default function UploadPage() {
                     <input
                       type="text"
                       value={tagsInput}
-                      disabled={isUploading}
+                      disabled={currentStatus && currentStatus !== 'UPLOADING'}
                       onChange={(e) => setTagsInput(e.target.value)}
                       placeholder="คั่นด้วยเครื่องหมายจุลภาค เช่น HLS, 1080p, stream"
                       className="w-full bg-[#FBF9F5] border border-[#EFECE6] rounded-xl px-3.5 py-2 text-xs text-[#212529] outline-none focus:border-[#FF7A00] focus:bg-white transition"
