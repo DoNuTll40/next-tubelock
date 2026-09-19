@@ -164,6 +164,7 @@ function uploadChunkXHR(uploadUrl, chunkBlob, rangeHeader, onProgress, xhrRef) {
     if (xhrRef) xhrRef.current = xhr;
 
     xhr.open('PUT', uploadUrl, true);
+    xhr.withCredentials = false;
     xhr.setRequestHeader('Content-Range', rangeHeader);
 
     if (xhr.upload && onProgress) {
@@ -242,9 +243,9 @@ export async function uploadVideoFile(file, options = {}) {
   let lastDriveItem = null;
 
   while (start < fileSize) {
-    const end = Math.min(start + effectiveChunkSize, fileSize);
-    const chunkBlob = file.slice(start, end);
-    const contentRange = `bytes ${start}-${end - 1}/${fileSize}`;
+    const end = Math.min(start + CHUNK_SIZE, fileSize) - 1;
+    const chunkBlob = file.slice(start, end + 1);
+    const contentRange = `bytes ${start}-${end}/${fileSize}`;
 
     let success = false;
     let attempts = 0;
@@ -296,7 +297,7 @@ export async function uploadVideoFile(file, options = {}) {
       }
     }
 
-    start = end;
+    start = end + 1;
     chunkIndex++;
   }
 

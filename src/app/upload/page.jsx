@@ -362,35 +362,37 @@ export default function UploadPage() {
       addLog(`เริ่มส่งไฟล์ตรงเข้า OneDrive /raw/${serverRawName} (ขนาดก้อน ${chunkSizeMB} MB ไม่อั้นสปีด)...`);
 
       // 2. Direct Chunked Upload (Aligned to 320 KiB boundary)
-      const selectedChunkSize = chunkSizeMB === 50
+      const CHUNK_SIZE = chunkSizeMB === 50
         ? 160 * 327680 // 52,428,800 bytes (50 MiB, exactly 160 x 320 KiB)
         : chunkSizeMB === 20
         ? 64 * 327680  // 20,971,520 bytes (20 MiB, exactly 64 x 320 KiB)
         : 32 * 327680; // 10,485,760 bytes (10 MiB, exactly 32 x 320 KiB)
 
       const totalSize = file.size;
-      // หากขนาดไฟล์ทั้งหมด (file.size) เล็กกว่าขนาด Chunk Size ที่เลือกไว้ ให้กำหนด effectiveChunkSize = Math.min(selectedChunkSize, file.size) ทันที
-      const effectiveChunkSize = Math.min(selectedChunkSize, totalSize);
-      const totalChunks = Math.max(1, Math.ceil(totalSize / effectiveChunkSize));
-      let offset = 0;
+      const totalChunks = Math.max(1, Math.ceil(totalSize / CHUNK_SIZE));
+      let start = 0;
       let chunkIndex = 0;
       const uploadStartTime = Date.now();
 
-      while (offset < totalSize) {
-        // ต้องปัดเศษ Range ก้อนสุดท้ายให้เป็น file.size - 1 เสมอ ห้ามส่ง Range เกินขนาดไฟล์จริงเด็ดขาด
-        const end = Math.min(offset + effectiveChunkSize, totalSize);
-        const chunkBlob = file.slice(offset, end);
-        const lastByteIndex = end - 1;
-        const rangeHeader = `bytes ${offset}-${lastByteIndex}/${totalSize}`;
+      while (start < totalSize) {
+        // ตัด Chunk (Slicing) ตามมาตรฐาน Microsoft Graph API:
+        // end = Math.min(start + CHUNK_SIZE, file.size) - 1
+        // chunk = file.slice(start, end + 1)
+        const end = Math.min(start + CHUNK_SIZE, totalSize) - 1;
+        const chunk = file.slice(start, end + 1);
+        const rangeHeader = `bytes ${start}-${end}/${totalSize}`;
 
         await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('PUT', uploadUrl, true);
+          // ปิด credentials เพื่อป้องกัน CORS Preflight ล้มเหลว Status 0
+          xhr.withCredentials = false;
+          // ล้าง headers: กำหนดเฉพาะ Content-Range เท่านั้น (ห้ามใส่ Authorization หรือ headers อื่น)
           xhr.setRequestHeader('Content-Range', rangeHeader);
 
           xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
-              const currentTotal = offset + e.loaded;
+              const currentTotal = start + e.loaded;
               const pct = Math.min(100, Math.round((currentTotal / totalSize) * 100));
               const elapsedSec = Math.max(0.1, (Date.now() - uploadStartTime) / 1000);
               const speedBytesPerSec = currentTotal / elapsedSec;
@@ -422,21 +424,32 @@ export default function UploadPage() {
                 const parsed = JSON.parse(xhr.responseText);
                 if (parsed.error?.message) graphError = parsed.error.message;
               } catch (_) {}
+              console.error('[OneDrive PUT Error Response]', { status: xhr.status, response: graphError, range: rangeHeader });
               reject(new Error(`Microsoft Graph ส่งคืนสถานะ (${xhr.status}): ${graphError}`));
             }
           };
 
-          xhr.onerror = () => {
-            reject(new Error(`การเชื่อมต่อกับ OneDrive ขัดข้องขณะส่งก้อนที่ ${chunkIndex + 1}/${totalChunks} (Range: ${rangeHeader}) กรุณาตรวจสอบสัญญาณเน็ตหรือลองเลือก Chunk Size 10MB`));
+          xhr.onerror = (e) => {
+            console.error('[OneDrive PUT CORS/Network Error]', {
+              status: xhr.status,
+              statusText: xhr.statusText,
+              uploadUrl,
+              rangeHeader,
+              chunkBytes: chunk.size,
+              event: e,
+            });
+            reject(new Error(`การเชื่อมต่อกับ OneDrive ขัดข้อง (Status: ${xhr.status || 0} CORS/Network Aborted) ขณะส่งก้อนที่ ${chunkIndex + 1}/${totalChunks} (Range: ${rangeHeader})`));
           };
+
           xhr.ontimeout = () => {
             reject(new Error(`หมดเวลาเชื่อมต่อกับ OneDrive ในก้อนที่ ${chunkIndex + 1}/${totalChunks} (Timeout 3 นาที)`));
           };
+
           xhr.timeout = 180000;
-          xhr.send(chunkBlob);
+          xhr.send(chunk);
         });
 
-        offset = end;
+        start = end + 1;
         chunkIndex++;
       }
 
