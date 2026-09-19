@@ -903,17 +903,31 @@ export default function VideoPlayer({
       }
     } else {
       try {
+        // 📱 Auto orientation return: Rotate mobile back to portrait when exiting fullscreen!
+        if (typeof window !== 'undefined' && window.screen?.orientation?.lock) {
+          try {
+            await window.screen.orientation.lock('portrait');
+          } catch (orientErr) {
+            console.log('Orientation portrait lock notice:', orientErr);
+          }
+        }
+
         if (document.exitFullscreen) {
           await document.exitFullscreen();
         } else if (document.webkitExitFullscreen) {
           await document.webkitExitFullscreen();
+        } else if (video.current?.webkitExitFullscreen) {
+          video.current.webkitExitFullscreen();
         }
         setIsFullscreen(false);
 
+        // Allow natural free rotation again after rotating back to portrait
         if (typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
-          try {
-            window.screen.orientation.unlock();
-          } catch (_) {}
+          setTimeout(() => {
+            try {
+              window.screen.orientation.unlock();
+            } catch (_) {}
+          }, 600);
         }
       } catch (err) {
         console.warn('Exit fullscreen error:', err);
