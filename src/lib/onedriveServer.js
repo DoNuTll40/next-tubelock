@@ -197,3 +197,273 @@ export async function scanOneDriveVideos(targetFolder = '/Videos') {
     logs,
   };
 }
+
+/**
+ * Ensure a folder path exists in OneDrive; if not, create it
+ */
+export async function ensureFolderExists(token, driveId, folderPath = '/Videos') {
+  const cleanPath = folderPath.replace(/^\/+|\/+$/g, '');
+  if (!cleanPath) {
+    // Root folder
+    const rootRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!rootRes.ok) throw new Error(`Cannot access drive root (${rootRes.status})`);
+    const rootData = await rootRes.json();
+    return rootData.id;
+  }
+
+  // Check if target folder already exists
+  const checkUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(cleanPath)}`;
+  const checkRes = await fetch(checkUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (checkRes.ok) {
+    const data = await checkRes.json();
+    return data.id;
+  }
+
+  // Create folder segments sequentially
+  const segments = cleanPath.split('/').filter(Boolean);
+  let currentParentId = 'root';
+
+  for (const seg of segments) {
+    const checkSegUrl = currentParentId === 'root'
+      ? `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(seg)}`
+      : `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${currentParentId}:/${encodeURIComponent(seg)}`;
+
+    const segCheck = await fetch(checkSegUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (segCheck.ok) {
+      const segData = await segCheck.json();
+      currentParentId = segData.id;
+    } else {
+      const createUrl = currentParentId === 'root'
+        ? `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`
+        : `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${currentParentId}/children`;
+
+      const createRes = await fetch(createUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: seg,
+          folder: {},
+          '@microsoft.graph.conflictBehavior': 'fail',
+        }),
+      });
+
+      if (createRes.status === 409) {
+        // Folder already exists or created concurrently
+        const fetchUrl = currentParentId === 'root'
+          ? `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(seg)}`
+          : `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${currentParentId}:/${encodeURIComponent(seg)}`;
+        const fetchRes = await fetch(fetchUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (fetchRes.ok) {
+          const fetched = await fetchRes.json();
+          currentParentId = fetched.id;
+        } else {
+          const err = await fetchRes.text();
+          throw new Error(`Failed to resolve existing folder "${seg}": ${err}`);
+        }
+      } else if (!createRes.ok) {
+        const err = await createRes.text();
+        throw new Error(`Failed to create folder "${seg}" (${createRes.status}): ${err}`);
+      } else {
+        const created = await createRes.json();
+        currentParentId = created.id;
+      }
+    }
+  }
+
+  return currentParentId;
+}
+
+/**
+ * Request Microsoft Graph to create a Direct Upload Session
+ * Pre-authenticates an uploadUrl that the client can directly PUT chunks to!
+ */
+export async function createUploadSession(fileName, targetFolder = '/Videos') {
+  const token = await getGraphToken();
+  const driveId = await getUserDriveId(token);
+
+  const folderId = await ensureFolderExists(token, driveId, targetFolder);
+
+  const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
+
+  const sessionRes = await fetch(sessionUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      item: {
+        '@microsoft.graph.conflictBehavior': 'replace',
+        name: fileName,
+      },
+    }),
+  });
+
+  if (!sessionRes.ok) {
+    const err = await sessionRes.text();
+    throw new Error(`Failed to create upload session (${sessionRes.status}): ${err}`);
+  }
+
+  const sessionData = await sessionRes.json();
+
+  return {
+    uploadUrl: sessionData.uploadUrl,
+    expirationDateTime: sessionData.expirationDateTime,
+    fileName,
+    targetFolder,
+    folderId,
+    driveId,
+  };
+}
+
+/**
+ * Fetch DriveItem details from OneDrive and format into a video record
+ */
+export async function getDriveItemVideoRecord(itemId, targetFolder = '/Videos') {
+  const token = await getGraphToken();
+  const driveId = await getUserDriveId(token);
+
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}?expand=thumbnails`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to fetch OneDrive item (${res.status}): ${err}`);
+  }
+
+  const item = await res.json();
+  const cleanTitle = item.name.replace(/\.[^/.]+$/, '');
+  const thumbUrl = item.thumbnails?.[0]?.large?.url || item.thumbnails?.[0]?.medium?.url || '';
+
+  const width = item.video?.width || 0;
+  const height = item.video?.height || 0;
+  const resolution = classifyResolution(width, height);
+  const fps = item.video?.frameRate ? Math.round(item.video.frameRate) : 30;
+  const codec = detectCodec(item.video?.fourCC, 'h264');
+
+  return {
+    onedrive_item_id: item.id,
+    source_type: 'file',
+    title: cleanTitle,
+    description: `อัปโหลดเข้าโฟลเดอร์ ${targetFolder}`,
+    file_size_bytes: item.size || 0,
+    duration: item.video?.duration ? Math.floor(item.video.duration / 1000) : 0,
+    resolution,
+    fps,
+    codec,
+    thumbnail_url: thumbUrl,
+    tags: ['Upload', resolution, `${fps}fps`, codec.toUpperCase()],
+  };
+}
+
+/**
+ * Create an HLS package folder in OneDrive (e.g. /Videos/hls_myvideo_123456)
+ */
+export async function createHlsFolder(parentFolder = '/Videos', subFolderName) {
+  const token = await getGraphToken();
+  const driveId = await getUserDriveId(token);
+
+  const parentId = await ensureFolderExists(token, driveId, parentFolder);
+
+  const createRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}/children`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: subFolderName,
+        folder: {},
+        '@microsoft.graph.conflictBehavior': 'rename',
+      }),
+    }
+  );
+
+  if (!createRes.ok) {
+    const err = await createRes.text();
+    throw new Error(`Failed to create HLS folder "${subFolderName}": ${err}`);
+  }
+
+  const folderData = await createRes.json();
+  return {
+    folderId: folderData.id,
+    folderName: folderData.name,
+    parentFolder,
+    driveId,
+  };
+}
+
+/**
+ * Direct PUT upload of HLS playlist or segment into OneDrive folder (< 4MB)
+ */
+export async function uploadHlsFileDirect(folderId, fileName, fileBuffer) {
+  const token = await getGraphToken();
+  const driveId = await getUserDriveId(token);
+
+  const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
+
+  const res = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Length': fileBuffer.length.toString(),
+      'Content-Type': fileName.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+    },
+    body: fileBuffer,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to upload ${fileName} (${res.status}): ${err}`);
+  }
+
+  return await res.json();
+}
+
+/**
+ * Upload Session for HLS files >= 4MB
+ */
+export async function createHlsFileUploadSession(folderId, fileName) {
+  const token = await getGraphToken();
+  const driveId = await getUserDriveId(token);
+
+  const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
+
+  const sessionRes = await fetch(sessionUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      item: {
+        '@microsoft.graph.conflictBehavior': 'replace',
+        name: fileName,
+      },
+    }),
+  });
+
+  if (!sessionRes.ok) {
+    const err = await sessionRes.text();
+    throw new Error(`Failed to create upload session for ${fileName}: ${err}`);
+  }
+
+  return await sessionRes.json();
+}
+
+

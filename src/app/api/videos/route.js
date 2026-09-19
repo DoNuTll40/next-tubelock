@@ -5,13 +5,13 @@ export async function GET() {
   try {
     const sql = getDb();
 
-    // Auto-create videos table if not exists
+    // Auto-create videos table if not exists with all required columns
     await sql`
       CREATE TABLE IF NOT EXISTS videos (
         id SERIAL PRIMARY KEY,
         onedrive_item_id VARCHAR(255) UNIQUE,
         onedrive_folder_id VARCHAR(255) UNIQUE,
-        source_type VARCHAR(50) NOT NULL DEFAULT 'file',
+        source_type VARCHAR(50) NOT NULL DEFAULT 'hls',
         title TEXT NOT NULL,
         description TEXT DEFAULT '',
         duration INTEGER DEFAULT 0,
@@ -21,12 +21,31 @@ export async function GET() {
         codec VARCHAR(50) DEFAULT 'h264',
         thumbnail_url TEXT DEFAULT '',
         tags TEXT[] DEFAULT '{}',
+        status VARCHAR(50) DEFAULT 'READY',
+        transcode_progress INTEGER DEFAULT 0,
+        stage_detail TEXT DEFAULT '',
+        error_message TEXT DEFAULT '',
+        raw_file_name TEXT DEFAULT '',
+        master_playlist_path TEXT DEFAULT '',
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `;
 
-    const rows = await sql`SELECT * FROM videos ORDER BY created_at DESC;`;
+    // Ensure all required columns exist on older tables
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'READY';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS transcode_progress INTEGER DEFAULT 0;`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS stage_detail TEXT DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS raw_file_name TEXT DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS master_playlist_path TEXT DEFAULT '';`;
+
+    // Normal feed only returns READY (or pre-existing NULL) videos
+    const rows = await sql`
+      SELECT * FROM videos 
+      WHERE status = 'READY' OR status IS NULL 
+      ORDER BY created_at DESC;
+    `;
     return NextResponse.json({ success: true, data: rows });
   } catch (err) {
     console.error('[API_VIDEOS_GET_ERROR]:', err);

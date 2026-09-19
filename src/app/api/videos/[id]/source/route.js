@@ -17,6 +17,22 @@ export async function GET(request, context) {
     }
 
     const video = rows[0];
+
+    // Check if video is still being processed
+    if (video.status && video.status !== 'READY') {
+      return NextResponse.json({
+        success: false,
+        status: video.status,
+        progress: video.transcode_progress || 0,
+        stageDetail: video.stage_detail || '',
+        errorMessage: video.error_message || '',
+        video,
+        error: video.status === 'FAILED'
+          ? `การแปลงวิดีโอล้มเหลว: ${video.error_message || 'ไม่ทราบสาเหตุ'}`
+          : `วิดีโอนี้อยู่ในสถานะ "${video.status}" (${video.stage_detail || 'กำลังประมวลผล'}) กรุณารอสักครู่`,
+      }, { status: 422 });
+    }
+
     const token = await getGraphToken();
     const driveId = await getUserDriveId(token);
 

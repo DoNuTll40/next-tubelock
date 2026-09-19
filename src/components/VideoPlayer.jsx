@@ -6,7 +6,7 @@ import {
   Play, Pause, Volume2, VolumeX, Volume1, Maximize, Minimize, 
   Settings, Check, ChevronRight, ChevronLeft, Loader2, Info, X,
   Scan, Expand, Crop, PictureInPicture2, Copy, Activity, Zap,
-  RotateCcw, Sparkles
+  AlertTriangle, Gauge, Sparkles, ShieldCheck
 } from 'lucide-react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
 
@@ -34,36 +34,43 @@ export default function VideoPlayer({
   const hlsInstanceRef = useRef(null);
   const hlsRetryCountRef = useRef(0);
 
+  // Performance Direct-DOM Refs (Prevents React re-render thrashing!)
+  const progressBarRef = useRef(null);
+  const bufferBarRef = useRef(null);
+  const scrubberKnobRef = useRef(null);
+  const timeDisplayRef = useRef(null);
+
   // Video aspect ratio
   const [videoRatio, setVideoRatio] = useState(16 / 9);
 
   // Playback states
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [bufferedEnd, setBufferedEnd] = useState(0);
   const [volume, setVolume] = useState(defaultVolume);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
 
-  // Speed and Aspect Mode: 'fit' (original) | 'crop' (zoom to cut letterbox) | 'fill' (stretch/fill)
+  // Speed and Aspect Mode: 'fit' | 'crop' | 'fill'
   const [playbackRate, setPlaybackRate] = useState(defaultSpeed);
-  const [aspectMode, setAspectMode] = useState(defaultFit); // 'fit' | 'crop' | 'fill'
+  const [aspectMode, setAspectMode] = useState(defaultFit);
+
+  // Ultra-Smooth Performance Mode (Disables blurs/animations on low-spec/mobile)
+  const [ultraSmooth, setUltraSmooth] = useState(false);
 
   // Telemetry HUD / Stats
   const [showStats, setShowStats] = useState(autoStats);
   const [statsCopied, setStatsCopied] = useState(false);
 
-  // On-Screen Action Toast & Center Ripple Flash
+  // On-Screen Toast & Momentary Ripple
   const [toastMessage, setToastMessage] = useState(null);
-  const [centerRipple, setCenterRipple] = useState(null); // 'play' | 'pause'
+  const [centerRipple, setCenterRipple] = useState(null);
   const toastTimeoutRef = useRef(null);
   const rippleTimeoutRef = useRef(null);
 
-  const showToast = useCallback((msg, icon = null) => {
-    setToastMessage({ text: msg, icon });
+  const showToast = useCallback((msg) => {
+    setToastMessage(msg);
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 1500);
   }, []);
@@ -71,7 +78,7 @@ export default function VideoPlayer({
   const triggerRipple = useCallback((type) => {
     setCenterRipple(type);
     if (rippleTimeoutRef.current) clearTimeout(rippleTimeoutRef.current);
-    rippleTimeoutRef.current = setTimeout(() => setCenterRipple(null), 500);
+    rippleTimeoutRef.current = setTimeout(() => setCenterRipple(null), 450);
   }, []);
 
   // Controls & Menus
@@ -95,17 +102,17 @@ export default function VideoPlayer({
   // Double Tap Seeking
   const [doubleTapSide, setDoubleTapSide] = useState(null);
   const [accumulatedSeconds, setAccumulatedSeconds] = useState(0);
-  const lastTapRef = useRef({ time: 0, side: null, x: 0 });
+  const lastTapRef = useRef({ time: 0, side: null });
   const singleTapTimerRef = useRef(null);
   const seekCommitTimerRef = useRef(null);
   const controlsTimeoutRef = useRef(null);
   const pendingTargetTimeRef = useRef(null);
-  const lastTimeUpdateRef = useRef(0);
+  const lastSavedTimeRef = useRef(0);
 
   const isUserPausedRef = useRef(!defaultAutoplay);
   const wakeLockSentinelRef = useRef(null);
 
-  // Realtime FPS & Telemetry
+  // Realtime FPS & Telemetry Metrics
   const [realtimeFps, setRealtimeFps] = useState('0.0');
   const frameCountRef = useRef(0);
   const lastFpsTimeRef = useRef(performance.now());
@@ -113,21 +120,20 @@ export default function VideoPlayer({
 
   const [nerdStats, setNerdStats] = useState({
     viewport: '0x0',
-    dpr: 1,
+    dpr: '1.0',
     optimalRes: '0x0',
     bufferHealth: 0,
     droppedFrames: 0,
     totalFrames: 0,
-    bandwidthEstimate: '45.0 Mbps',
+    dropRate: '0.0%',
     protocol: 'Direct MP4',
-    colorSpace: 'BT.709 (sRGB)',
-    audioTrack: 'AAC Stereo 48kHz',
+    isHeavyCodec: false,
   });
 
   const [hlsError, setHlsError] = useState(null);
 
   const formatTime = (time) => {
-    if (isNaN(time) || !time) return '00:00';
+    if (isNaN(time) || !time || time < 0) return '00:00';
     const m = Math.floor(time / 60);
     const s = Math.floor(time % 60);
     return `${m}:${s < 10 ? '0' : ''}${s}`;
@@ -142,7 +148,7 @@ export default function VideoPlayer({
           wakeLockSentinelRef.current = null;
         });
       } catch (err) {
-        console.warn('Wake Lock request failed:', err);
+        console.warn('Wake Lock failed:', err);
       }
     }
   }, []);
@@ -159,14 +165,11 @@ export default function VideoPlayer({
   }, []);
 
   useEffect(() => {
-    if (isPlaying) {
-      requestWakeLock();
-    } else {
-      releaseWakeLock();
-    }
+    if (isPlaying) requestWakeLock();
+    else releaseWakeLock();
   }, [isPlaying, requestWakeLock, releaseWakeLock]);
 
-  // Sync initial volume
+  // Initial volume setup
   useEffect(() => {
     if (video.current) {
       video.current.volume = defaultVolume;
@@ -176,30 +179,53 @@ export default function VideoPlayer({
     }
   }, [defaultVolume, defaultSpeed, video]);
 
-  // Buffer progress calculation
+  // Direct DOM Buffer Progress Update (Zero React re-render overhead!)
   const updateBufferProgress = useCallback(() => {
-    if (!video.current) return;
+    if (!video.current || !bufferBarRef.current) return;
     const b = video.current.buffered;
     const cur = video.current.currentTime;
+    const dur = video.current.duration || duration;
+    if (dur <= 0) return;
+
     for (let i = 0; i < b.length; i++) {
       if (b.start(i) <= cur && cur <= b.end(i)) {
-        setBufferedEnd(b.end(i));
+        const pct = Math.min((b.end(i) / dur) * 100, 100);
+        bufferBarRef.current.style.width = `${pct}%`;
         return;
       }
     }
-  }, [video]);
+  }, [video, duration]);
 
-  const handleThrottledTimeUpdate = (e) => {
+  // ZERO-RE-RENDER Playback Progress via Direct DOM Updates!
+  const handleNativeTimeUpdate = (e) => {
+    const cur = e.target.currentTime;
+    const dur = e.target.duration || duration;
+
+    // Direct DOM manipulation - doesn't re-render the 1400 lines of React components!
+    if (dur > 0 && !isScrubbing) {
+      const pct = (cur / dur) * 100;
+      if (progressBarRef.current) {
+        progressBarRef.current.style.width = `${pct}%`;
+      }
+      if (scrubberKnobRef.current) {
+        scrubberKnobRef.current.style.left = `${pct}%`;
+      }
+      if (timeDisplayRef.current) {
+        timeDisplayRef.current.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+      }
+    }
+
+    updateBufferProgress();
+
+    // Trigger external callback periodically (for watch position saving)
     const now = performance.now();
-    if (!isScrubbing && now - lastTimeUpdateRef.current > 250) {
-      setCurrentTime(e.target.currentTime);
-      updateBufferProgress();
+    if (now - lastSavedTimeRef.current > 2000) {
       if (onTimeUpdate) onTimeUpdate(e);
-      lastTimeUpdateRef.current = now;
+      lastSavedTimeRef.current = now;
     }
   };
 
-  // Ultra-precise Realtime FPS Calculation
+  // FPS Telemetry: Only activates when Stats HUD is open
   useEffect(() => {
     const v = video.current;
     if (!v || !showStats || !isPlaying) {
@@ -239,9 +265,10 @@ export default function VideoPlayer({
     };
   }, [showStats, isPlaying, video]);
 
-  // Telemetry poll
+  // Telemetry Polling: ONLY active when Stats HUD is open
   useEffect(() => {
     if (!showStats) return;
+
     const interval = setInterval(() => {
       if (video.current && containerRef.current) {
         const cur = video.current.currentTime;
@@ -265,6 +292,8 @@ export default function VideoPlayer({
 
         const isHls = src?.startsWith('blob:') || src?.includes('.m3u8');
         const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+        const dropRate = total > 0 ? ((dropped / total) * 100).toFixed(1) + '%' : '0.0%';
+        const isAv1or4K = (codec?.toLowerCase().includes('av1') || codec?.toLowerCase().includes('av01')) && (video.current.videoWidth >= 2500 || Number(fps) >= 50);
 
         setNerdStats({
           viewport: `${containerRef.current.clientWidth}x${containerRef.current.clientHeight}`,
@@ -273,15 +302,15 @@ export default function VideoPlayer({
           bufferHealth: bufHealth,
           droppedFrames: dropped,
           totalFrames: total,
-          bandwidthEstimate: isHls ? 'HLS Adaptive' : 'Direct 48.5 Mbps',
-          protocol: isHls ? 'HLS / ABR Playlist' : 'HTTP/2 Direct MP4',
-          colorSpace: 'BT.709 SDR (Color Primaries)',
-          audioTrack: 'AAC Stereo 48.0 kHz 16-bit',
+          dropRate,
+          protocol: isHls ? 'HLS Adaptive Bitrate' : 'Direct MP4 Stream',
+          isHeavyCodec: isAv1or4K,
         });
       }
-    }, 800);
+    }, 1000);
+
     return () => clearInterval(interval);
-  }, [showStats, video, src]);
+  }, [showStats, video, src, codec, fps]);
 
   // Controls Auto-Hide
   const resetControlsTimer = useCallback(() => {
@@ -290,7 +319,7 @@ export default function VideoPlayer({
     if (isPlaying && !isScrubbing && !showSettingsMenu && !showStats) {
       controlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
-      }, 2800);
+      }, 2500);
     }
   }, [isPlaying, isScrubbing, showSettingsMenu, showStats]);
 
@@ -321,10 +350,11 @@ export default function VideoPlayer({
 
         if (Hls.isSupported()) {
           const hls = new Hls({
-            maxBufferLength: 30,
-            maxMaxBufferLength: 60,
+            maxBufferLength: 15, // Optimized for mobile memory
+            maxMaxBufferLength: 30,
             enableWorker: true,
-            fragLoadingTimeOut: 20000,
+            lowLatencyMode: false,
+            fragLoadingTimeOut: 25000,
             fragLoadingMaxRetry: 4,
             manifestLoadingTimeOut: 15000,
             manifestLoadingMaxRetry: 3,
@@ -400,10 +430,11 @@ export default function VideoPlayer({
             }
           });
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+          // Native Safari Apple hardware acceleration
           v.src = src;
         }
       } else {
-        // Direct MP4
+        // Direct MP4 - Clean Native Playback
         v.src = src;
         if (defaultAutoplay && !isUserPausedRef.current) {
           v.play().then(() => setIsPlaying(true)).catch(() => {
@@ -432,7 +463,7 @@ export default function VideoPlayer({
     if (hlsInstanceRef.current) {
       hlsInstanceRef.current.currentLevel = levelIdx;
       if (levelIdx === -1) {
-        showToast('ความละเอียด: Auto');
+        showToast('ความละเอียด: Auto (ปรับตามเน็ต)');
       } else {
         const selected = levels.find((l) => l.index === levelIdx);
         if (selected) {
@@ -445,7 +476,7 @@ export default function VideoPlayer({
     resetControlsTimer();
   };
 
-  // Instant Play / Pause Toggle
+  // Instant Play/Pause
   const togglePlay = useCallback(() => {
     if (!video.current) return;
 
@@ -499,11 +530,10 @@ export default function VideoPlayer({
     } else {
       video.current.currentTime = clamped;
     }
-    setCurrentTime(clamped);
     pendingTargetTimeRef.current = null;
   }, [duration, video]);
 
-  // Scrubbing & Hover calculation
+  // Scrubbing calculation
   const calculateScrubPosition = (clientX) => {
     if (!seekTrackRef.current || duration <= 0) return;
     const rect = seekTrackRef.current.getBoundingClientRect();
@@ -513,6 +543,11 @@ export default function VideoPlayer({
 
     setPreviewPercent(percent);
     setPreviewTime(calculatedSec);
+
+    // Live update scrubber DOM while dragging
+    if (progressBarRef.current) progressBarRef.current.style.width = `${percent}%`;
+    if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${percent}%`;
+    if (timeDisplayRef.current) timeDisplayRef.current.textContent = `${formatTime(calculatedSec)} / ${formatTime(duration)}`;
   };
 
   const handleSeekMouseMove = (e) => {
@@ -539,7 +574,7 @@ export default function VideoPlayer({
     }
   };
 
-  // Double Tap Seeking (Left / Right / Center)
+  // Double Tap Seeking
   const handleTouchZone = (side) => {
     const now = Date.now();
     const lastTap = lastTapRef.current;
@@ -567,7 +602,7 @@ export default function VideoPlayer({
         commitSeek(pendingTargetTimeRef.current);
         setDoubleTapSide(null);
         setAccumulatedSeconds(0);
-      }, 550);
+      }, 500);
 
       lastTapRef.current = { time: now, side };
       return;
@@ -584,7 +619,7 @@ export default function VideoPlayer({
         setShowSettingsMenu(false);
         if (!showControls) resetControlsTimer();
       }
-    }, 250);
+    }, 200);
   };
 
   // Fullscreen & PiP
@@ -628,26 +663,26 @@ export default function VideoPlayer({
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // Aspect Mode Cycle: fit -> crop -> fill -> fit
+  // Aspect Mode Toggle
   const cycleAspectMode = () => {
     let nextMode = 'fit';
-    let label = 'สัดส่วน: พอดี (Fit)';
+    let label = 'สัดส่วน: พอดีเฟรม (Fit)';
     if (aspectMode === 'fit') {
       nextMode = 'crop';
-      label = 'สัดส่วน: ตัดขอบดำ (Crop / Zoom)';
+      label = 'สัดส่วน: ตัดขอบดำ (Crop)';
     } else if (aspectMode === 'crop') {
       nextMode = 'fill';
       label = 'สัดส่วน: ยืดเต็มจอ (Fill)';
     } else {
       nextMode = 'fit';
-      label = 'สัดส่วน: ค่าเริ่มต้น (Fit)';
+      label = 'สัดส่วน: พอดีเฟรม (Fit)';
     }
     setAspectMode(nextMode);
     showToast(label);
     resetControlsTimer();
   };
 
-  // Keyboard Shortcuts (Space, J, K, L, Arrows, F, M, 0-9)
+  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName)) return;
@@ -657,23 +692,19 @@ export default function VideoPlayer({
         togglePlay();
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        const next = Math.min((video.current?.currentTime || 0) + seekStep, duration);
-        commitSeek(next);
+        commitSeek((video.current?.currentTime || 0) + seekStep);
         showToast(`+${seekStep} วินาที`);
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        const next = Math.max((video.current?.currentTime || 0) - seekStep, 0);
-        commitSeek(next);
+        commitSeek((video.current?.currentTime || 0) - seekStep);
         showToast(`-${seekStep} วินาที`);
       } else if (e.key === 'l' || e.key === 'L') {
         e.preventDefault();
-        const next = Math.min((video.current?.currentTime || 0) + 10, duration);
-        commitSeek(next);
+        commitSeek((video.current?.currentTime || 0) + 10);
         showToast('+10 วินาที');
       } else if (e.key === 'j' || e.key === 'J') {
         e.preventDefault();
-        const next = Math.max((video.current?.currentTime || 0) - 10, 0);
-        commitSeek(next);
+        commitSeek((video.current?.currentTime || 0) - 10);
         showToast('-10 วินาที');
       } else if (e.key === 'f' || e.key === 'F') {
         e.preventDefault();
@@ -683,16 +714,16 @@ export default function VideoPlayer({
         toggleMute();
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        const newVol = Math.min(volume + 0.05, 1);
-        setVolume(newVol);
-        if (video.current) video.current.volume = newVol;
-        showToast(`ระดับเสียง: ${Math.round(newVol * 100)}%`);
+        const nextVol = Math.min(volume + 0.05, 1);
+        setVolume(nextVol);
+        if (video.current) video.current.volume = nextVol;
+        showToast(`ระดับเสียง: ${Math.round(nextVol * 100)}%`);
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        const newVol = Math.max(volume - 0.05, 0);
-        setVolume(newVol);
-        if (video.current) video.current.volume = newVol;
-        showToast(`ระดับเสียง: ${Math.round(newVol * 100)}%`);
+        const nextVol = Math.max(volume - 0.05, 0);
+        setVolume(nextVol);
+        if (video.current) video.current.volume = nextVol;
+        showToast(`ระดับเสียง: ${Math.round(nextVol * 100)}%`);
       } else if (/^[0-9]$/.test(e.key) && duration > 0) {
         e.preventDefault();
         const fraction = parseInt(e.key, 10) / 10;
@@ -713,11 +744,10 @@ export default function VideoPlayer({
         viewport: nerdStats.viewport,
         dpr: nerdStats.dpr,
         aspectRatio: videoRatio.toFixed(3),
-        nominalFps: fps || 30,
-        currentFps: realtimeFps,
+        fps: `${realtimeFps} / ${fps || 30}`,
+        droppedFrames: `${nerdStats.droppedFrames} / ${nerdStats.totalFrames} (${nerdStats.dropRate})`,
         codec,
         bufferHealthSec: nerdStats.bufferHealth.toFixed(2),
-        droppedFrames: `${nerdStats.droppedFrames} / ${nerdStats.totalFrames}`,
         aspectMode,
         playbackRate,
         timestamp: new Date().toISOString(),
@@ -727,12 +757,10 @@ export default function VideoPlayer({
     );
     navigator.clipboard.writeText(report);
     setStatsCopied(true);
-    showToast('คัดลอกสถิติลงคลิปบอร์ดแล้ว!');
+    showToast('คัดลอกสถิติเรียบร้อย');
     setTimeout(() => setStatsCopied(false), 2000);
   };
 
-  const progressPercent = duration ? (currentTime / duration) * 100 : 0;
-  const bufferPercent = duration ? (bufferedEnd / duration) * 100 : 0;
   const targetFpsNumber = Number(fps) || 30;
   const currentFpsNumber = Number(realtimeFps);
 
@@ -743,7 +771,7 @@ export default function VideoPlayer({
       onMouseMove={resetControlsTimer}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}
-      className={`relative w-full bg-black select-none overflow-hidden transition-all duration-200 group/player ${
+      className={`relative w-full bg-black select-none overflow-hidden group/player ${
         isFullscreen 
           ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none' 
           : 'rounded-none sm:rounded-2xl border border-black/10 shadow-md'
@@ -751,18 +779,21 @@ export default function VideoPlayer({
       style={{
         aspectRatio: isFullscreen ? undefined : videoRatio,
         maxHeight: isFullscreen ? undefined : 'calc(100vh - 160px)',
+        contain: 'paint layout',
         WebkitTouchCallout: 'none',
       }}
     >
-      {/* Video Element */}
+      {/* High-Performance Native Video Element */}
       <video
         ref={video}
         poster={poster}
         playsInline
         webkit-playsinline="true"
-        preload="auto"
+        x5-playsinline="true"
+        preload="metadata" // Lowers memory contention on mobile!
         controlsList="nodownload nofullscreen noremoteplayback"
         disablePictureInPicture={false}
+        disableRemotePlayback
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => { 
           setIsBuffering(false); 
@@ -777,7 +808,7 @@ export default function VideoPlayer({
           setIsBuffering(false);
         }}
         onProgress={updateBufferProgress}
-        onTimeUpdate={handleThrottledTimeUpdate}
+        onTimeUpdate={handleNativeTimeUpdate}
         onCanPlay={(e) => {
           const { videoWidth, videoHeight } = e.target;
           if (videoWidth && videoHeight) {
@@ -793,16 +824,16 @@ export default function VideoPlayer({
           updateBufferProgress();
           if (onLoadedMetadata) onLoadedMetadata(e);
         }}
-        className={`w-full h-full transform-gpu transition-all duration-300 pointer-events-none ${
+        className={`w-full h-full pointer-events-none block ${
           aspectMode === 'crop'
-            ? 'object-cover scale-[1.14]' // ตัดแถบดำด้านบน-ล่างออกอย่างไร้รอยต่อ
+            ? 'object-cover scale-[1.08]' // ตัดแถบดำด้านบน-ล่างอย่างนุ่มนวล
             : aspectMode === 'fill'
             ? 'object-cover'
             : 'object-contain'
         }`}
         style={{
-          transform: aspectMode === 'crop' ? 'scale(1.14) translateZ(0)' : 'translateZ(0)',
-          willChange: 'transform',
+          transform: aspectMode === 'crop' ? 'scale(1.08)' : 'none',
+          willChange: 'auto',
           backfaceVisibility: 'hidden',
         }}
       />
@@ -814,599 +845,519 @@ export default function VideoPlayer({
         <div onClick={() => handleTouchZone('right')} className="h-full cursor-pointer" />
       </div>
 
-      {/* On-Screen Toast Notification (Top Center) */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -12, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.95 }}
-            className="absolute top-5 left-1/2 -translate-x-1/2 z-40 bg-black/75 backdrop-blur-md text-white px-3.5 py-1.5 rounded-full border border-white/15 text-xs font-semibold shadow-2xl flex items-center gap-2 pointer-events-none"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-[#FF7A00]" />
-            <span>{toastMessage.text}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* On-Screen Toast Notification */}
+      {toastMessage && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-[#151413]/90 text-white px-3.5 py-1.5 rounded-full border border-white/15 text-xs font-semibold shadow-xl flex items-center gap-2 pointer-events-none animate-fadeIn">
+          <Sparkles className="w-3.5 h-3.5 text-[#FF7A00]" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
-      {/* Momentary Play/Pause Center Ripple Flash (Disappears in 400ms) */}
-      <AnimatePresence>
-        {centerRipple && (
-          <motion.div
-            initial={{ opacity: 0.9, scale: 0.75 }}
-            animate={{ opacity: 0, scale: 1.35 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.45, ease: 'easeOut' }}
-            className="absolute inset-0 flex items-center justify-center pointer-events-none z-30"
-          >
-            <div className="w-18 h-18 rounded-full bg-black/60 backdrop-blur-md border border-white/20 flex items-center justify-center text-white shadow-2xl">
-              {centerRipple === 'play' ? (
-                <Play className="w-8 h-8 fill-white ml-1" />
-              ) : (
-                <Pause className="w-8 h-8 fill-white" />
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Double Tap Ripple Feedback (+10s / -10s) */}
-      <AnimatePresence>
-        {doubleTapSide === 'left' && (
-          <div className="absolute left-6 top-1/2 -translate-y-1/2 pointer-events-none z-20 select-none">
-            <motion.div
-              key={accumulatedSeconds}
-              initial={{ scale: 0.85, opacity: 0.7 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex items-center gap-1 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]"
-            >
-              <div className="flex -space-x-1">
-                {[0, 1, 2].map((i) => (
-                  <motion.div
-                    key={i}
-                    animate={{ x: [-2, -6, -2], opacity: [0.3, 1, 0.3] }}
-                    transition={{ repeat: Infinity, duration: 0.6, delay: (2 - i) * 0.15 }}
-                  >
-                    <ChevronLeft className="w-5 h-5 text-white stroke-[2.5]" />
-                  </motion.div>
-                ))}
-              </div>
-              <span className="text-white text-xs font-bold font-mono tracking-tight ml-0.5">
-                {accumulatedSeconds}s
-              </span>
-            </motion.div>
+      {/* Momentary Play/Pause Ripple Flash (Auto vanishes in 400ms) */}
+      {centerRipple && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 animate-scaleFade">
+          <div className="w-16 h-16 rounded-full bg-black/65 border border-white/20 flex items-center justify-center text-white shadow-2xl">
+            {centerRipple === 'play' ? (
+              <Play className="w-7 h-7 fill-white ml-0.5" />
+            ) : (
+              <Pause className="w-7 h-7 fill-white" />
+            )}
           </div>
-        )}
+        </div>
+      )}
 
-        {doubleTapSide === 'right' && (
-          <div className="absolute right-6 top-1/2 -translate-y-1/2 pointer-events-none z-20 select-none">
-            <motion.div
-              key={accumulatedSeconds}
-              initial={{ scale: 0.85, opacity: 0.7 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="flex items-center gap-1 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]"
-            >
-              <span className="text-white text-xs font-bold font-mono tracking-tight mr-0.5">
-                +{accumulatedSeconds}s
-              </span>
-              <div className="flex -space-x-1">
-                {[0, 1, 2].map((i) => (
-                  <motion.div
-                    key={i}
-                    animate={{ x: [2, 6, 2], opacity: [0.3, 1, 0.3] }}
-                    transition={{ repeat: Infinity, duration: 0.6, delay: i * 0.15 }}
-                  >
-                    <ChevronRight className="w-5 h-5 text-white stroke-[2.5]" />
-                  </motion.div>
-                ))}
-              </div>
-            </motion.div>
+      {/* Double Tap Ripple Feedback */}
+      {doubleTapSide && (
+        <div className={`absolute ${doubleTapSide === 'left' ? 'left-6' : 'right-6'} top-1/2 -translate-y-1/2 pointer-events-none z-20 select-none`}>
+          <div className="flex items-center gap-1 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]">
+            <span className="text-white text-xs font-bold font-mono">
+              {accumulatedSeconds > 0 ? `+${accumulatedSeconds}s` : `${accumulatedSeconds}s`}
+            </span>
           </div>
-        )}
-      </AnimatePresence>
+        </div>
+      )}
 
-      {/* Center Spinner (When buffering) or Center Play Button ONLY when paused */}
+      {/* Center Spinner or Play Button ONLY when paused */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
         {hlsError ? (
-          <div className="pointer-events-auto flex flex-col items-center gap-2 bg-black/85 rounded-2xl px-5 py-3.5 text-center max-w-[85%] border border-rose-500/30 shadow-2xl backdrop-blur-md">
+          <div className="pointer-events-auto flex flex-col items-center gap-2 bg-[#121110]/95 rounded-2xl px-5 py-3.5 text-center max-w-[85%] border border-rose-500/30 shadow-2xl">
             <span className="text-rose-400 text-xs font-mono break-words">{hlsError}</span>
           </div>
         ) : isBuffering ? (
-          <div className="p-3.5 bg-black/60 backdrop-blur-md rounded-full border border-white/15 shadow-xl">
-            <Loader2 className="w-8 h-8 text-[#FF7A00] animate-spin" />
+          <div className="p-3 bg-black/60 rounded-full border border-white/15 shadow-xl">
+            <Loader2 className="w-7 h-7 text-[#FF7A00] animate-spin" />
           </div>
         ) : (
-          /* Show center play icon ONLY when video is paused (never blocks while playing!) */
           !isPlaying && showControls && !doubleTapSide && (
-            <motion.button
-              initial={{ opacity: 0, scale: 0.85 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.85 }}
+            <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 togglePlay();
               }}
-              className="pointer-events-auto w-15 h-15 rounded-full bg-black/60 hover:bg-[#FF7A00] text-white flex items-center justify-center transition shadow-2xl active:scale-90 border border-white/20 backdrop-blur-md cursor-pointer"
+              className="pointer-events-auto w-14 h-14 rounded-full bg-black/60 hover:bg-[#FF7A00] text-white flex items-center justify-center transition shadow-2xl active:scale-90 border border-white/20 cursor-pointer"
             >
-              <Play className="w-7 h-7 fill-white ml-0.5" />
-            </motion.button>
+              <Play className="w-6 h-6 fill-white ml-0.5" />
+            </button>
           )
         )}
       </div>
 
-      {/* GOD-TIER STATS FOR NERDS TELEMETRY HUD (Responsive & Rich) */}
-      <AnimatePresence>
-        {showStats && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 10 }}
-            className="absolute top-3 left-3 sm:top-4 sm:left-4 z-40 bg-[#0F0E0D]/92 backdrop-blur-xl border border-white/15 rounded-2xl p-3.5 sm:p-4 text-[11px] font-mono text-zinc-300 shadow-[0_8px_32px_rgba(0,0,0,0.8)] w-[92%] sm:w-[340px] md:w-[360px] max-h-[82%] overflow-y-auto select-text scrollbar-thin"
-          >
-            {/* HUD Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2 font-sans">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-lg bg-[#FF7A00]/20 flex items-center justify-center text-[#FF7A00]">
-                  <Activity className="w-3.5 h-3.5" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white leading-none">สถิติสำหรับเด็กเนิร์ด</h4>
-                  <span className="text-[9px] text-emerald-400 font-mono font-medium flex items-center gap-1 mt-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Telemetry
-                  </span>
-                </div>
+      {/* GOD-TIER TELEMETRY HUD (Stats for Nerds) */}
+      {showStats && (
+        <div className="absolute top-3 left-3 sm:top-4 sm:left-4 z-40 bg-[#0F0E0D]/95 border border-white/15 rounded-2xl p-3.5 sm:p-4 text-[11px] font-mono text-zinc-300 shadow-2xl w-[92%] sm:w-[350px] md:w-[370px] max-h-[82%] overflow-y-auto select-text scrollbar-none">
+          {/* HUD Header */}
+          <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2 font-sans">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg bg-[#FF7A00]/20 flex items-center justify-center text-[#FF7A00]">
+                <Activity className="w-3.5 h-3.5" />
               </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={copyTelemetry}
-                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-zinc-200 text-[10px] font-sans flex items-center gap-1 transition cursor-pointer"
-                  title="คัดลอกข้อมูลสถิติ JSON"
-                >
-                  <Copy className="w-3 h-3 text-[#FF7A00]" />
-                  <span>{statsCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
-                </button>
-                <button
-                  onClick={() => setShowStats(false)}
-                  className="p-1 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+              <div>
+                <h4 className="text-xs font-bold text-white leading-none">สถิติสำหรับเด็กเนิร์ด</h4>
+                <span className="text-[9px] text-emerald-400 font-mono font-medium flex items-center gap-1 mt-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Telemetry
+                </span>
               </div>
             </div>
 
-            {/* Telemetry Metrics Grid */}
-            <div className="flex flex-col gap-1.5 text-[10px] leading-tight">
-              {/* Video ID & Protocol */}
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Video ID:</span>
-                <span className="text-white font-bold">{videoId || '#1'}</span>
-              </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={copyTelemetry}
+                className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-zinc-200 text-[10px] font-sans flex items-center gap-1 transition cursor-pointer"
+              >
+                <Copy className="w-3 h-3 text-[#FF7A00]" />
+                <span>{statsCopied ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowStats(false)}
+                className="p-1 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Protocol / Stream:</span>
-                <span className="text-zinc-200">{nerdStats.protocol}</span>
-              </div>
-
-              {/* Viewport & Device DPR */}
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Viewport / DPR:</span>
-                <span className="text-zinc-200">{nerdStats.viewport} <span className="text-zinc-400">({nerdStats.dpr}x)</span></span>
-              </div>
-
-              {/* Native Resolution */}
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Native Resolution:</span>
-                <span className="text-[#FF7A00] font-bold">{nerdStats.optimalRes} <span className="text-white text-[9px] bg-white/10 px-1 py-0.2 rounded font-sans">{formatResolutionBadge(resolution)}</span></span>
-              </div>
-
-              {/* Aspect Ratio & Cropping Mode */}
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Aspect Ratio / Fit:</span>
-                <span className="text-zinc-200">{videoRatio.toFixed(3)}:1 <span className="text-amber-400 uppercase font-semibold">({aspectMode})</span></span>
-              </div>
-
-              {/* Live Playback FPS */}
-              <div className="flex justify-between items-center bg-white/5 px-2 py-1 rounded-lg my-0.5">
-                <span className="text-zinc-300 flex items-center gap-1">
-                  <Zap className="w-3 h-3 text-emerald-400" /> Live FPS (จริง / ต้นฉบับ):
-                </span>
-                <span className="font-bold font-mono">
-                  <span className={
-                    !isPlaying 
-                      ? 'text-zinc-400' 
-                      : (currentFpsNumber > 0 && currentFpsNumber < targetFpsNumber - 3) 
-                        ? 'text-rose-400' 
-                        : 'text-emerald-400'
-                  }>
-                    {isPlaying ? realtimeFps : '0.0'}
-                  </span>
-                  <span className="text-zinc-400 font-normal"> / {fps || 30} fps</span>
-                </span>
-              </div>
-
-              {/* Dropped Frames */}
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Dropped Frames:</span>
-                <span className={nerdStats.droppedFrames > 0 ? 'text-rose-400 font-bold' : 'text-zinc-200'}>
-                  {nerdStats.droppedFrames} / {nerdStats.totalFrames} 
-                  {nerdStats.totalFrames > 0 && ` (${((nerdStats.droppedFrames / nerdStats.totalFrames) * 100).toFixed(2)}%)`}
-                </span>
-              </div>
-
-              {/* Codecs */}
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Video Codec:</span>
-                <span className="text-zinc-100 uppercase font-bold">{codec} <span className="text-zinc-400 text-[9px] font-normal">(Hardware Accel)</span></span>
-              </div>
-
-              <div className="flex justify-between items-center py-0.5 border-b border-white/5">
-                <span className="text-zinc-400">Audio Format:</span>
-                <span className="text-zinc-300">{nerdStats.audioTrack}</span>
-              </div>
-
-              {/* Buffer Health Meter */}
-              <div className="flex flex-col gap-1 pt-1">
-                <div className="flex justify-between items-center">
-                  <span className="text-zinc-400">Buffer Health:</span>
-                  <span className={`font-bold ${nerdStats.bufferHealth > 15 ? 'text-emerald-400' : nerdStats.bufferHealth > 5 ? 'text-amber-400' : 'text-rose-400'}`}>
-                    {nerdStats.bufferHealth.toFixed(1)} s
-                  </span>
-                </div>
-                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                  <div 
-                    className={`h-full transition-all duration-300 rounded-full ${
-                      nerdStats.bufferHealth > 15 
-                        ? 'bg-emerald-400' 
-                        : nerdStats.bufferHealth > 5 
-                        ? 'bg-amber-400' 
-                        : 'bg-rose-400'
-                    }`}
-                    style={{ width: `${Math.min((nerdStats.bufferHealth / 45) * 100, 100)}%` }}
-                  />
-                </div>
+          {/* Heavy Codec Warning for Mobile Phones */}
+          {nerdStats.isHeavyCodec && (
+            <div className="mb-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[10px] text-amber-200 flex items-start gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="leading-snug">
+                <span className="font-bold text-amber-300">แจ้งเตือนโหลดสูง (4K AV1):</span> มือถือรุ่นเก่าหรือไม่มีชิป AV1 ฮาร์ดแวร์ จะถอดรหัสด้วย CPU ทำให้เกิด Dropframe ได้
               </div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+
+          {/* Telemetry Metrics */}
+          <div className="flex flex-col gap-1.5 text-[10px] leading-tight">
+            <div className="flex justify-between items-center py-0.5 border-b border-white/5">
+              <span className="text-zinc-400">Stream Source:</span>
+              <span className="text-white font-bold">{nerdStats.protocol}</span>
+            </div>
+
+            <div className="flex justify-between items-center py-0.5 border-b border-white/5">
+              <span className="text-zinc-400">Viewport / DPR:</span>
+              <span className="text-zinc-200">{nerdStats.viewport} <span className="text-zinc-400">({nerdStats.dpr}x)</span></span>
+            </div>
+
+            <div className="flex justify-between items-center py-0.5 border-b border-white/5">
+              <span className="text-zinc-400">Native Resolution:</span>
+              <span className="text-[#FF7A00] font-bold">{nerdStats.optimalRes}</span>
+            </div>
+
+            <div className="flex justify-between items-center py-0.5 border-b border-white/5">
+              <span className="text-zinc-400">Aspect Ratio / Fit:</span>
+              <span className="text-zinc-200">{videoRatio.toFixed(3)}:1 <span className="text-amber-400 uppercase font-semibold">({aspectMode})</span></span>
+            </div>
+
+            {/* Live Playback FPS */}
+            <div className="flex justify-between items-center bg-white/5 px-2 py-1 rounded-lg my-0.5">
+              <span className="text-zinc-300 flex items-center gap-1">
+                <Zap className="w-3 h-3 text-emerald-400" /> Live FPS (จริง / เป้าหมาย):
+              </span>
+              <span className="font-bold font-mono">
+                <span className={
+                  !isPlaying 
+                    ? 'text-zinc-400' 
+                    : (currentFpsNumber > 0 && currentFpsNumber < targetFpsNumber - 4) 
+                      ? 'text-rose-400' 
+                      : 'text-emerald-400'
+                }>
+                  {isPlaying ? realtimeFps : '0.0'}
+                </span>
+                <span className="text-zinc-400 font-normal"> / {fps || 30} fps</span>
+              </span>
+            </div>
+
+            {/* Dropped Frames with Highlight */}
+            <div className="flex justify-between items-center py-0.5 border-b border-white/5">
+              <span className="text-zinc-400">Dropped Frames:</span>
+              <span className={nerdStats.droppedFrames > 10 ? 'text-rose-400 font-bold' : 'text-zinc-200'}>
+                {nerdStats.droppedFrames} / {nerdStats.totalFrames} <span className="text-zinc-400">({nerdStats.dropRate})</span>
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center py-0.5 border-b border-white/5">
+              <span className="text-zinc-400">Video Codec:</span>
+              <span className="text-zinc-100 uppercase font-bold">{codec}</span>
+            </div>
+
+            {/* Buffer Health Meter */}
+            <div className="flex flex-col gap-1 pt-1">
+              <div className="flex justify-between items-center">
+                <span className="text-zinc-400">Buffer Health:</span>
+                <span className={`font-bold ${nerdStats.bufferHealth > 15 ? 'text-emerald-400' : nerdStats.bufferHealth > 5 ? 'text-amber-400' : 'text-rose-400'}`}>
+                  {nerdStats.bufferHealth.toFixed(1)} s
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 rounded-full ${
+                    nerdStats.bufferHealth > 15 ? 'bg-emerald-400' : nerdStats.bufferHealth > 5 ? 'bg-amber-400' : 'bg-rose-400'
+                  }`}
+                  style={{ width: `${Math.min((nerdStats.bufferHealth / 40) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Multi-Tab Settings Menu */}
-      <AnimatePresence>
-        {showSettingsMenu && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 6 }}
-            className="absolute bottom-16 right-4 bg-[#18181B]/95 border border-white/15 rounded-2xl py-1.5 w-54 text-xs text-zinc-200 z-40 shadow-2xl overflow-hidden backdrop-blur-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {activeMenuTab === 'main' && (
-              <div className="flex flex-col">
-                {/* Quality */}
-                <button
-                  disabled={levels.length <= 1}
-                  onClick={() => setActiveMenuTab('quality')}
-                  className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer"
-                >
-                  <span className="text-zinc-300">คุณภาพ</span>
-                  <span className="text-[#FF7A00] font-semibold flex items-center gap-1 font-mono">
-                    {currentLevelIndex === -1 ? `Auto (${activeLevelLabel})` : activeLevelLabel}
-                    {levels.length > 1 && <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />}
-                  </span>
-                </button>
+      {showSettingsMenu && (
+        <div 
+          className="absolute bottom-16 right-4 bg-[#18181B]/98 border border-white/15 rounded-2xl py-1.5 w-54 text-xs text-zinc-200 z-40 shadow-2xl overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {activeMenuTab === 'main' && (
+            <div className="flex flex-col">
+              <button
+                type="button"
+                disabled={levels.length <= 1}
+                onClick={() => setActiveMenuTab('quality')}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer"
+              >
+                <span className="text-zinc-300">คุณภาพ</span>
+                <span className="text-[#FF7A00] font-semibold flex items-center gap-1 font-mono">
+                  {currentLevelIndex === -1 ? `Auto (${activeLevelLabel})` : activeLevelLabel}
+                  {levels.length > 1 && <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />}
+                </span>
+              </button>
 
-                {/* Speed */}
-                <button
-                  onClick={() => setActiveMenuTab('speed')}
-                  className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer"
-                >
-                  <span className="text-zinc-300">ความเร็ว</span>
-                  <span className="text-[#FF7A00] flex items-center gap-1 font-mono font-semibold">
-                    {playbackRate === 1 ? 'ปกติ' : `${playbackRate}x`}
-                    <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
-                  </span>
-                </button>
+              <button
+                type="button"
+                onClick={() => setActiveMenuTab('speed')}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer"
+              >
+                <span className="text-zinc-300">ความเร็ว</span>
+                <span className="text-[#FF7A00] flex items-center gap-1 font-mono font-semibold">
+                  {playbackRate === 1 ? 'ปกติ' : `${playbackRate}x`}
+                  <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
+                </span>
+              </button>
 
-                {/* Aspect Ratio Mode */}
-                <button
-                  onClick={() => setActiveMenuTab('aspect')}
-                  className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer"
-                >
-                  <span className="text-zinc-300">สัดส่วนวิดีโอ</span>
-                  <span className="text-amber-400 flex items-center gap-1 uppercase font-semibold">
-                    {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
-                    <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
-                  </span>
-                </button>
+              <button
+                type="button"
+                onClick={() => setActiveMenuTab('aspect')}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer"
+              >
+                <span className="text-zinc-300">สัดส่วนวิดีโอ</span>
+                <span className="text-amber-400 flex items-center gap-1 uppercase font-semibold">
+                  {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
+                  <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
+                </span>
+              </button>
 
-                {/* Stats for Nerds */}
-                <button
-                  onClick={() => {
-                    setShowStats(true);
-                    setShowSettingsMenu(false);
-                  }}
-                  className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition border-t border-white/5 text-zinc-300 cursor-pointer"
-                >
-                  <span>สถิติสำหรับเด็กเนิร์ด</span>
-                  <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStats(true);
+                  setShowSettingsMenu(false);
+                }}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 transition border-t border-white/5 text-zinc-300 cursor-pointer"
+              >
+                <span>สถิติสำหรับเด็กเนิร์ด</span>
+                <Activity className="w-3.5 h-3.5 text-emerald-400" />
+              </button>
+            </div>
+          )}
+
+          {activeMenuTab === 'quality' && (
+            <div className="flex flex-col max-h-56 overflow-y-auto">
+              <div className="px-3.5 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
+                <span>เลือกระดับความละเอียด</span>
+                <button type="button" onClick={() => setActiveMenuTab('main')} className="text-[#FF7A00] font-semibold cursor-pointer">กลับ</button>
               </div>
-            )}
 
-            {/* Quality Submenu */}
-            {activeMenuTab === 'quality' && (
-              <div className="flex flex-col max-h-56 overflow-y-auto">
-                <div className="px-3.5 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
-                  <span>เลือกระดับความละเอียด</span>
-                  <button onClick={() => setActiveMenuTab('main')} className="text-[#FF7A00] font-semibold cursor-pointer">กลับ</button>
-                </div>
+              <button
+                type="button"
+                onClick={() => handleSelectQuality(-1)}
+                className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer"
+              >
+                <span className={currentLevelIndex === -1 ? 'text-[#FF7A00] font-semibold' : ''}>
+                  Auto {currentLevelIndex === -1 && `(${activeLevelLabel})`}
+                </span>
+                {currentLevelIndex === -1 && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
+              </button>
 
-                <button
-                  onClick={() => handleSelectQuality(-1)}
-                  className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer"
-                >
-                  <span className={currentLevelIndex === -1 ? 'text-[#FF7A00] font-semibold' : ''}>
-                    Auto {currentLevelIndex === -1 && `(${activeLevelLabel})`}
-                  </span>
-                  {currentLevelIndex === -1 && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-                </button>
-
-                {levels.map((lvl) => {
-                  const isSelected = currentLevelIndex === lvl.index;
-                  return (
-                    <button
-                      key={lvl.index}
-                      onClick={() => handleSelectQuality(lvl.index)}
-                      className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition font-mono cursor-pointer"
-                    >
-                      <span className={isSelected ? 'text-[#FF7A00] font-semibold' : ''}>
-                        {lvl.label}
-                      </span>
-                      {isSelected && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Speed Submenu */}
-            {activeMenuTab === 'speed' && (
-              <div>
-                <div className="px-3.5 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
-                  <span>เลือกความเร็วการเล่น</span>
-                  <button onClick={() => setActiveMenuTab('main')} className="text-[#FF7A00] font-semibold cursor-pointer">กลับ</button>
-                </div>
-                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+              {levels.map((lvl) => {
+                const isSelected = currentLevelIndex === lvl.index;
+                return (
                   <button
-                    key={rate}
-                    onClick={() => {
-                      if (!video.current) return;
-                      video.current.playbackRate = rate;
-                      setPlaybackRate(rate);
-                      showToast(`ความเร็ว: ${rate}x`);
-                      setShowSettingsMenu(false);
-                      resetControlsTimer();
-                    }}
+                    key={lvl.index}
+                    type="button"
+                    onClick={() => handleSelectQuality(lvl.index)}
                     className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition font-mono cursor-pointer"
                   >
-                    <span className={playbackRate === rate ? 'text-[#FF7A00] font-semibold' : ''}>
-                      {rate === 1 ? 'ปกติ (1x)' : `${rate}x`}
+                    <span className={isSelected ? 'text-[#FF7A00] font-semibold' : ''}>
+                      {lvl.label}
                     </span>
-                    {playbackRate === rate && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
+                    {isSelected && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
                   </button>
-                ))}
-              </div>
-            )}
+                );
+              })}
+            </div>
+          )}
 
-            {/* Aspect Mode Submenu */}
-            {activeMenuTab === 'aspect' && (
-              <div>
-                <div className="px-3.5 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
-                  <span>เลือกสัดส่วนภาพ</span>
-                  <button onClick={() => setActiveMenuTab('main')} className="text-[#FF7A00] font-semibold cursor-pointer">กลับ</button>
-                </div>
-                {[
-                  { key: 'fit', label: 'พอดีเฟรม (Fit)', desc: 'แสดงตามขนาดจริงของไฟล์' },
-                  { key: 'crop', label: 'ตัดขอบดำ (Crop / Zoom)', desc: 'ซูมขยายตัดแถบดำบนล่าง' },
-                  { key: 'fill', label: 'ขยายเต็มจอ (Fill)', desc: 'ขยายให้เต็มกล่องเครื่องเล่น' },
-                ].map((item) => (
-                  <button
-                    key={item.key}
-                    onClick={() => {
-                      setAspectMode(item.key);
-                      showToast(`สัดส่วน: ${item.label}`);
-                      setShowSettingsMenu(false);
-                      resetControlsTimer();
-                    }}
-                    className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer"
-                  >
-                    <div className="flex flex-col">
-                      <span className={aspectMode === item.key ? 'text-[#FF7A00] font-semibold' : ''}>
-                        {item.label}
-                      </span>
-                      <span className="text-[9px] text-zinc-400">{item.desc}</span>
-                    </div>
-                    {aspectMode === item.key && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-                  </button>
-                ))}
+          {activeMenuTab === 'speed' && (
+            <div>
+              <div className="px-3.5 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
+                <span>เลือกความเร็วการเล่น</span>
+                <button type="button" onClick={() => setActiveMenuTab('main')} className="text-[#FF7A00] font-semibold cursor-pointer">กลับ</button>
               </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Modern Bottom Controls Bar */}
-      <AnimatePresence>
-        {(showControls || !isPlaying || isScrubbing) && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-10 bg-gradient-to-t from-black/95 via-black/50 to-transparent flex flex-col gap-2 z-30"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* YouTube-style Scrubbing Seekbar with Hover Preview */}
-            <div 
-              ref={seekTrackRef}
-              onPointerDown={handlePointerDown}
-              onMouseEnter={() => setIsHoveringSeek(true)}
-              onMouseLeave={() => setIsHoveringSeek(false)}
-              className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
-            >
-              {/* Hover / Scrubbing Time Bubble Tooltip */}
-              {(isScrubbing || isHoveringSeek) && (
-                <div
-                  className="absolute -top-7 -translate-x-1/2 bg-[#18181B] text-white border border-white/20 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold pointer-events-none shadow-xl whitespace-nowrap z-40"
-                  style={{ left: `${Math.max(6, Math.min(isScrubbing ? previewPercent : hoverPercent, 94))}%` }}
+              {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                <button
+                  key={rate}
+                  type="button"
+                  onClick={() => {
+                    if (!video.current) return;
+                    video.current.playbackRate = rate;
+                    setPlaybackRate(rate);
+                    showToast(`ความเร็ว: ${rate}x`);
+                    setShowSettingsMenu(false);
+                    resetControlsTimer();
+                  }}
+                  className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition font-mono cursor-pointer"
                 >
-                  {formatTime(isScrubbing ? previewTime : hoverTime)}
-                </div>
-              )}
+                  <span className={playbackRate === rate ? 'text-[#FF7A00] font-semibold' : ''}>
+                    {rate === 1 ? 'ปกติ (1x)' : `${rate}x`}
+                  </span>
+                  {playbackRate === rate && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
+                </button>
+              ))}
+            </div>
+          )}
 
-              {/* Progress Background Track */}
-              <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
-                {/* Buffer Track */}
-                <div 
-                  className="absolute left-0 top-0 bottom-0 bg-white/40 transition-all duration-200"
-                  style={{ width: `${bufferPercent}%` }}
-                />
-                {/* Hover Preview Track */}
-                {isHoveringSeek && !isScrubbing && (
-                  <div 
-                    className="absolute left-0 top-0 bottom-0 bg-white/30"
-                    style={{ width: `${hoverPercent}%` }}
-                  />
-                )}
-                {/* Current Playback Progress */}
-                <div 
-                  className="absolute left-0 top-0 bottom-0 bg-[#FF7A00]"
-                  style={{ width: `${isScrubbing ? previewPercent : progressPercent}%` }}
-                />
+          {activeMenuTab === 'aspect' && (
+            <div>
+              <div className="px-3.5 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
+                <span>เลือกสัดส่วนภาพ</span>
+                <button type="button" onClick={() => setActiveMenuTab('main')} className="text-[#FF7A00] font-semibold cursor-pointer">กลับ</button>
               </div>
+              {[
+                { key: 'fit', label: 'พอดีเฟรม (Fit)', desc: 'แสดงตามสัดส่วนจริง ไม่ครอป' },
+                { key: 'crop', label: 'ตัดขอบดำ (Crop)', desc: 'ซูมตัดแถบดำบน-ล่างออก' },
+                { key: 'fill', label: 'ขยายเต็มจอ (Fill)', desc: 'ขยายให้เต็มกล่องเครื่องเล่น' },
+              ].map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    setAspectMode(item.key);
+                    showToast(`สัดส่วน: ${item.label}`);
+                    setShowSettingsMenu(false);
+                    resetControlsTimer();
+                  }}
+                  className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer"
+                >
+                  <div className="flex flex-col">
+                    <span className={aspectMode === item.key ? 'text-[#FF7A00] font-semibold' : ''}>
+                      {item.label}
+                    </span>
+                    <span className="text-[9px] text-zinc-400">{item.desc}</span>
+                  </div>
+                  {aspectMode === item.key && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
-              {/* Scrubber Thumb Knob */}
+      {/* Modern High-Performance Bottom Controls Bar */}
+      {(showControls || !isPlaying || isScrubbing) && (
+        <div 
+          className="absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-opacity duration-150"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Seekbar with Direct DOM Updates */}
+          <div 
+            ref={seekTrackRef}
+            onPointerDown={handlePointerDown}
+            onMouseEnter={() => setIsHoveringSeek(true)}
+            onMouseLeave={() => setIsHoveringSeek(false)}
+            className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
+          >
+            {/* Time Tooltip on Hover / Scrubbing */}
+            {(isScrubbing || isHoveringSeek) && (
+              <div
+                className="absolute -top-7 -translate-x-1/2 bg-[#18181B] text-white border border-white/20 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold pointer-events-none shadow-xl whitespace-nowrap z-40"
+                style={{ left: `${Math.max(6, Math.min(isScrubbing ? previewPercent : hoverPercent, 94))}%` }}
+              >
+                {formatTime(isScrubbing ? previewTime : hoverTime)}
+              </div>
+            )}
+
+            {/* Progress Background Track */}
+            <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
+              {/* Buffer Track (Direct DOM) */}
               <div 
-                className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] rounded-full shadow-md pointer-events-none transition-transform duration-150 ${
-                  isScrubbing ? 'scale-125' : 'scale-0 group-hover/seek:scale-100'
-                }`}
-                style={{ left: `${isScrubbing ? previewPercent : progressPercent}%` }}
+                ref={bufferBarRef}
+                className="absolute left-0 top-0 bottom-0 bg-white/40"
+                style={{ width: '0%' }}
+              />
+              {/* Hover Preview Track */}
+              {isHoveringSeek && !isScrubbing && (
+                <div 
+                  className="absolute left-0 top-0 bottom-0 bg-white/30"
+                  style={{ width: `${hoverPercent}%` }}
+                />
+              )}
+              {/* Playback Progress (Direct DOM) */}
+              <div 
+                ref={progressBarRef}
+                className="absolute left-0 top-0 bottom-0 bg-[#FF7A00]"
+                style={{ width: '0%' }}
               />
             </div>
 
-            {/* Bottom Row Icons */}
-            <div className="flex items-center justify-between text-white text-xs pt-0.5">
-              {/* Left Controls */}
-              <div className="flex items-center gap-3 sm:gap-4">
+            {/* Scrubber Knob (Direct DOM) */}
+            <div 
+              ref={scrubberKnobRef}
+              className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
+                isScrubbing ? 'scale-125' : 'scale-0 group-hover/seek:scale-100'
+              }`}
+              style={{ left: '0%' }}
+            />
+          </div>
+
+          {/* Bottom Icons Row */}
+          <div className="flex items-center justify-between text-white text-xs pt-0.5">
+            {/* Left Controls */}
+            <div className="flex items-center gap-3 sm:gap-4">
+              <button 
+                type="button"
+                onClick={togglePlay} 
+                className="active:scale-90 transition cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่น (k)'}
+              >
+                {isPlaying ? <Pause className="w-4.5 h-4.5 fill-white" /> : <Play className="w-4.5 h-4.5 fill-white ml-0.5" />}
+              </button>
+
+              {/* Volume Slider */}
+              <div 
+                className="flex items-center gap-2 group/vol"
+                onMouseEnter={() => setShowVolumeSlider(true)}
+                onMouseLeave={() => setShowVolumeSlider(false)}
+              >
                 <button 
-                  onClick={togglePlay} 
-                  className="active:scale-90 transition cursor-pointer p-1 rounded-lg hover:bg-white/10"
-                  title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่น (k)'}
+                  type="button"
+                  onClick={toggleMute} 
+                  className="cursor-pointer p-1 rounded-lg hover:bg-white/10"
+                  title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
                 >
-                  {isPlaying ? <Pause className="w-4.5 h-4.5 fill-white" /> : <Play className="w-4.5 h-4.5 fill-white ml-0.5" />}
-                </button>
-
-                {/* Volume with Smooth Hover Expand Slider */}
-                <div 
-                  className="flex items-center gap-2 group/vol"
-                  onMouseEnter={() => setShowVolumeSlider(true)}
-                  onMouseLeave={() => setShowVolumeSlider(false)}
-                >
-                  <button 
-                    onClick={toggleMute} 
-                    className="cursor-pointer p-1 rounded-lg hover:bg-white/10"
-                    title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
-                  >
-                    {isMuted || volume === 0 ? (
-                      <VolumeX className="w-4.5 h-4.5 fill-white text-white" />
-                    ) : volume < 0.5 ? (
-                      <Volume1 className="w-4.5 h-4.5 fill-white text-white" />
-                    ) : (
-                      <Volume2 className="w-4.5 h-4.5 fill-white text-white" />
-                    )}
-                  </button>
-
-                  <div className={`overflow-hidden transition-all duration-200 flex items-center ${
-                    showVolumeSlider ? 'w-18 sm:w-22 opacity-100' : 'w-0 opacity-0 pointer-events-none'
-                  }`}>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={isMuted ? 0 : volume}
-                      onChange={handleVolumeChange}
-                      className="w-full h-1 accent-[#FF7A00] bg-white/30 rounded-full cursor-pointer"
-                    />
-                  </div>
-                </div>
-
-                {/* Time Display */}
-                <span className="font-mono text-[11px] text-zinc-300 select-none">
-                  {formatTime(isScrubbing ? previewTime : currentTime)} / {formatTime(duration)}
-                </span>
-              </div>
-
-              {/* Right Controls */}
-              <div className="flex items-center gap-1 sm:gap-1.5">
-                {/* PiP Button */}
-                <button
-                  onClick={togglePiP}
-                  title="เล่นแบบหน้าต่างลอย (Picture-in-Picture)"
-                  className="p-1.5 rounded-lg text-white hover:bg-white/10 transition active:scale-90 cursor-pointer"
-                >
-                  <PictureInPicture2 className="w-4 h-4" />
-                </button>
-
-                {/* Aspect Ratio Button (Fit / Crop / Fill) */}
-                <button
-                  onClick={cycleAspectMode}
-                  title={`สัดส่วน: ${aspectMode.toUpperCase()} (คลิกเพื่อเปลี่ยน)`}
-                  className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${
-                    aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-white hover:bg-white/10'
-                  }`}
-                >
-                  {aspectMode === 'crop' ? (
-                    <Crop className="w-4 h-4" />
-                  ) : aspectMode === 'fill' ? (
-                    <Scan className="w-4 h-4" />
+                  {isMuted || volume === 0 ? (
+                    <VolumeX className="w-4.5 h-4.5 fill-white text-white" />
+                  ) : volume < 0.5 ? (
+                    <Volume1 className="w-4.5 h-4.5 fill-white text-white" />
                   ) : (
-                    <Expand className="w-4 h-4" />
+                    <Volume2 className="w-4.5 h-4.5 fill-white text-white" />
                   )}
-                  <span className="hidden sm:inline font-mono uppercase text-[10px]">
-                    {aspectMode}
-                  </span>
                 </button>
 
-                {/* Settings Button */}
-                <button
-                  onClick={() => {
-                    setShowSettingsMenu(!showSettingsMenu);
-                    setActiveMenuTab('main');
-                  }}
-                  title="การตั้งค่าเครื่องเล่น"
-                  className={`p-1.5 rounded-lg transition cursor-pointer ${
-                    showSettingsMenu ? 'text-[#FF7A00] bg-white/10' : 'text-white hover:bg-white/10'
-                  }`}
-                >
-                  <Settings className="w-4 h-4" />
-                </button>
-
-                {/* Fullscreen Button */}
-                <button 
-                  onClick={toggleFullscreen} 
-                  title={isFullscreen ? 'ออกจากเต็มจอ (f)' : 'เต็มจอ (f)'}
-                  className="p-1.5 rounded-lg text-white hover:bg-white/10 transition active:scale-90 cursor-pointer"
-                >
-                  {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-                </button>
+                <div className={`overflow-hidden transition-all duration-200 flex items-center ${
+                  showVolumeSlider ? 'w-18 sm:w-22 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+                }`}>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={isMuted ? 0 : volume}
+                    onChange={handleVolumeChange}
+                    className="w-full h-1 accent-[#FF7A00] bg-white/30 rounded-full cursor-pointer"
+                  />
+                </div>
               </div>
+
+              {/* Direct DOM Time Display */}
+              <span ref={timeDisplayRef} className="font-mono text-[11px] text-zinc-300 select-none">
+                00:00 / {formatTime(duration)}
+              </span>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+            {/* Right Controls */}
+            <div className="flex items-center gap-1 sm:gap-1.5">
+              {/* PiP */}
+              <button
+                type="button"
+                onClick={togglePiP}
+                title="เล่นแบบหน้าต่างลอย (PiP)"
+                className="p-1.5 rounded-lg text-white hover:bg-white/10 transition active:scale-90 cursor-pointer"
+              >
+                <PictureInPicture2 className="w-4 h-4" />
+              </button>
+
+              {/* Aspect Ratio */}
+              <button
+                type="button"
+                onClick={cycleAspectMode}
+                title={`สัดส่วน: ${aspectMode.toUpperCase()} (คลิกเพื่อเปลี่ยน)`}
+                className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${
+                  aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-white hover:bg-white/10'
+                }`}
+              >
+                {aspectMode === 'crop' ? (
+                  <Crop className="w-4 h-4" />
+                ) : aspectMode === 'fill' ? (
+                  <Scan className="w-4 h-4" />
+                ) : (
+                  <Expand className="w-4 h-4" />
+                )}
+                <span className="hidden sm:inline font-mono uppercase text-[10px]">
+                  {aspectMode}
+                </span>
+              </button>
+
+              {/* Settings */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSettingsMenu(!showSettingsMenu);
+                  setActiveMenuTab('main');
+                }}
+                title="การตั้งค่าเครื่องเล่น"
+                className={`p-1.5 rounded-lg transition cursor-pointer ${
+                  showSettingsMenu ? 'text-[#FF7A00] bg-white/10' : 'text-white hover:bg-white/10'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+
+              {/* Fullscreen */}
+              <button 
+                type="button"
+                onClick={toggleFullscreen} 
+                title={isFullscreen ? 'ออกจากเต็มจอ (f)' : 'เต็มจอ (f)'}
+                className="p-1.5 rounded-lg text-white hover:bg-white/10 transition active:scale-90 cursor-pointer"
+              >
+                {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

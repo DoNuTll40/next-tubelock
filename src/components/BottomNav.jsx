@@ -15,7 +15,7 @@ export default function BottomNav() {
   const navItems = [
     { label: 'หน้าแรก', path: '/', icon: Home },
     { label: 'ประวัติ', path: '/history', icon: History },
-    { label: 'อัปโหลด', path: '/upload', icon: Plus, isPrimary: true, isDev: true },
+    { label: 'อัปโหลด', path: '/upload', icon: Plus, isPrimary: true, isDev: false },
     { label: 'ซิงก์', path: '/sync', icon: RefreshCw },
     { label: 'ตั้งค่า', path: '/settings', icon: Settings },
   ];

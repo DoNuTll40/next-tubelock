@@ -1,0 +1,57 @@
+name: TubeLock Serverless HLS Transcoding
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: 'Video record ID in Neon DB'
+        required: true
+        type: string
+      raw_file_name:
+        description: 'Raw video filename in OneDrive /raw/ folder'
+        required: true
+        type: string
+      title:
+        description: 'Title of the video'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  transcode:
+    name: Transcode HLS Multi-bitrate (Ubuntu 2-Core / 7GB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install System Dependencies (FFmpeg)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+
+      - name: Install Node.js Dependencies
+        run: |
+          npm ci || npm install --legacy-peer-deps
+
+      - name: Run Transcode Worker
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
+          VIDEO_ID: ${{ inputs.video_id }}
+          RAW_FILE_NAME: ${{ inputs.raw_file_name }}
+          VIDEO_TITLE: ${{ inputs.title }}
+        run: |
+          node scripts/transcode-worker.js
