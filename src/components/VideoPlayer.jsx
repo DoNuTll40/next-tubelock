@@ -473,7 +473,7 @@ export default function VideoPlayer({
             if (lvl) {
               const activeLabel = formatResolutionBadge(`${lvl.height}p`);
               setActiveLevelLabel(activeLabel);
-              showToast(`คุณภาพ: ${activeLabel}`);
+              showToast(`คุณภาพ : ${activeLabel}`);
             }
           });
 
@@ -536,19 +536,18 @@ export default function VideoPlayer({
     };
   }, [src, defaultAutoplay, resolution, video, showToast]);
 
-  // Quality selector (Seamless switch: updates nextLevel & currentLevel without resetting stream or reloading src)
+  // Quality selector (100% Smooth switch: updates nextLevel only, so existing buffer plays continuously without reloading stream, pausing, or showing spinner)
   const handleSelectQuality = (levelIdx) => {
     setCurrentLevelIndex(levelIdx);
     if (hlsInstanceRef.current) {
       hlsInstanceRef.current.nextLevel = levelIdx;
-      hlsInstanceRef.current.currentLevel = levelIdx;
       if (levelIdx === -1) {
-        showToast('ความละเอียด: Auto (ปรับตามเน็ต)');
+        showToast('ความละเอียด : Auto (ปรับตามเน็ต)');
       } else {
         const selected = levels.find((l) => l.index === levelIdx);
         if (selected) {
           setActiveLevelLabel(selected.label);
-          showToast(`ความละเอียด: ${selected.label}`);
+          showToast(`ความละเอียด : ${selected.label}`);
         }
       }
     }
@@ -1152,9 +1151,9 @@ export default function VideoPlayer({
         } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
         width: isFullscreen ? '100vw' : '100%',
-        maxWidth: isFullscreen ? undefined : `calc(min(75vh, calc(100vh - 160px)) * ${videoRatio})`,
-        aspectRatio: isFullscreen ? undefined : videoRatio,
-        maxHeight: isFullscreen ? undefined : 'min(75vh, calc(100vh - 160px))',
+        maxWidth: isFullscreen ? undefined : `calc((100vh - 140px) * ${videoRatio})`,
+        aspectRatio: isFullscreen ? undefined : `${videoRatio}`,
+        maxHeight: isFullscreen ? undefined : 'calc(100vh - 140px)',
         margin: '0 auto',
         contain: 'paint layout',
         WebkitTouchCallout: 'none',
@@ -1189,15 +1188,17 @@ export default function VideoPlayer({
         onCanPlay={(e) => {
           const { videoWidth, videoHeight } = e.target;
           if (videoWidth && videoHeight) {
-            setVideoRatio(videoWidth / videoHeight);
+            const isVertical = videoHeight > videoWidth;
+            setVideoRatio(isVertical ? (16 / 9) : (videoWidth / videoHeight));
           }
         }}
         onLoadedMetadata={(e) => {
           const { videoWidth, videoHeight, duration: dur } = e.target;
           if (videoWidth && videoHeight) {
-            setVideoRatio(videoWidth / videoHeight);
+            const isVertical = videoHeight > videoWidth;
+            setVideoRatio(isVertical ? (16 / 9) : (videoWidth / videoHeight));
           }
-          setDuration(dur);
+          if (dur) setDuration(dur);
           updateBufferProgress();
           if (onLoadedMetadata) onLoadedMetadata(e);
         }}

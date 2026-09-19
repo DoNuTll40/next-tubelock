@@ -193,229 +193,220 @@ export default function WatchPage() {
 
   return (
     <div className="w-full max-w-[1720px] mx-auto px-0 sm:px-4 md:px-6 lg:px-8 pt-0 sm:pt-4 pb-16 sm:py-6">
-      <div className="flex flex-col lg:flex-row gap-0 sm:gap-6 items-start">
-        {/* Left / Main Player Column */}
-        <div className="flex-1 w-full min-w-0 flex flex-col">
-          
-          {/* 🎯 Sticky Video Player on Mobile (Pinned at top: 0 while scrolling!) */}
-          <div className="sticky top-0 z-30 w-full bg-black sm:static sm:z-auto sm:rounded-2xl sm:overflow-hidden sm:border sm:border-black/10 sm:shadow-lg">
-            {streamUrl ? (
-              <VideoPlayer
-                src={streamUrl}
-                poster={video?.thumbnail_url}
-                storyboard={storyboard}
-                title={video?.title}
-                onBack={() => router.push('/')}
-                resolution={video?.resolution}
-                fps={video?.fps}
-                codec={video?.codec}
-                videoId={video?.id}
-                videoRef={videoRef}
-                defaultVolume={playerConfig?.volume ?? 0.8}
-                defaultAutoplay={playerConfig?.autoplay ?? true}
-                defaultSpeed={playerConfig?.default_speed ?? 1}
-                defaultFit={playerConfig?.default_fit ?? 'fit'}
-                seekStep={playerConfig?.seek_step ?? 10}
-                autoStats={playerConfig?.auto_stats ?? false}
-              />
-            ) : (
-              /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
-              <div className="aspect-video w-full relative bg-zinc-950 sm:rounded-2xl overflow-hidden flex items-center justify-center select-none">
-                {/* Background Poster / Thumbnail */}
-                {video?.thumbnail_url && (
-                  <img
-                    src={video.thumbnail_url}
-                    alt={video?.title || 'Thumbnail'}
-                    className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
-                  />
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/65 backdrop-blur-[0.5px]" />
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-0 sm:gap-6 items-start">
+        {/* 🎯 Video Player: Sticky on mobile across entire page / Static in Left Col on desktop */}
+        <div className="sticky top-0 z-30 w-full bg-black sm:static sm:z-auto sm:rounded-2xl sm:overflow-hidden sm:border sm:border-black/10 sm:shadow-lg lg:col-start-1 lg:row-start-1">
+          {streamUrl ? (
+            <VideoPlayer
+              src={streamUrl}
+              poster={video?.thumbnail_url}
+              storyboard={storyboard}
+              title={video?.title}
+              onBack={() => router.push('/')}
+              resolution={video?.resolution}
+              fps={video?.fps}
+              codec={video?.codec}
+              videoId={video?.id}
+              videoRef={videoRef}
+              defaultVolume={playerConfig?.volume ?? 0.8}
+              defaultAutoplay={playerConfig?.autoplay ?? true}
+              defaultSpeed={playerConfig?.default_speed ?? 1}
+              defaultFit={playerConfig?.default_fit ?? 'fit'}
+              seekStep={playerConfig?.seek_step ?? 10}
+              autoStats={playerConfig?.auto_stats ?? false}
+            />
+          ) : (
+            /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
+            <div className="aspect-video w-full relative bg-zinc-950 sm:rounded-2xl overflow-hidden flex items-center justify-center select-none">
+              {/* Background Poster / Thumbnail */}
+              {video?.thumbnail_url && (
+                <img
+                  src={video.thumbnail_url}
+                  alt={video?.title || 'Thumbnail'}
+                  className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
+                />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/65 backdrop-blur-[0.5px]" />
 
-                {/* Center Glowing Spinner */}
-                <div className="relative z-10 flex flex-col items-center gap-3.5 px-4 text-center">
-                  <div className="relative flex items-center justify-center">
-                    <div className="absolute w-14 h-14 rounded-full bg-[#FF7A00]/25 blur-lg animate-pulse" />
-                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-[3px] border-white/15 border-t-[#FF7A00] animate-spin" />
-                  </div>
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-white text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md">
-                      กำลังเตรียมสัญญาณภาพ...
-                    </span>
-                    <span className="text-zinc-400 text-[10px] sm:text-[11px] font-mono">
-                      เชื่อมต่อคลาวด์สตรีมมิ่ง TubeLock
-                    </span>
-                  </div>
+              {/* Center Glowing Spinner */}
+              <div className="relative z-10 flex flex-col items-center gap-3.5 px-4 text-center">
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-14 h-14 rounded-full bg-[#FF7A00]/25 blur-lg animate-pulse" />
+                  <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-[3px] border-white/15 border-t-[#FF7A00] animate-spin" />
+                </div>
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-white text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md">
+                    กำลังเตรียมสัญญาณภาพ...
+                  </span>
+                  <span className="text-zinc-400 text-[10px] sm:text-[11px] font-mono">
+                    เชื่อมต่อคลาวด์สตรีมมิ่ง TubeLock
+                  </span>
                 </div>
               </div>
-            )}
+            </div>
+          )}
+        </div>
+
+        {/* 📱 YouTube-Style Video Details Section (Left Col Row 2 on desktop) */}
+        <div className="flex flex-col gap-3.5 p-3.5 sm:px-0 sm:pt-4 bg-[#FBF9F5] lg:col-start-1 lg:row-start-2">
+          {/* Title */}
+          {video ? (
+            <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] leading-snug line-clamp-2">
+              {video.title}
+            </h1>
+          ) : (
+            <div className="h-6 sm:h-7 bg-[#EFECE6] rounded-lg w-3/4 animate-pulse my-0.5" />
+          )}
+
+          {/* Views, Tags & Expand Trigger */}
+          <div className="flex items-center gap-1.5 text-xs text-[#606060] font-normal">
+            <span>{viewsDisplay}</span>
+            <span>•</span>
+            <span>HLS Direct</span>
+            <span>•</span>
+            <span className="text-[#FF7A00] font-medium">#TubeLock</span>
+            <button
+              type="button"
+              onClick={() => setIsDescOpen(!isDescOpen)}
+              className="text-[#0F0F0F] font-semibold hover:underline cursor-pointer ml-1"
+            >
+              {isDescOpen ? 'แสดงน้อยลง' : '...เพิ่มเติม'}
+            </button>
           </div>
 
-          {/* 📱 YouTube-Style Video Details Section */}
-          <div className="flex flex-col gap-3.5 p-3.5 sm:px-0 sm:pt-4 bg-[#FBF9F5]">
-            {/* Title */}
-            {video ? (
-              <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] leading-snug line-clamp-2">
-                {video.title}
-              </h1>
-            ) : (
-              <div className="h-6 sm:h-7 bg-[#EFECE6] rounded-lg w-3/4 animate-pulse my-0.5" />
-            )}
+          {/* 👤 YouTube Channel Row */}
+          <div className="flex items-center justify-between gap-3 py-1">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white shadow-xs shrink-0">
+                <Layers className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-1">
+                  <span className="font-bold text-[14px] text-[#0F0F0F] truncate">
+                    OneDrive Cloud Storage
+                  </span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="เชื่อมต่อแล้ว" />
+                </div>
+                <span className="text-[11px] text-[#606060] truncate">
+                  TubeLock Private Streaming • 62.4K
+                </span>
+              </div>
+            </div>
 
-            {/* Views, Tags & Expand Trigger */}
-            <div className="flex items-center gap-1.5 text-xs text-[#606060] font-normal">
-              <span>{viewsDisplay}</span>
-              <span>•</span>
-              <span>HLS Direct</span>
-              <span>•</span>
-              <span className="text-[#FF7A00] font-medium">#TubeLock</span>
+            {/* YouTube-Style Subscribe / Save Pill Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsSubscribed(!isSubscribed);
+                showToast && showToast(isSubscribed ? 'ยกเลิกการติดตามแล้ว' : 'ติดตามช่องนี้แล้ว');
+              }}
+              className={`px-4 py-2 rounded-full text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
+                isSubscribed 
+                  ? 'bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F]' 
+                  : 'bg-[#0F0F0F] hover:bg-[#272727] text-white'
+              }`}
+            >
+              {isSubscribed ? 'ติดตามแล้ว' : 'ติดตาม'}
+            </button>
+          </div>
+
+          {/* 🔘 YouTube Pill Action Buttons Bar */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
+            {/* Like / Dislike Split Pill */}
+            <div className="flex items-center bg-[#F2F2F2] rounded-full text-xs font-semibold text-[#0F0F0F] shrink-0">
               <button
                 type="button"
-                onClick={() => setIsDescOpen(!isDescOpen)}
-                className="text-[#0F0F0F] font-semibold hover:underline cursor-pointer ml-1"
+                onClick={handleLike}
+                className="flex items-center gap-1.5 px-3.5 py-2 hover:bg-black/5 rounded-l-full active:scale-95 transition cursor-pointer"
               >
-                {isDescOpen ? 'แสดงน้อยลง' : '...เพิ่มเติม'}
+                <ThumbsUp className={`w-4 h-4 ${liked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F]'}`} />
+                <span>{likeCount}</span>
+              </button>
+              <div className="w-px h-4 bg-zinc-300" />
+              <button
+                type="button"
+                onClick={handleDislike}
+                className="px-3 py-2 hover:bg-black/5 rounded-r-full active:scale-95 transition cursor-pointer"
+              >
+                <ThumbsDown className={`w-4 h-4 ${disliked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F]'}`} />
               </button>
             </div>
 
-            {/* 👤 YouTube Channel Row */}
-            <div className="flex items-center justify-between gap-3 py-1">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white shadow-xs shrink-0">
-                  <Layers className="w-5 h-5 text-white" />
-                </div>
-                <div className="flex flex-col min-w-0">
-                  <div className="flex items-center gap-1">
-                    <span className="font-bold text-[14px] text-[#0F0F0F] truncate">
-                      OneDrive Cloud Storage
-                    </span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="เชื่อมต่อแล้ว" />
-                  </div>
-                  <span className="text-[11px] text-[#606060] truncate">
-                    TubeLock Private Streaming • 62.4K
-                  </span>
-                </div>
-              </div>
+            {/* Share Pill */}
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
+            >
+              <Share2 className="w-4 h-4" />
+              <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
+            </button>
 
-              {/* YouTube-Style Subscribe / Save Pill Button */}
+            {/* Resolution / Codec Badge Pill */}
+            <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-[#FF7A00]" />
+              <span>{resBadge || '4K'} • {video?.codec ? video.codec.toUpperCase() : 'H264'}</span>
+            </div>
+
+            {/* File Size MB */}
+            <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
+              <HardDrive className="w-3.5 h-3.5 text-zinc-500" />
+              <span>{fileSizeMB} MB</span>
+            </div>
+
+            {/* Duration Pill */}
+            <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
+              <Clock className="w-3.5 h-3.5 text-zinc-500" />
+              <span>{formatDuration(video?.duration)}</span>
+            </div>
+          </div>
+
+          {/* 💬 YouTube-Style Comments & Description Preview Card */}
+          <div 
+            onClick={() => setIsDescOpen(!isDescOpen)}
+            className="bg-[#F2F2F2] hover:bg-[#EBEBEB] rounded-2xl p-3.5 flex flex-col gap-2 transition cursor-pointer select-none"
+          >
+            <div className="flex items-center justify-between text-xs font-bold text-[#0F0F0F]">
+              <div className="flex items-center gap-2">
+                <span>รายละเอียดและข้อมูลไฟล์</span>
+                <span className="text-[11px] text-[#606060] font-normal">
+                  {formatDuration(video?.duration)} • {fileSizeMB} MB
+                </span>
+              </div>
+              {isDescOpen ? <ChevronUp className="w-4 h-4 text-[#606060]" /> : <ChevronDown className="w-4 h-4 text-[#606060]" />}
+            </div>
+
+            <div className={`text-xs text-[#282828] leading-relaxed transition-all ${isDescOpen ? 'block' : 'line-clamp-2'}`}>
+              {video ? (video.description || 'วิดีโอนี้สตรีมตรงผ่าน OneDrive HLS Engine คุณภาพสูง ปรับความละเอียดตามความเร็วเน็ตอัตโนมัติ (ABR)') : 'กำลังโหลด...'}
+            </div>
+          </div>
+
+          {/* 🏷️ YouTube Recommendation Filter Chips */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
+            {[
+              { id: 'all', label: 'ทั้งหมด' },
+              { id: 'cloud', label: 'จาก OneDrive' },
+              { id: '4k', label: 'ความละเอียดสูง 4K' },
+              { id: 'related', label: 'ที่เกี่ยวข้อง' },
+            ].map((chip) => (
               <button
+                key={chip.id}
                 type="button"
-                onClick={() => setIsSubscribed(!isSubscribed)}
-                className={`px-4 py-2 rounded-full text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer shadow-2xs flex items-center gap-1.5 ${
-                  isSubscribed 
-                    ? 'bg-[#F2F2F2] text-[#0F0F0F] hover:bg-[#E5E5E5]' 
-                    : 'bg-[#0F0F0F] text-white hover:bg-black/85'
+                onClick={() => setActiveFilter(chip.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
+                  activeFilter === chip.id
+                    ? 'bg-[#0F0F0F] text-white'
+                    : 'bg-[#F2F2F2] text-[#0F0F0F] hover:bg-[#E5E5E5]'
                 }`}
               >
-                {isSubscribed ? (
-                  <>
-                    <Bell className="w-3.5 h-3.5 text-[#FF7A00]" />
-                    <span>ติดตามแล้ว</span>
-                  </>
-                ) : (
-                  <span>ติดตาม</span>
-                )}
+                {chip.label}
               </button>
-            </div>
-
-            {/* 🔘 YouTube Horizontal Action Pills Bar (Swipeable) */}
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
-              {/* Segmented Like / Dislike Pill */}
-              <div className="flex items-center bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F] rounded-full text-xs font-semibold transition shrink-0">
-                <button
-                  type="button"
-                  onClick={handleLike}
-                  className="flex items-center gap-1.5 px-3.5 py-2 hover:bg-black/5 rounded-l-full active:scale-95 transition cursor-pointer"
-                >
-                  <ThumbsUp className={`w-4 h-4 ${liked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F]'}`} />
-                  <span>{likeCount}</span>
-                </button>
-                <div className="w-px h-4 bg-zinc-300" />
-                <button
-                  type="button"
-                  onClick={handleDislike}
-                  className="px-3 py-2 hover:bg-black/5 rounded-r-full active:scale-95 transition cursor-pointer"
-                >
-                  <ThumbsDown className={`w-4 h-4 ${disliked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F]'}`} />
-                </button>
-              </div>
-
-              {/* Share Pill */}
-              <button
-                type="button"
-                onClick={handleCopyLink}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
-              >
-                <Share2 className="w-4 h-4" />
-                <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
-              </button>
-
-              {/* Resolution / Codec Badge Pill */}
-              <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
-                <SlidersHorizontal className="w-3.5 h-3.5 text-[#FF7A00]" />
-                <span>{resBadge || '4K'} • {video?.codec ? video.codec.toUpperCase() : 'H264'}</span>
-              </div>
-
-              {/* File Size MB */}
-              <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
-                <HardDrive className="w-3.5 h-3.5 text-zinc-500" />
-                <span>{fileSizeMB} MB</span>
-              </div>
-
-              {/* Duration Pill */}
-              <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
-                <Clock className="w-3.5 h-3.5 text-zinc-500" />
-                <span>{formatDuration(video?.duration)}</span>
-              </div>
-            </div>
-
-            {/* 💬 YouTube-Style Comments & Description Preview Card */}
-            <div 
-              onClick={() => setIsDescOpen(!isDescOpen)}
-              className="bg-[#F2F2F2] hover:bg-[#EBEBEB] rounded-2xl p-3.5 flex flex-col gap-2 transition cursor-pointer select-none"
-            >
-              <div className="flex items-center justify-between text-xs font-bold text-[#0F0F0F]">
-                <div className="flex items-center gap-2">
-                  <span>รายละเอียดและข้อมูลไฟล์</span>
-                  <span className="text-[11px] text-[#606060] font-normal">
-                    {formatDuration(video?.duration)} • {fileSizeMB} MB
-                  </span>
-                </div>
-                {isDescOpen ? <ChevronUp className="w-4 h-4 text-[#606060]" /> : <ChevronDown className="w-4 h-4 text-[#606060]" />}
-              </div>
-
-              <div className={`text-xs text-[#282828] leading-relaxed transition-all ${isDescOpen ? 'block' : 'line-clamp-2'}`}>
-                {video ? (video.description || 'วิดีโอนี้สตรีมตรงผ่าน OneDrive HLS Engine คุณภาพสูง ปรับความละเอียดตามความเร็วเน็ตอัตโนมัติ (ABR)') : 'กำลังโหลด...'}
-              </div>
-            </div>
-
-            {/* 🏷️ YouTube Recommendation Filter Chips */}
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
-              {[
-                { id: 'all', label: 'ทั้งหมด' },
-                { id: 'cloud', label: 'จาก OneDrive' },
-                { id: '4k', label: 'ความละเอียดสูง 4K' },
-                { id: 'related', label: 'ที่เกี่ยวข้อง' },
-              ].map((chip) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => setActiveFilter(chip.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
-                    activeFilter === chip.id
-                      ? 'bg-[#0F0F0F] text-white'
-                      : 'bg-[#F2F2F2] text-[#0F0F0F] hover:bg-[#E5E5E5]'
-                  }`}
-                >
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-
+            ))}
           </div>
         </div>
 
-        {/* Right / Sidebar: Related Videos Column (YouTube Feed Style) */}
-        <div className="w-full lg:w-[380px] xl:w-[420px] flex flex-col gap-3 px-3.5 sm:px-0 pb-16">
+        {/* Right / Sidebar: Related Videos Column (Spans Col 2 on Desktop / Flows underneath on Mobile) */}
+        <div className="w-full flex flex-col gap-3 px-3.5 sm:px-0 pb-16 lg:col-start-2 lg:row-start-1 lg:row-span-3">
           <div className="hidden lg:flex items-center gap-1.5 pb-1">
             <PlaySquare className="w-4 h-4 text-[#FF7A00]" />
             <h2 className="text-sm font-bold text-[#0F0F0F]">
