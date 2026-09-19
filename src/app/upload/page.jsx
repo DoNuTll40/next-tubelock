@@ -1092,7 +1092,9 @@ export default function UploadPage() {
                         <span className="text-xs font-bold text-[#212529] truncate">{item.title}</span>
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
-                            item.status === 'TRANSCODING'
+                            item.status === 'READY'
+                              ? 'bg-emerald-100 text-emerald-800 font-semibold'
+                              : item.status === 'TRANSCODING'
                               ? 'bg-orange-100 text-orange-800'
                               : item.status === 'PROCESSING'
                               ? 'bg-purple-100 text-purple-800'
@@ -1103,7 +1105,7 @@ export default function UploadPage() {
                               : 'bg-blue-100 text-blue-800'
                           }`}
                         >
-                          {item.status}
+                          {item.status === 'READY' ? '⚡ เปิดดูได้แล้ว (กำลังแปลงความละเอียดสูง...)' : item.status}
                         </span>
                       </div>
                       <span className="text-[11px] text-[#8C857B] mt-0.5 block truncate">
@@ -1112,6 +1114,17 @@ export default function UploadPage() {
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
+                      {item.status === 'READY' && (
+                        <Link
+                          href={`/watch/${item.id}`}
+                          target="_blank"
+                          className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition shadow-xs"
+                        >
+                          <Play className="w-3 h-3 fill-white" />
+                          <span>เปิดดูคลิป</span>
+                        </Link>
+                      )}
+
                       {item.status === 'FAILED' && (
                         <button
                           type="button"

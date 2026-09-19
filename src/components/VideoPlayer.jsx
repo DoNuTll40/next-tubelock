@@ -98,6 +98,10 @@ export default function VideoPlayer({
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
   const [hoverTime, setHoverTime] = useState(0);
   const [hoverPercent, setHoverPercent] = useState(0);
+  const scrubVideoRef = useRef(null);
+  const scrubHlsRef = useRef(null);
+  const [scrubFrameLoaded, setScrubFrameLoaded] = useState(false);
+  const scrubThrottleTimerRef = useRef(null);
 
   // Double Tap Seeking
   const [doubleTapSide, setDoubleTapSide] = useState(null);
@@ -429,13 +433,50 @@ export default function VideoPlayer({
               }
             }
           });
+          // Also attach lightweight Hls to scrubVideoRef for hover preview (locked to lowest level)
+          if (scrubVideoRef.current) {
+            if (scrubHlsRef.current) {
+              scrubHlsRef.current.destroy();
+              scrubHlsRef.current = null;
+            }
+            try {
+              const sHls = new Hls({
+                maxBufferLength: 4,
+                maxMaxBufferLength: 8,
+                enableWorker: true,
+                startLevel: 0,
+                capLevelToPlayerSize: true,
+              });
+              sHls.loadSource(src);
+              sHls.attachMedia(scrubVideoRef.current);
+              sHls.on(Hls.Events.MANIFEST_PARSED, (e, d) => {
+                if (d.levels && d.levels.length > 0) {
+                  let minIdx = 0;
+                  let minH = d.levels[0].height || 9999;
+                  d.levels.forEach((lvl, idx) => {
+                    if (lvl.height && lvl.height < minH) {
+                      minH = lvl.height;
+                      minIdx = idx;
+                    }
+                  });
+                  sHls.currentLevel = minIdx;
+                  sHls.loadLevel = minIdx;
+                }
+              });
+              scrubHlsRef.current = sHls;
+            } catch (scrubErr) {
+              console.warn('Scrub HLS init warning:', scrubErr);
+            }
+          }
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
           // Native Safari Apple hardware acceleration
           v.src = src;
+          if (scrubVideoRef.current) scrubVideoRef.current.src = src;
         }
       } else {
         // Direct MP4 - Clean Native Playback
         v.src = src;
+        if (scrubVideoRef.current) scrubVideoRef.current.src = src;
         if (defaultAutoplay && !isUserPausedRef.current) {
           v.play().then(() => setIsPlaying(true)).catch(() => {
             v.muted = true;
@@ -453,6 +494,10 @@ export default function VideoPlayer({
       if (hlsInstanceRef.current) {
         hlsInstanceRef.current.destroy();
         hlsInstanceRef.current = null;
+      }
+      if (scrubHlsRef.current) {
+        scrubHlsRef.current.destroy();
+        scrubHlsRef.current = null;
       }
     };
   }, [src, defaultAutoplay, resolution, video, showToast]);
@@ -533,6 +578,22 @@ export default function VideoPlayer({
     pendingTargetTimeRef.current = null;
   }, [duration, video]);
 
+  // Throttled frame seeking for thumbnail preview
+  const updateScrubPreviewTime = useCallback((targetSec) => {
+    if (!scrubVideoRef.current || isNaN(targetSec)) return;
+    if (scrubThrottleTimerRef.current) clearTimeout(scrubThrottleTimerRef.current);
+    scrubThrottleTimerRef.current = setTimeout(() => {
+      const sv = scrubVideoRef.current;
+      if (sv && Math.abs(sv.currentTime - targetSec) > 0.35) {
+        if ('fastSeek' in sv) {
+          sv.fastSeek(targetSec);
+        } else {
+          sv.currentTime = targetSec;
+        }
+      }
+    }, 45);
+  }, []);
+
   // Scrubbing calculation
   const calculateScrubPosition = (clientX) => {
     if (!seekTrackRef.current || duration <= 0) return;
@@ -543,6 +604,7 @@ export default function VideoPlayer({
 
     setPreviewPercent(percent);
     setPreviewTime(calculatedSec);
+    updateScrubPreviewTime(calculatedSec);
 
     // Live update scrubber DOM while dragging
     if (progressBarRef.current) progressBarRef.current.style.width = `${percent}%`;
@@ -554,8 +616,11 @@ export default function VideoPlayer({
     if (!seekTrackRef.current || duration <= 0) return;
     const rect = seekTrackRef.current.getBoundingClientRect();
     const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-    setHoverPercent((offsetX / rect.width) * 100);
-    setHoverTime((offsetX / rect.width) * duration);
+    const pct = (offsetX / rect.width) * 100;
+    const time = (offsetX / rect.width) * duration;
+    setHoverPercent(pct);
+    setHoverTime(time);
+    updateScrubPreviewTime(time);
     if (isScrubbing) {
       calculateScrubPosition(e.clientX);
     }
@@ -1199,13 +1264,41 @@ export default function VideoPlayer({
             onMouseLeave={() => setIsHoveringSeek(false)}
             className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
           >
-            {/* Time Tooltip on Hover / Scrubbing */}
+            {/* Time Tooltip + Thumbnail Preview on Hover / Scrubbing */}
             {(isScrubbing || isHoveringSeek) && (
               <div
-                className="absolute -top-7 -translate-x-1/2 bg-[#18181B] text-white border border-white/20 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold pointer-events-none shadow-xl whitespace-nowrap z-40"
-                style={{ left: `${Math.max(6, Math.min(isScrubbing ? previewPercent : hoverPercent, 94))}%` }}
+                className="absolute -top-28 sm:-top-32 -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 animate-fadeIn"
+                style={{ left: `${Math.max(12, Math.min(isScrubbing ? previewPercent : hoverPercent, 88))}%` }}
               >
-                {formatTime(isScrubbing ? previewTime : hoverTime)}
+                {/* Thumbnail Preview Box */}
+                <div className="w-36 sm:w-44 aspect-video rounded-xl overflow-hidden border border-white/20 bg-black/95 shadow-2xl relative mb-1.5 ring-1 ring-black/50">
+                  <video
+                    ref={scrubVideoRef}
+                    muted
+                    playsInline
+                    preload="auto"
+                    onLoadedData={() => setScrubFrameLoaded(true)}
+                    onSeeked={() => setScrubFrameLoaded(true)}
+                    className={`w-full h-full object-cover transition-opacity duration-150 ${
+                      scrubFrameLoaded ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  />
+                  {/* Fallback to poster image if preview frame is buffering */}
+                  {poster && !scrubFrameLoaded && (
+                    <img
+                      src={poster}
+                      alt="Thumbnail Preview"
+                      className="absolute inset-0 w-full h-full object-cover opacity-80"
+                    />
+                  )}
+                  {/* Subtle vignette */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/15 pointer-events-none" />
+                </div>
+
+                {/* Time Badge */}
+                <div className="bg-[#18181B]/95 text-white border border-white/20 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold shadow-xl whitespace-nowrap">
+                  {formatTime(isScrubbing ? previewTime : hoverTime)}
+                </div>
               </div>
             )}
 

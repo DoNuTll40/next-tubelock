@@ -455,59 +455,58 @@ async function main() {
     const readyQualities = [];
 
     // =========================================================================
-    // PASS 1: Fast Pass (480p) -> USER CAN WATCH IMMEDIATELY!
+    // PASS 1: Ultra-Fast Instant Pass (144p) -> USER CAN WATCH IMMEDIATELY!
     // =========================================================================
     await updateDbStatus({
       status: 'TRANSCODING',
-      progress: 35,
-      stageDetail: '⚡ กำลังแปลงความละเอียดแรก (480p) เพื่อให้เปิดดูได้ทันที...',
+      progress: 15,
+      stageDetail: '⚡ กำลังแปลงความละเอียดแรก (144p) เพื่อให้เปิดดูได้ในไม่กี่วินาที...',
     });
 
-    console.log('⚡ Slicing 480p for instant playback...');
+    console.log('⚡ Slicing 144p for instant playback (fastest pass)...');
     let lastProgressUpdate = 0;
     await runFFmpeg([
       '-y', '-i', rawFilePath,
-      '-vf', 'scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
-      '-c:a', 'aac', '-b:a', '96k',
+      '-vf', 'scale=w=256:h=144:force_original_aspect_ratio=decrease,pad=256:144:(ow-iw)/2:(oh-ih)/2',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
+      '-c:a', 'aac', '-b:a', '64k',
       '-f', 'hls',
       '-hls_time', '6',
       '-hls_playlist_type', 'vod',
       '-hls_flags', 'independent_segments',
       '-hls_segment_type', 'mpegts',
-      '-hls_segment_filename', path.join(hlsOutputDir, 'stream_480p_%03d.ts'),
-      path.join(hlsOutputDir, '480p.m3u8'),
+      '-hls_segment_filename', path.join(hlsOutputDir, 'stream_144p_%03d.ts'),
+      path.join(hlsOutputDir, '144p.m3u8'),
     ], (sec) => {
-      if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+      if (Date.now() - lastProgressUpdate > 2500 && duration > 0) {
         lastProgressUpdate = Date.now();
         const pct = Math.min(99, Math.round((sec / duration) * 100));
-        const overall = Math.min(48, 30 + Math.round(pct * 0.18));
         updateDbStatus({
           status: 'TRANSCODING',
-          progress: overall,
-          stageDetail: `กำลังหั่น 480p SD: ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+          progress: Math.min(22, 12 + Math.round(pct * 0.1)),
+          stageDetail: `กำลังหั่น 144p (เร็วสุด): ${pct}% (${formatTime(sec)} / ${formatTime(duration)})`,
         });
       }
     });
 
-    readyQualities.push({ name: '480p', width: 854, height: 480, bitrate: 1000000 });
+    readyQualities.push({ name: '144p', width: 256, height: 144, bitrate: 200000 });
 
     // Write & upload initial master.m3u8
     const masterPath = path.join(hlsOutputDir, 'master.m3u8');
     fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
-    // Upload 480p files + master.m3u8
-    const pass1Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('480p') || f === 'master.m3u8');
+    // Upload 144p files + master.m3u8
+    const pass1Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('144p') || f === 'master.m3u8');
     for (const f of pass1Files) {
       await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
     }
 
-    // 🎉 IMMEDIATELY MARK READY IN NEON DB!
-    console.log(`🎉 480p is READY! Unlocking video for instant playback!`);
+    // 🎉 IMMEDIATELY MARK READY IN NEON DB! (Video can now be played within seconds!)
+    console.log(`🎉 144p is READY! Unlocking video for instant playback!`);
     await updateDbStatus({
       status: 'READY',
-      progress: 50,
-      stageDetail: '⚡ พร้อมรับชมทันทีที่ 480p! (กำลังแปลง 720p และ 1080p เพิ่มเติมในพื้นหลัง...)',
+      progress: 25,
+      stageDetail: '⚡ พร้อมรับชมทันทีที่ 144p! (กำลังแปลง 360p, 480p, 720p, 1080p, 4K เพิ่มเติมในพื้นหลัง...)',
       extra: {
         onedrive_folder_id: streamFolderId,
         master_playlist_path: masterPlaylistPath,
@@ -519,7 +518,87 @@ async function main() {
     });
 
     // =========================================================================
-    // PASS 2: 720p (HD) in background (if source >= 720p)
+    // PASS 2: 360p in background (if source >= 360p)
+    // =========================================================================
+    if (srcHeight >= 360) {
+      console.log('⚡ Slicing 360p in background...');
+      await runFFmpeg([
+        '-y', '-i', rawFilePath,
+        '-vf', 'scale=w=640:h=360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
+        '-c:a', 'aac', '-b:a', '96k',
+        '-f', 'hls',
+        '-hls_time', '6',
+        '-hls_playlist_type', 'vod',
+        '-hls_flags', 'independent_segments',
+        '-hls_segment_type', 'mpegts',
+        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_360p_%03d.ts'),
+        path.join(hlsOutputDir, '360p.m3u8'),
+      ], (sec) => {
+        if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+          lastProgressUpdate = Date.now();
+          const pct = Math.min(99, Math.round((sec / duration) * 100));
+          const overall = Math.min(38, 25 + Math.round(pct * 0.13));
+          updateDbStatus({
+            status: 'READY',
+            progress: overall,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 360p: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+          });
+        }
+      });
+
+      readyQualities.unshift({ name: '360p', width: 640, height: 360, bitrate: 600000 });
+      fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
+
+      const pass2Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('360p') || f === 'master.m3u8');
+      for (const f of pass2Files) {
+        await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
+      }
+      console.log('✅ 360p uploaded and master.m3u8 updated.');
+    }
+
+    // =========================================================================
+    // PASS 3: 480p (SD) in background (if source >= 480p)
+    // =========================================================================
+    if (srcHeight >= 480) {
+      console.log('⚡ Slicing 480p in background...');
+      await runFFmpeg([
+        '-y', '-i', rawFilePath,
+        '-vf', 'scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
+        '-c:a', 'aac', '-b:a', '96k',
+        '-f', 'hls',
+        '-hls_time', '6',
+        '-hls_playlist_type', 'vod',
+        '-hls_flags', 'independent_segments',
+        '-hls_segment_type', 'mpegts',
+        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_480p_%03d.ts'),
+        path.join(hlsOutputDir, '480p.m3u8'),
+      ], (sec) => {
+        if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+          lastProgressUpdate = Date.now();
+          const pct = Math.min(99, Math.round((sec / duration) * 100));
+          const overall = Math.min(50, 38 + Math.round(pct * 0.12));
+          updateDbStatus({
+            status: 'READY',
+            progress: overall,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 480p SD: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+          });
+        }
+      });
+
+      readyQualities.unshift({ name: '480p', width: 854, height: 480, bitrate: 1000000 });
+      fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
+
+      const pass3Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('480p') || f === 'master.m3u8');
+      for (const f of pass3Files) {
+        await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
+      }
+      console.log('✅ 480p uploaded and master.m3u8 updated.');
+    }
+
+    // =========================================================================
+    // PASS 4: 720p (HD) in background (if source >= 720p)
     // =========================================================================
     if (srcHeight >= 720) {
       console.log('⚡ Slicing 720p in background...');
@@ -539,11 +618,11 @@ async function main() {
         if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
           lastProgressUpdate = Date.now();
           const pct = Math.min(99, Math.round((sec / duration) * 100));
-          const overall = Math.min(78, 52 + Math.round(pct * 0.25));
+          const overall = Math.min(65, 50 + Math.round(pct * 0.15));
           updateDbStatus({
             status: 'READY',
             progress: overall,
-            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 720p HD: ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 720p HD: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
           });
         }
       });
@@ -551,15 +630,15 @@ async function main() {
       readyQualities.unshift({ name: '720p', width: 1280, height: 720, bitrate: 2500000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
-      const pass2Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('720p') || f === 'master.m3u8');
-      for (const f of pass2Files) {
+      const pass4Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('720p') || f === 'master.m3u8');
+      for (const f of pass4Files) {
         await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
       }
       console.log('✅ 720p uploaded and master.m3u8 updated.');
     }
 
     // =========================================================================
-    // PASS 3: 1080p (Full HD) in background (if source >= 1080p)
+    // PASS 5: 1080p (Full HD) in background (if source >= 1080p)
     // =========================================================================
     if (srcHeight >= 1080) {
       console.log('⚡ Slicing 1080p in background...');
@@ -579,11 +658,11 @@ async function main() {
         if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
           lastProgressUpdate = Date.now();
           const pct = Math.min(99, Math.round((sec / duration) * 100));
-          const overall = Math.min(96, 80 + Math.round(pct * 0.16));
+          const overall = Math.min(80, 65 + Math.round(pct * 0.15));
           updateDbStatus({
             status: 'READY',
             progress: overall,
-            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 1080p Full HD: ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 1080p Full HD: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
           });
         }
       });
@@ -591,15 +670,15 @@ async function main() {
       readyQualities.unshift({ name: '1080p', width: 1920, height: 1080, bitrate: 4500000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
-      const pass3Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1080p') || f === 'master.m3u8');
-      for (const f of pass3Files) {
+      const pass5Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1080p') || f === 'master.m3u8');
+      for (const f of pass5Files) {
         await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
       }
       console.log('✅ 1080p uploaded and master.m3u8 updated.');
     }
 
     // =========================================================================
-    // PASS 4: 1440p (2K Quad HD) in background (if source >= 1440p)
+    // PASS 6: 1440p (2K Quad HD) in background (if source >= 1440p)
     // =========================================================================
     if (srcHeight >= 1440 || srcWidth >= 2560) {
       console.log('⚡ Slicing 1440p (2K) in background...');
@@ -623,7 +702,7 @@ async function main() {
           updateDbStatus({
             status: 'READY',
             progress: overall,
-            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 2K Quad HD (1440p): ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 2K Quad HD (1440p): ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
           });
         }
       });
@@ -631,15 +710,15 @@ async function main() {
       readyQualities.unshift({ name: '1440p', width: 2560, height: 1440, bitrate: 8500000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
-      const pass4Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1440p') || f === 'master.m3u8');
-      for (const f of pass4Files) {
+      const pass6Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1440p') || f === 'master.m3u8');
+      for (const f of pass6Files) {
         await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
       }
       console.log('✅ 1440p (2K) uploaded and master.m3u8 updated.');
     }
 
     // =========================================================================
-    // PASS 5: 2160p (4K Ultra HD) in background (if source >= 2160p)
+    // PASS 7: 2160p (4K Ultra HD) in background (if source >= 2160p)
     // =========================================================================
     if (srcHeight >= 2160 || srcWidth >= 3840) {
       console.log('⚡ Slicing 2160p (4K UHD) in background...');
@@ -663,7 +742,7 @@ async function main() {
           updateDbStatus({
             status: 'READY',
             progress: overall,
-            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 4K UHD (2160p): ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 4K UHD (2160p): ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
           });
         }
       });
@@ -671,8 +750,8 @@ async function main() {
       readyQualities.unshift({ name: '2160p', width: 3840, height: 2160, bitrate: 14000000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
-      const pass5Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('2160p') || f === 'master.m3u8');
-      for (const f of pass5Files) {
+      const pass7Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('2160p') || f === 'master.m3u8');
+      for (const f of pass7Files) {
         await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
       }
       console.log('✅ 2160p (4K UHD) uploaded and master.m3u8 updated.');

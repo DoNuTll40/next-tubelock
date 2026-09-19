@@ -25,6 +25,7 @@ export async function GET() {
         updated_at
       FROM videos 
       WHERE status IN ('UPLOADING', 'QUEUED', 'PROCESSING', 'TRANSCODING', 'FAILED')
+         OR (status = 'READY' AND (transcode_progress IS NULL OR transcode_progress < 100))
       ORDER BY created_at DESC
       LIMIT 50;
     `;
