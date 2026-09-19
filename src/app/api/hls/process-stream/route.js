@@ -11,7 +11,7 @@ import {
 import { getDb } from '@/lib/db';
 
 export const runtime = 'nodejs';
-export const maxDuration = 600;
+export const maxDuration = 300;
 
 global.__tubelock_jobs = global.__tubelock_jobs || new Map();
 
