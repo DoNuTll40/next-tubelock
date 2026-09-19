@@ -41,14 +41,12 @@ if (!DATABASE_URL || !AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRE
 
 // 2. Initialize Database Client
 let sanitizedDbUrl = DATABASE_URL.replace(/%E2%80%8B/g, '').replace(/\u200b/g, '').trim();
-if (sanitizedDbUrl.includes('/mytube_db')) {
-  sanitizedDbUrl = sanitizedDbUrl.replace('/mytube_db', '/neondb');
-}
 const sql = neon(sanitizedDbUrl);
 
 async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', extra = {} }) {
+  const vidNum = Number(VIDEO_ID);
   try {
-    console.log(`[DB UPDATE] Status: ${status} | Progress: ${progress}% | ${stageDetail}`);
+    console.log(`[DB UPDATE] Video #${vidNum} Status: ${status} | Progress: ${progress}% | ${stageDetail}`);
     await sql`
       UPDATE videos 
       SET 
@@ -57,37 +55,37 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
         stage_detail = ${stageDetail},
         error_message = ${errorMsg},
         updated_at = NOW()
-      WHERE id = ${VIDEO_ID};
+      WHERE id = ${vidNum};
     `;
 
     if (Object.keys(extra).length > 0) {
       if (extra.onedrive_folder_id) {
-        await sql`UPDATE videos SET onedrive_folder_id = ${extra.onedrive_folder_id} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET onedrive_folder_id = ${extra.onedrive_folder_id} WHERE id = ${vidNum};`;
       }
       if (extra.master_playlist_path) {
-        await sql`UPDATE videos SET master_playlist_path = ${extra.master_playlist_path} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET master_playlist_path = ${extra.master_playlist_path} WHERE id = ${vidNum};`;
       }
       if (extra.duration) {
-        await sql`UPDATE videos SET duration = ${extra.duration} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET duration = ${extra.duration} WHERE id = ${vidNum};`;
       }
       if (extra.resolution) {
-        await sql`UPDATE videos SET resolution = ${extra.resolution} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET resolution = ${extra.resolution} WHERE id = ${vidNum};`;
       }
       if (extra.fps) {
-        await sql`UPDATE videos SET fps = ${extra.fps} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET fps = ${extra.fps} WHERE id = ${vidNum};`;
       }
       if (extra.codec) {
-        await sql`UPDATE videos SET codec = ${extra.codec} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET codec = ${extra.codec} WHERE id = ${vidNum};`;
       }
       if (extra.thumbnail_url) {
-        await sql`UPDATE videos SET thumbnail_url = ${extra.thumbnail_url} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET thumbnail_url = ${extra.thumbnail_url} WHERE id = ${vidNum};`;
       }
       if (extra.file_size_bytes) {
-        await sql`UPDATE videos SET file_size_bytes = ${extra.file_size_bytes} WHERE id = ${VIDEO_ID};`;
+        await sql`UPDATE videos SET file_size_bytes = ${extra.file_size_bytes} WHERE id = ${vidNum};`;
       }
     }
   } catch (err) {
-    console.warn('[DB UPDATE WARNING]:', err.message);
+    console.error(`[DB UPDATE ERROR for #${vidNum}]:`, err.message);
   }
 }
 
