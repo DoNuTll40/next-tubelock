@@ -39,9 +39,9 @@ if (!DATABASE_URL || !AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRE
   process.exit(1);
 }
 
-// 2. Initialize Database Client
-let sanitizedDbUrl = DATABASE_URL.replace(/%E2%80%8B/g, '').replace(/\u200b/g, '').trim();
-const sql = neon(sanitizedDbUrl);
+// 2. Initialize Database Client (ตรงตาม db.js เชื่อมต่อตรงตาม URL ที่ตั้งไว้)
+const dbUrl = (DATABASE_URL || '').trim();
+const sql = neon(dbUrl);
 
 async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', extra = {} }) {
   const vidNum = Number(VIDEO_ID);
