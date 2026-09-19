@@ -77,8 +77,31 @@ export default function UploadPage() {
   });
 
   // Chunk Size Configuration (No throttling, maximum speed)
-  // 320 KiB multiples: 10MB = 10,485,760 bytes, 20MB = 20,971,520 bytes
+  // 320 KiB multiples: 10MB = 10,485,760 bytes, 20MB = 20,971,520 bytes, 50MB = 52,428,800 bytes
   const [chunkSizeMB, setChunkSizeMB] = useState(20);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('tubelock_chunk_size');
+        if (saved) {
+          const num = parseInt(saved, 10);
+          if ([10, 20, 50].includes(num)) {
+            setChunkSizeMB(num);
+          }
+        }
+      } catch (_) {}
+    }
+  }, []);
+
+  const handleSelectChunkSize = (size) => {
+    setChunkSizeMB(size);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('tubelock_chunk_size', String(size));
+      } catch (_) {}
+    }
+  };
 
   // Upload Progress & Stats (Client -> OneDrive)
   const [isUploading, setIsUploading] = useState(false);
@@ -324,7 +347,11 @@ export default function UploadPage() {
       addLog(`เริ่มส่งไฟล์ตรงเข้า OneDrive /raw/${serverRawName} (ขนาดก้อน ${chunkSizeMB} MB ไม่อั้นสปีด)...`);
 
       // 2. Direct Chunked Upload (Aligned to 320 KiB boundary)
-      const CHUNK_SIZE = chunkSizeMB === 20 ? 64 * 327680 : 32 * 327680; // 20.97MB or 10.48MB
+      const CHUNK_SIZE = chunkSizeMB === 50
+        ? 160 * 327680 // 52,428,800 bytes (50 MiB, exactly 160 x 320 KiB)
+        : chunkSizeMB === 20
+        ? 64 * 327680  // 20,971,520 bytes (20 MiB, exactly 64 x 320 KiB)
+        : 32 * 327680; // 10,485,760 bytes (10 MiB, exactly 32 x 320 KiB)
       const totalSize = file.size;
       const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
       let offset = 0;
@@ -1000,35 +1027,51 @@ export default function UploadPage() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <button
                       type="button"
                       disabled={isUploading}
-                      onClick={() => setChunkSizeMB(10)}
-                      className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
+                      onClick={() => handleSelectChunkSize(10)}
+                      className={`py-2 px-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer ${
                         chunkSizeMB === 10
                           ? 'bg-orange-50 border-orange-300 text-orange-950 ring-1 ring-orange-200'
                           : 'bg-[#FBF9F5] border-[#EFECE6] text-[#8C857B] hover:text-[#212529]'
                       }`}
                     >
-                      <span>10 MB (มาตรฐาน)</span>
+                      <span className="font-bold">10 MB</span>
+                      <span className="text-[10px] opacity-80 font-normal">มาตรฐาน / ทั่วไป</span>
                     </button>
 
                     <button
                       type="button"
                       disabled={isUploading}
-                      onClick={() => setChunkSizeMB(20)}
-                      className={`py-2 px-3 rounded-xl border text-xs font-semibold transition ${
+                      onClick={() => handleSelectChunkSize(20)}
+                      className={`py-2 px-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer ${
                         chunkSizeMB === 20
                           ? 'bg-orange-50 border-orange-300 text-orange-950 ring-1 ring-orange-200'
                           : 'bg-[#FBF9F5] border-[#EFECE6] text-[#8C857B] hover:text-[#212529]'
                       }`}
                     >
-                      <span>20 MB (เน็ตเร็วเต็มสปีด)</span>
+                      <span className="font-bold">20 MB</span>
+                      <span className="text-[10px] opacity-80 font-normal">เน็ตเร็วเต็มสปีด</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isUploading}
+                      onClick={() => handleSelectChunkSize(50)}
+                      className={`py-2 px-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer ${
+                        chunkSizeMB === 50
+                          ? 'bg-orange-50 border-orange-300 text-orange-950 ring-1 ring-orange-200'
+                          : 'bg-[#FBF9F5] border-[#EFECE6] text-[#8C857B] hover:text-[#212529]'
+                      }`}
+                    >
+                      <span className="font-bold">50 MB</span>
+                      <span className="text-[10px] opacity-80 font-normal">Fiber แรงพิเศษ</span>
                     </button>
                   </div>
-                  <span className="text-[10px] text-[#8C857B]">
-                    ก้อนขนาดใหญ่ขึ้นช่วยลด HTTP Overhead ทำให้ส่งไฟล์ได้เต็มความเร็วเน็ตจริง
+                  <span className="text-[10px] text-[#8C857B] leading-relaxed">
+                    ก้อนขนาดใหญ่ (เช่น 50 MB) ช่วยลด HTTP Overhead สูงสุด เหมาะสำหรับเน็ตบ้าน Fiber ความเร็วสูง
                   </span>
                 </div>
               </div>
