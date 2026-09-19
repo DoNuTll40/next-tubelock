@@ -42,7 +42,15 @@ export default function VideoPlayer({
   const timeDisplayRef = useRef(null);
 
   // Video aspect ratio
-  const [videoRatio, setVideoRatio] = useState(16 / 9);
+  const [videoRatio, setVideoRatio] = useState(() => {
+    if (typeof resolution === 'string' && resolution.includes('x')) {
+      const parts = resolution.split('x');
+      const w = parseFloat(parts[0]);
+      const h = parseFloat(parts[1]);
+      if (w > 0 && h > 0) return w / h;
+    }
+    return 16 / 9;
+  });
 
   // Playback states
   const [isPlaying, setIsPlaying] = useState(false);
@@ -105,19 +113,16 @@ export default function VideoPlayer({
   const scrubThumbHdRef = useRef(null);
   const hdDwellTimerRef = useRef(null);
 
-  // Desktop Click Debounce & Context Menu
-  const desktopClickTimerRef = useRef(null);
-  const [contextMenu, setContextMenu] = useState(null);
-  const [isLooping, setIsLooping] = useState(false);
-
-  // Double Tap Seeking
+  // Unified YouTube 3-Zone Click / Double-Click Seeking & Context Menu
+  const clickStateRef = useRef({ time: 0, zone: null });
+  const singleClickTimerRef = useRef(null);
+  const doubleTapClearTimerRef = useRef(null);
+  const pendingTargetTimeRef = useRef(null);
   const [doubleTapSide, setDoubleTapSide] = useState(null);
   const [accumulatedSeconds, setAccumulatedSeconds] = useState(0);
-  const lastTapRef = useRef({ time: 0, side: null });
-  const singleTapTimerRef = useRef(null);
-  const seekCommitTimerRef = useRef(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [isLooping, setIsLooping] = useState(false);
   const controlsTimeoutRef = useRef(null);
-  const pendingTargetTimeRef = useRef(null);
   const lastSavedTimeRef = useRef(0);
 
   const isUserPausedRef = useRef(!defaultAutoplay);
@@ -674,70 +679,87 @@ export default function VideoPlayer({
     }
   };
 
-  // Double Tap Seeking
-  const handleTouchZone = (side) => {
-    const now = Date.now();
-    const lastTap = lastTapRef.current;
-    const isDoubleTap = now - lastTap.time < 350 && (lastTap.side === side || doubleTapSide === side);
-
-    if (isDoubleTap && (side === 'left' || side === 'right')) {
-      if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
-
-      setShowControls(false);
-      setShowSettingsMenu(false);
-
-      const step = side === 'right' ? seekStep : -seekStep;
-      const baseTime = pendingTargetTimeRef.current !== null 
-        ? pendingTargetTimeRef.current 
-        : (video.current?.currentTime || 0);
-
-      const nextTarget = Math.min(Math.max(baseTime + step, 0), duration);
-      pendingTargetTimeRef.current = nextTarget;
-
-      setDoubleTapSide(side);
-      setAccumulatedSeconds((prev) => (side === 'right' ? prev + seekStep : prev - seekStep));
-
-      if (seekCommitTimerRef.current) clearTimeout(seekCommitTimerRef.current);
-      seekCommitTimerRef.current = setTimeout(() => {
-        commitSeek(pendingTargetTimeRef.current);
-        setDoubleTapSide(null);
-        setAccumulatedSeconds(0);
-      }, 500);
-
-      lastTapRef.current = { time: now, side };
-      return;
-    }
-
-    lastTapRef.current = { time: now, side };
-
-    if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
-    singleTapTimerRef.current = setTimeout(() => {
-      if (side === 'center') {
-        togglePlay();
-      } else {
-        setShowControls((prev) => !prev);
-        setShowSettingsMenu(false);
-        if (!showControls) resetControlsTimer();
-      }
-    }, 200);
-  };
-
-  // Desktop Single-Click (Play/Pause) vs Double-Click (Fullscreen) with 220ms Debounce
-  const handleDesktopClick = (e) => {
+  // YouTube Standard Click / Double-Click Interaction:
+  // - 0% - 35% (Left): Double Click/Tap = Seek -10s with left animated ripple
+  // - 65% - 100% (Right): Double Click/Tap = Seek +10s with right animated ripple
+  // - 35% - 65% (Center): Double Click/Tap = Toggle Fullscreen
+  // - Single Click anywhere: Toggles Play/Pause (debounced by ~250ms to prevent pause misfire during double-click)
+  const handlePlayerOverlayClick = (e) => {
     if (contextMenu) {
       setContextMenu(null);
       return;
     }
-    if (desktopClickTimerRef.current) {
-      clearTimeout(desktopClickTimerRef.current);
-      desktopClickTimerRef.current = null;
-      toggleFullscreen();
+    if (!containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const xRatio = (e.clientX - rect.left) / rect.width;
+    const zone = xRatio < 0.35 ? 'left' : xRatio > 0.65 ? 'right' : 'center';
+    const now = Date.now();
+
+    const prev = clickStateRef.current;
+    const isDouble = (now - prev.time < 280) && (prev.zone === zone || (zone === 'center' && prev.zone === 'center'));
+
+    if (isDouble) {
+      // Cancel pending single click!
+      if (singleClickTimerRef.current) {
+        clearTimeout(singleClickTimerRef.current);
+        singleClickTimerRef.current = null;
+      }
+      clickStateRef.current = { time: 0, zone: null };
+
+      if (zone === 'left') {
+        const currentTime = pendingTargetTimeRef.current !== null 
+          ? pendingTargetTimeRef.current 
+          : (video.current?.currentTime || 0);
+        const target = Math.max(0, currentTime - seekStep);
+        pendingTargetTimeRef.current = target;
+        commitSeek(target);
+
+        setAccumulatedSeconds((prevSec) => (prevSec <= 0 ? prevSec - seekStep : -seekStep));
+        setDoubleTapSide('left');
+
+        if (doubleTapClearTimerRef.current) clearTimeout(doubleTapClearTimerRef.current);
+        doubleTapClearTimerRef.current = setTimeout(() => {
+          setDoubleTapSide(null);
+          setAccumulatedSeconds(0);
+          pendingTargetTimeRef.current = null;
+        }, 650);
+
+        showToast(`-${seekStep} วินาที`);
+      } else if (zone === 'right') {
+        const currentTime = pendingTargetTimeRef.current !== null 
+          ? pendingTargetTimeRef.current 
+          : (video.current?.currentTime || 0);
+        const target = Math.min(duration, currentTime + seekStep);
+        pendingTargetTimeRef.current = target;
+        commitSeek(target);
+
+        setAccumulatedSeconds((prevSec) => (prevSec >= 0 ? prevSec + seekStep : seekStep));
+        setDoubleTapSide('right');
+
+        if (doubleTapClearTimerRef.current) clearTimeout(doubleTapClearTimerRef.current);
+        doubleTapClearTimerRef.current = setTimeout(() => {
+          setDoubleTapSide(null);
+          setAccumulatedSeconds(0);
+          pendingTargetTimeRef.current = null;
+        }, 650);
+
+        showToast(`+${seekStep} วินาที`);
+      } else {
+        toggleFullscreen();
+      }
       return;
     }
-    desktopClickTimerRef.current = setTimeout(() => {
+
+    // First click: record state and start debounce timer (~250ms)
+    clickStateRef.current = { time: now, zone };
+    if (singleClickTimerRef.current) clearTimeout(singleClickTimerRef.current);
+
+    singleClickTimerRef.current = setTimeout(() => {
       togglePlay();
-      desktopClickTimerRef.current = null;
-    }, 220);
+      singleClickTimerRef.current = null;
+      clickStateRef.current = { time: 0, zone: null };
+    }, 250);
   };
 
   // YouTube-Style Right-Click Context Menu
@@ -904,14 +926,17 @@ export default function VideoPlayer({
       onMouseMove={resetControlsTimer}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}
-      className={`relative w-full bg-black select-none overflow-hidden group/player ${
+      className={`relative bg-black select-none overflow-hidden group/player ${
         isFullscreen 
           ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none' 
           : 'rounded-none sm:rounded-2xl border border-black/10 shadow-md'
       } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
+        width: isFullscreen ? '100vw' : '100%',
+        maxWidth: isFullscreen ? undefined : `calc(min(75vh, calc(100vh - 160px)) * ${videoRatio})`,
         aspectRatio: isFullscreen ? undefined : videoRatio,
-        maxHeight: isFullscreen ? undefined : 'calc(100vh - 160px)',
+        maxHeight: isFullscreen ? undefined : 'min(75vh, calc(100vh - 160px))',
+        margin: '0 auto',
         contain: 'paint layout',
         WebkitTouchCallout: 'none',
       }}
@@ -971,18 +996,11 @@ export default function VideoPlayer({
         }}
       />
 
-      {/* Desktop Full-Area Click / Double-Click Layer (Single: Play/Pause, Double: Fullscreen) */}
+      {/* Unified 3-Zone Click / Double-Click Overlay (Left -10s, Center Play/Pause/Fullscreen, Right +10s) */}
       <div 
-        onClick={handleDesktopClick}
-        className="hidden md:block absolute inset-0 z-10 cursor-pointer" 
+        onClick={handlePlayerOverlayClick}
+        className="absolute inset-0 z-10 cursor-pointer touch-manipulation" 
       />
-
-      {/* Mobile 3-Zone Touch Overlay (Double Tap Seek Left -10s, Center Play/Pause, Right +10s) */}
-      <div className="md:hidden absolute inset-0 grid grid-cols-3 z-10">
-        <div onClick={() => handleTouchZone('left')} className="h-full cursor-pointer" />
-        <div onClick={() => handleTouchZone('center')} className="h-full cursor-pointer" />
-        <div onClick={() => handleTouchZone('right')} className="h-full cursor-pointer" />
-      </div>
 
       {/* On-Screen Toast Notification */}
       {toastMessage && (
@@ -1005,11 +1023,24 @@ export default function VideoPlayer({
         </div>
       )}
 
-      {/* Double Tap Ripple Feedback */}
+      {/* YouTube-Style Double Click/Tap Animated Ripple Feedback */}
       {doubleTapSide && (
-        <div className={`absolute ${doubleTapSide === 'left' ? 'left-6' : 'right-6'} top-1/2 -translate-y-1/2 pointer-events-none z-20 select-none`}>
-          <div className="flex items-center gap-1 drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]">
-            <span className="text-white text-xs font-bold font-mono">
+        <div className={`absolute ${doubleTapSide === 'left' ? 'left-8 sm:left-16' : 'right-8 sm:right-16'} top-1/2 -translate-y-1/2 pointer-events-none z-30 select-none animate-scaleFade`}>
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-black/75 border border-white/20 flex flex-col items-center justify-center text-white shadow-2xl backdrop-blur-xs">
+            <div className="flex items-center">
+              {doubleTapSide === 'left' ? (
+                <>
+                  <ChevronLeft className="w-5 h-5 -mr-2 text-white/70 animate-pulse" />
+                  <ChevronLeft className="w-5 h-5 text-white" />
+                </>
+              ) : (
+                <>
+                  <ChevronRight className="w-5 h-5 text-white" />
+                  <ChevronRight className="w-5 h-5 -ml-2 text-white/70 animate-pulse" />
+                </>
+              )}
+            </div>
+            <span className="text-xs font-bold font-mono mt-1">
               {accumulatedSeconds > 0 ? `+${accumulatedSeconds}s` : `${accumulatedSeconds}s`}
             </span>
           </div>
@@ -1417,7 +1448,7 @@ export default function VideoPlayer({
             {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
             <div
               ref={scrubPreviewRef}
-              className={`absolute -top-34 sm:-top-38 -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
+              className={`absolute bottom-7 -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
                 (isScrubbing || isHoveringSeek)
                   ? 'opacity-100 scale-100 translate-y-0'
                   : 'opacity-0 scale-90 translate-y-2 pointer-events-none'
@@ -1425,7 +1456,10 @@ export default function VideoPlayer({
               style={{ left: `${Math.max(10, Math.min(isScrubbing ? previewPercent : hoverPercent, 90))}%` }}
             >
               {/* Preview Frame Thumbnail Card */}
-              <div className="w-44 sm:w-52 aspect-video rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80">
+              <div 
+                className="w-44 sm:w-52 rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80"
+                style={{ aspectRatio: videoRatio }}
+              >
                 {/* Poster fallback layer: always present underneath so it NEVER turns pure black */}
                 {poster && (
                   <img
