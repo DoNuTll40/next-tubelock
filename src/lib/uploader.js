@@ -1,5 +1,4 @@
 import { classifyResolution } from './videoUtils';
-import { parseMp4Metadata } from './mp4Parser';
 
 /**
  * Multiple of 320 KiB required by Microsoft Graph createUploadSession
@@ -9,18 +8,26 @@ const CHUNK_SIZE = 320 * 1024 * 32;
 
 /**
  * Extract client-side video metadata (duration, dimensions, resolution, thumbnail, exact fps)
- * Fully compatible with Mobile browsers (iOS Safari / Android Chrome)
+ * Safely skips on Mobile to avoid Android ContentResolver stream lock (NotReadableError)
  */
 export async function extractVideoMetadata(file) {
-  // Parse MP4 container boxes in parallel for exact FPS (with 800ms max timeout)
-  let mp4Meta = null;
-  try {
-    const mp4Promise = parseMp4Metadata(file);
-    const mp4Timeout = new Promise((resolve) => setTimeout(() => resolve(null), 800));
-    mp4Meta = await Promise.race([mp4Promise, mp4Timeout]);
-  } catch (_) {}
+  const isMobile = typeof navigator !== 'undefined' && (
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (navigator.maxTouchPoints && navigator.maxTouchPoints > 1)
+  );
 
-  const detectedFps = mp4Meta?.fps || 30;
+  if (isMobile) {
+    return {
+      duration: 0,
+      width: 0,
+      height: 0,
+      resolution: 'Original / Auto',
+      fps: 30,
+      thumbnailDataUrl: null,
+    };
+  }
+
+  const detectedFps = 30;
 
   return new Promise((resolve) => {
     let isResolved = false;

@@ -191,6 +191,16 @@ export default function UploadPage() {
       lastModified: lastModifiedDate,
     });
 
+    const isMobile = typeof navigator !== 'undefined' && (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints && navigator.maxTouchPoints > 1)
+    );
+
+    if (isMobile) {
+      addLog(`โหมด Mobile Direct Stream: ข้ามการอ่าน FileReader หน้าบ้านเพื่อป้องกัน Android File Lock (NotReadableError) พร้อมส่งขึ้น OneDrive ทันที`);
+      return;
+    }
+
     try {
       const meta = await extractVideoMetadata(selectedFile);
       const dur = Math.round(meta.duration || 0);
@@ -224,8 +234,6 @@ export default function UploadPage() {
 
       if (w && h) {
         addLog(`วิเคราะห์ข้อมูลวิดีโอ: ${w}x${h} [${resLabel}], ความยาว ${formatDuration(dur)}`);
-      } else {
-        addLog(`โหมด Mobile Auto Metadata (ส่งต่อให้ ffprobe บน Cloud Runner วิเคราะห์สเปกแท้จริง)`);
       }
     } catch {
       addLog(`เข้าสู่โหมดอัปโหลดทันที (การวิเคราะห์สเปกวิดีโอจะทำบน Cloud ตอน Transcode)`);
