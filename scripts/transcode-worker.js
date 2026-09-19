@@ -1,17 +1,15 @@
 /**
- * TubeLock Cloud Transcoder Worker
+ * TubeLock Progressive Cloud Transcoder Worker
  * Runs inside GitHub Actions Runner (Ubuntu 2-Core / 7GB RAM)
  * 
- * Workflow:
- * 1. Read input params (VIDEO_ID, RAW_FILE_NAME, VIDEO_TITLE)
- * 2. Authenticate with Microsoft Graph API using Client Credentials
- * 3. Update Neon DB status to 'PROCESSING'
- * 4. Download raw .mp4 from OneDrive /raw/{RAW_FILE_NAME}
- * 5. Update Neon DB status to 'TRANSCODING'
- * 6. Transcode into Multi-bitrate HLS (1080p, 720p, 480p) + master.m3u8 + poster.jpg
- * 7. Upload HLS package to OneDrive /streams/{VIDEO_ID}/
- * 8. Delete raw file from /raw/{RAW_FILE_NAME} to save storage
- * 9. Update Neon DB status to 'READY'
+ * Progressive Multi-Quality Release Architecture:
+ * 1. Download raw .mp4 from OneDrive /raw/{RAW_FILE_NAME}
+ * 2. Transcode Fast Pass (480p) + Poster Thumbnail
+ * 3. Upload 480p + initial master.m3u8 -> Immediately set DB status = 'READY'! (User can watch right away!)
+ * 4. In background, transcode 720p -> Upload -> Update master.m3u8
+ * 5. In background, transcode 1080p (if source >= 1080p) -> Upload -> Update master.m3u8
+ * 6. Delete raw file from /raw/ to save OneDrive space
+ * 7. Mark 100% complete!
  */
 
 import fs from 'node:fs';
@@ -212,7 +210,6 @@ async function uploadFileToOneDrive(token, driveId, folderId, fileName, filePath
   const fileBuffer = fs.readFileSync(filePath);
   const fileSize = fileBuffer.length;
 
-  // For files < 4MB, use Direct PUT
   if (fileSize < 4 * 1024 * 1024) {
     const contentType = fileName.endsWith('.m3u8')
       ? 'application/vnd.apple.mpegurl'
@@ -238,7 +235,7 @@ async function uploadFileToOneDrive(token, driveId, folderId, fileName, filePath
     return await res.json();
   }
 
-  // For files >= 4MB, use Upload Session
+  // Files >= 4MB use upload session
   const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
   const sessionRes = await fetch(sessionUrl, {
     method: 'POST',
@@ -260,7 +257,7 @@ async function uploadFileToOneDrive(token, driveId, folderId, fileName, filePath
   }
 
   const { uploadUrl } = await sessionRes.json();
-  const CHUNK_SIZE = 5 * 1024 * 1024;
+  const CHUNK_SIZE = 10 * 1024 * 1024;
   let offset = 0;
   let uploadResult = null;
 
@@ -284,14 +281,37 @@ async function uploadFileToOneDrive(token, driveId, folderId, fileName, filePath
       offset = end;
     } else {
       const err = await putRes.text();
-      throw new Error(`Failed to upload chunk ${offset}-${end} for ${fileName} (${putRes.status}): ${err}`);
+      throw new Error(`Failed to upload chunk for ${fileName} (${putRes.status}): ${err}`);
     }
   }
 
   return uploadResult;
 }
 
-// 4. Main Worker Execution Flow
+function runFFmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+    });
+    proc.on('error', reject);
+  });
+}
+
+function buildMasterM3U8(qualities) {
+  // qualities is array of objects: { name: '480p', width: 854, height: 480, bitrate: 1000000 }
+  let lines = ['#EXTM3U', '#EXT-X-VERSION:3'];
+  for (const q of qualities) {
+    lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height}`);
+    lines.push(`${q.name}.m3u8`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+// 4. Main Progressive Worker
 async function main() {
   const tempDir = path.resolve('./temp_transcode', String(VIDEO_ID));
   const rawFilePath = path.join(tempDir, 'raw_' + RAW_FILE_NAME);
@@ -304,7 +324,7 @@ async function main() {
     // Step 1: Initial Processing status
     await updateDbStatus({
       status: 'PROCESSING',
-      progress: 12,
+      progress: 10,
       stageDetail: 'กำลังยืนยันตัวตนกับ Microsoft Graph API',
     });
 
@@ -314,15 +334,13 @@ async function main() {
     // Step 2: Download raw file from OneDrive /raw/{RAW_FILE_NAME}
     await updateDbStatus({
       status: 'PROCESSING',
-      progress: 18,
+      progress: 15,
       stageDetail: `กำลังดาวน์โหลดไฟล์ต้นฉบับ "${RAW_FILE_NAME}" จาก OneDrive /raw/`,
     });
 
     console.log(`🔍 Locating /raw/${RAW_FILE_NAME} on OneDrive...`);
     const itemUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(RAW_FILE_NAME)}?select=id,name,size,@microsoft.graph.downloadUrl`;
-    const itemRes = await fetch(itemUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const itemRes = await fetch(itemUrl, { headers: { Authorization: `Bearer ${token}` } });
 
     if (!itemRes.ok) {
       const err = await itemRes.text();
@@ -333,22 +351,15 @@ async function main() {
     const rawItemId = itemData.id;
     const downloadUrl = itemData['@microsoft.graph.downloadUrl'];
 
-    if (!downloadUrl) {
-      throw new Error('ไม่พบ Download URL สำหรับไฟล์ต้นฉบับบน OneDrive');
-    }
-
     console.log(`⬇️ Downloading raw file (${((itemData.size || 0) / (1024 * 1024)).toFixed(1)} MB)...`);
     const fileRes = await fetch(downloadUrl);
-    if (!fileRes.ok) {
-      throw new Error(`ดาวน์โหลดไฟล์ต้นฉบับไม่สำเร็จ (${fileRes.status})`);
-    }
+    if (!fileRes.ok) throw new Error(`ดาวน์โหลดไฟล์ต้นฉบับไม่สำเร็จ (${fileRes.status})`);
 
-    const fileStream = fs.createWriteStream(rawFilePath);
     const arrayBuffer = await fileRes.arrayBuffer();
     fs.writeFileSync(rawFilePath, Buffer.from(arrayBuffer));
-    console.log(`✅ Raw file downloaded to: ${rawFilePath}`);
+    console.log(`✅ Raw file downloaded.`);
 
-    // Step 3: Video Probe & Metadata Extraction
+    // Step 3: Video Probe
     await updateDbStatus({
       status: 'PROCESSING',
       progress: 25,
@@ -367,11 +378,7 @@ async function main() {
       let out = '';
       proc.stdout.on('data', (d) => { out += d.toString(); });
       proc.on('close', () => {
-        try {
-          resolve(JSON.parse(out));
-        } catch {
-          resolve({});
-        }
+        try { resolve(JSON.parse(out)); } catch { resolve({}); }
       });
     });
 
@@ -381,145 +388,15 @@ async function main() {
     const duration = Math.round(parseFloat(probeData.format?.duration || vStream.duration || '0'));
     const fps = vStream.r_frame_rate ? Math.round(eval(vStream.r_frame_rate) || 30) : 30;
     const codec = vStream.codec_name || 'h264';
-    const resolutionLabel = srcHeight >= 1080 ? '1080p' : srcHeight >= 720 ? '720p' : '480p';
+    const resolutionLabel = srcHeight >= 2160 ? '4K' : srcHeight >= 1080 ? '1080p' : srcHeight >= 720 ? '720p' : '480p';
 
     console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, codec: ${codec}`);
 
-    // Step 4: Extract Video Thumbnail Poster
-    const posterPath = path.join(hlsOutputDir, 'poster.jpg');
-    console.log('📸 Generating video poster thumbnail...');
-    await new Promise((resolve) => {
-      const ssTime = Math.min(2, Math.max(0.5, duration * 0.1)).toFixed(1);
-      const thumbProc = spawn('ffmpeg', [
-        '-y',
-        '-ss', ssTime.toString(),
-        '-i', rawFilePath,
-        '-vframes', '1',
-        '-q:v', '2',
-        posterPath,
-      ]);
-      thumbProc.on('close', resolve);
-    });
-
-    // Step 5: Multi-bitrate HLS Transcoding via FFmpeg
-    await updateDbStatus({
-      status: 'TRANSCODING',
-      progress: 30,
-      stageDetail: 'เริ่มต้นหั่น HLS Multi-bitrate (480p / 720p / 1080p พร้อม master.m3u8)',
-    });
-
-    // Ladder rendition based on source height
-    let ffmpegArgs = [];
-    if (srcHeight >= 1080) {
-      ffmpegArgs = [
-        '-y', '-i', rawFilePath,
-        '-filter_complex',
-        '[0:v]split=3[v1][v2][v3]; [v1]scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v1out]; [v2]scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[v2out]; [v3]scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2[v3out]',
-        '-map', '[v1out]', '-c:v:0', 'libx264', '-b:v:0', '4500k', '-maxrate:v:0', '5000k', '-bufsize:v:0', '7500k',
-        '-map', '[v2out]', '-c:v:1', 'libx264', '-b:v:1', '2500k', '-maxrate:v:1', '2800k', '-bufsize:v:1', '4000k',
-        '-map', '[v3out]', '-c:v:2', 'libx264', '-b:v:2', '1000k', '-maxrate:v:2', '1200k', '-bufsize:v:2', '2000k',
-        '-map', '0:a?', '-c:a:0', 'aac', '-b:a:0', '128k',
-        '-map', '0:a?', '-c:a:1', 'aac', '-b:a:1', '128k',
-        '-map', '0:a?', '-c:a:2', 'aac', '-b:a:2', '96k',
-        '-f', 'hls',
-        '-hls_time', '6',
-        '-hls_playlist_type', 'vod',
-        '-hls_flags', 'independent_segments',
-        '-hls_segment_type', 'mpegts',
-        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_%v_%03d.ts'),
-        '-master_pl_name', 'master.m3u8',
-        '-var_stream_map', 'v:0,a:0,name:1080p v:1,a:1,name:720p v:2,a:2,name:480p',
-        path.join(hlsOutputDir, '%v.m3u8'),
-      ];
-    } else if (srcHeight >= 720) {
-      ffmpegArgs = [
-        '-y', '-i', rawFilePath,
-        '-filter_complex',
-        '[0:v]split=2[v1][v2]; [v1]scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[v1out]; [v2]scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2[v2out]',
-        '-map', '[v1out]', '-c:v:0', 'libx264', '-b:v:0', '2500k', '-maxrate:v:0', '2800k', '-bufsize:v:0', '4000k',
-        '-map', '[v2out]', '-c:v:1', 'libx264', '-b:v:1', '1000k', '-maxrate:v:1', '1200k', '-bufsize:v:1', '2000k',
-        '-map', '0:a?', '-c:a:0', 'aac', '-b:a:0', '128k',
-        '-map', '0:a?', '-c:a:1', 'aac', '-b:a:1', '96k',
-        '-f', 'hls',
-        '-hls_time', '6',
-        '-hls_playlist_type', 'vod',
-        '-hls_flags', 'independent_segments',
-        '-hls_segment_type', 'mpegts',
-        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_%v_%03d.ts'),
-        '-master_pl_name', 'master.m3u8',
-        '-var_stream_map', 'v:0,a:0,name:720p v:1,a:1,name:480p',
-        path.join(hlsOutputDir, '%v.m3u8'),
-      ];
-    } else {
-      ffmpegArgs = [
-        '-y', '-i', rawFilePath,
-        '-filter_complex',
-        '[0:v]scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2[v1out]',
-        '-map', '[v1out]', '-c:v:0', 'libx264', '-b:v:0', '1000k', '-maxrate:v:0', '1200k', '-bufsize:v:0', '2000k',
-        '-map', '0:a?', '-c:a:0', 'aac', '-b:a:0', '96k',
-        '-f', 'hls',
-        '-hls_time', '6',
-        '-hls_playlist_type', 'vod',
-        '-hls_flags', 'independent_segments',
-        '-hls_segment_type', 'mpegts',
-        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_%v_%03d.ts'),
-        '-master_pl_name', 'master.m3u8',
-        '-var_stream_map', 'v:0,a:0,name:480p',
-        path.join(hlsOutputDir, '%v.m3u8'),
-      ];
-    }
-
-    console.log('⚡ Running FFmpeg Transcoding...');
-    let lastProgressUpdate = Date.now();
-
-    await new Promise((resolve, reject) => {
-      const transcodeProc = spawn('ffmpeg', ffmpegArgs);
-
-      transcodeProc.stderr.on('data', (chunk) => {
-        const line = chunk.toString();
-        // Parse time=HH:MM:SS.ms to calculate progress
-        const timeMatch = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-        if (timeMatch && duration > 0) {
-          const currentSec = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
-          const pct = Math.min(99, Math.round((currentSec / duration) * 100));
-          const overallProgress = Math.min(80, 30 + Math.round(pct * 0.5));
-
-          if (Date.now() - lastProgressUpdate > 4000) {
-            lastProgressUpdate = Date.now();
-            updateDbStatus({
-              status: 'TRANSCODING',
-              progress: overallProgress,
-              stageDetail: `กำลังแปลงวิดีโอ HLS Multi-bitrate (${pct}%)`,
-            });
-          }
-        }
-      });
-
-      transcodeProc.on('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`FFmpeg exited with non-zero code ${code}`));
-        }
-      });
-
-      transcodeProc.on('error', reject);
-    });
-
-    console.log('✅ FFmpeg Transcoding completed successfully!');
-
-    // Step 6: Upload HLS Package to OneDrive /streams/{VIDEO_ID}/
-    await updateDbStatus({
-      status: 'TRANSCODING',
-      progress: 82,
-      stageDetail: `กำลังสร้างโฟลเดอร์ /streams/${VIDEO_ID} บน OneDrive Business`,
-    });
-
+    // Create HLS Destination Folder on OneDrive
     const streamFolderName = `stream_vid_${VIDEO_ID}`;
     const streamsParentFolder = '/streams';
     const parentFolderId = await ensureFolderExists(token, driveId, streamsParentFolder);
 
-    // Create subfolder on OneDrive
     console.log(`📁 Creating folder ${streamFolderName} in ${streamsParentFolder}...`);
     const createFolderRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentFolderId}/children`, {
       method: 'POST',
@@ -536,56 +413,71 @@ async function main() {
 
     if (!createFolderRes.ok) {
       const err = await createFolderRes.text();
-      throw new Error(`Failed to create HLS stream folder (${createFolderRes.status}): ${err}`);
+      throw new Error(`Failed to create HLS folder: ${err}`);
     }
 
     const streamFolderData = await createFolderRes.json();
     const streamFolderId = streamFolderData.id;
+    const masterPlaylistPath = `/streams/${streamFolderName}/master.m3u8`;
 
-    // List all files in hlsOutputDir
-    const hlsFiles = fs.readdirSync(hlsOutputDir);
-    console.log(`📦 Uploading ${hlsFiles.length} HLS files to OneDrive /streams/${streamFolderName}...`);
+    // Step 4: Extract Video Thumbnail Poster
+    const posterPath = path.join(hlsOutputDir, 'poster.jpg');
+    console.log('📸 Generating poster thumbnail...');
+    await runFFmpeg([
+      '-y',
+      '-ss', Math.min(1.5, Math.max(0.5, duration * 0.1)).toFixed(1),
+      '-i', rawFilePath,
+      '-vframes', '1',
+      '-q:v', '2',
+      posterPath,
+    ]);
+    await uploadFileToOneDrive(token, driveId, streamFolderId, 'poster.jpg', posterPath);
 
-    let filesUploaded = 0;
-    for (const fileName of hlsFiles) {
-      const filePath = path.join(hlsOutputDir, fileName);
-      await uploadFileToOneDrive(token, driveId, streamFolderId, fileName, filePath);
-      filesUploaded++;
+    // Track active qualities in master.m3u8
+    const readyQualities = [];
 
-      if (filesUploaded % 5 === 0 || filesUploaded === hlsFiles.length) {
-        const uploadProgress = Math.min(95, 82 + Math.round((filesUploaded / hlsFiles.length) * 13));
-        await updateDbStatus({
-          status: 'TRANSCODING',
-          progress: uploadProgress,
-          stageDetail: `อัปโหลดไฟล์ HLS ขึ้น OneDrive: ${filesUploaded}/${hlsFiles.length} ชิ้น`,
-        });
-      }
-    }
-
-    // Step 7: Cleanup raw file on OneDrive to save storage space
+    // =========================================================================
+    // PASS 1: Fast Pass (480p) -> USER CAN WATCH IMMEDIATELY!
+    // =========================================================================
     await updateDbStatus({
-      status: 'PROCESSING',
-      progress: 96,
-      stageDetail: `กำลังลบไฟล์ต้นฉบับใน /raw/ เพื่อประหยัดพื้นที่จัดเก็บ`,
+      status: 'TRANSCODING',
+      progress: 35,
+      stageDetail: '⚡ กำลังแปลงความละเอียดแรก (480p) เพื่อให้เปิดดูได้ทันที...',
     });
 
-    try {
-      console.log(`🗑️ Deleting raw file /raw/${RAW_FILE_NAME} (ID: ${rawItemId}) on OneDrive...`);
-      await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${rawItemId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      console.log('✅ Raw file deleted from OneDrive.');
-    } catch (delErr) {
-      console.warn('⚠️ Could not delete raw file:', delErr.message);
+    console.log('⚡ Slicing 480p for instant playback...');
+    await runFFmpeg([
+      '-y', '-i', rawFilePath,
+      '-vf', 'scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
+      '-c:a', 'aac', '-b:a', '96k',
+      '-f', 'hls',
+      '-hls_time', '6',
+      '-hls_playlist_type', 'vod',
+      '-hls_flags', 'independent_segments',
+      '-hls_segment_type', 'mpegts',
+      '-hls_segment_filename', path.join(hlsOutputDir, 'stream_480p_%03d.ts'),
+      path.join(hlsOutputDir, '480p.m3u8'),
+    ]);
+
+    readyQualities.push({ name: '480p', width: 854, height: 480, bitrate: 1000000 });
+
+    // Write & upload initial master.m3u8
+    const masterPath = path.join(hlsOutputDir, 'master.m3u8');
+    fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
+
+    // Upload 480p files + master.m3u8
+    const pass1Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('480p') || f === 'master.m3u8');
+    for (const f of pass1Files) {
+      await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
     }
 
-    // Step 8: Final DB Update -> READY
-    const masterPlaylistPath = `/streams/${streamFolderName}/master.m3u8`;
+    // 🎉 IMMEDIATELY MARK READY IN NEON DB!
+    console.log(`🎉 480p is READY! Unlocking video for instant playback!`);
     await updateDbStatus({
       status: 'READY',
-      progress: 100,
-      stageDetail: 'แปลงไฟล์และจัดเก็บ HLS Multi-bitrate สำเร็จ พร้อมสตรีมมิ่ง!',
+      progress: 50,
+      stageDetail: '⚡ พร้อมรับชมทันทีที่ 480p! (กำลังแปลง 720p และ 1080p เพิ่มเติมในพื้นหลัง...)',
       extra: {
         onedrive_folder_id: streamFolderId,
         master_playlist_path: masterPlaylistPath,
@@ -596,7 +488,98 @@ async function main() {
       },
     });
 
-    console.log(`🎉 Transcoding workflow finished successfully for Video #${VIDEO_ID}!`);
+    // =========================================================================
+    // PASS 2: 720p (HD) in background (if source >= 720p)
+    // =========================================================================
+    if (srcHeight >= 720) {
+      console.log('⚡ Slicing 720p in background...');
+      await updateDbStatus({
+        status: 'READY',
+        progress: 70,
+        stageDetail: '⚡ เปิดดูได้แล้ว (กำลังแปลง 720p HD เพิ่มเติมในพื้นหลัง...)',
+      });
+
+      await runFFmpeg([
+        '-y', '-i', rawFilePath,
+        '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '4000k',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-f', 'hls',
+        '-hls_time', '6',
+        '-hls_playlist_type', 'vod',
+        '-hls_flags', 'independent_segments',
+        '-hls_segment_type', 'mpegts',
+        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_720p_%03d.ts'),
+        path.join(hlsOutputDir, '720p.m3u8'),
+      ]);
+
+      readyQualities.unshift({ name: '720p', width: 1280, height: 720, bitrate: 2500000 });
+      fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
+
+      const pass2Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('720p') || f === 'master.m3u8');
+      for (const f of pass2Files) {
+        await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
+      }
+      console.log('✅ 720p uploaded and master.m3u8 updated.');
+    }
+
+    // =========================================================================
+    // PASS 3: 1080p (Full HD) in background (if source >= 1080p)
+    // =========================================================================
+    if (srcHeight >= 1080) {
+      console.log('⚡ Slicing 1080p in background...');
+      await updateDbStatus({
+        status: 'READY',
+        progress: 88,
+        stageDetail: '⚡ เปิดดูได้แล้ว (กำลังแปลง 1080p Full HD เพิ่มเติมในพื้นหลัง...)',
+      });
+
+      await runFFmpeg([
+        '-y', '-i', rawFilePath,
+        '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '4500k', '-maxrate', '5000k', '-bufsize', '7500k',
+        '-c:a', 'aac', '-b:a', '128k',
+        '-f', 'hls',
+        '-hls_time', '6',
+        '-hls_playlist_type', 'vod',
+        '-hls_flags', 'independent_segments',
+        '-hls_segment_type', 'mpegts',
+        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_1080p_%03d.ts'),
+        path.join(hlsOutputDir, '1080p.m3u8'),
+      ]);
+
+      readyQualities.unshift({ name: '1080p', width: 1920, height: 1080, bitrate: 4500000 });
+      fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
+
+      const pass3Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1080p') || f === 'master.m3u8');
+      for (const f of pass3Files) {
+        await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
+      }
+      console.log('✅ 1080p uploaded and master.m3u8 updated.');
+    }
+
+    // =========================================================================
+    // PASS 4: Cleanup raw file & Mark 100% complete
+    // =========================================================================
+    try {
+      console.log(`🗑️ Deleting raw file /raw/${RAW_FILE_NAME}...`);
+      await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${rawItemId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      console.log('✅ Raw file deleted.');
+    } catch (delErr) {
+      console.warn('⚠️ Could not delete raw file:', delErr.message);
+    }
+
+    const finalQualitiesText = readyQualities.map((q) => q.name).join(', ');
+    await updateDbStatus({
+      status: 'READY',
+      progress: 100,
+      stageDetail: `เสร็จสมบูรณ์ทุกความละเอียด (${finalQualitiesText}) พร้อมรับชมแบบเต็มประสิทธิภาพ`,
+    });
+
+    console.log(`🎉 All progressive passes finished for Video #${VIDEO_ID}!`);
 
   } catch (err) {
     console.error('❌ [Transcode Worker Fatal Error]:', err);
@@ -608,11 +591,9 @@ async function main() {
     });
     process.exit(1);
   } finally {
-    // Cleanup local runner temporary directory
     try {
       if (fs.existsSync(tempDir)) {
         fs.rmSync(tempDir, { recursive: true, force: true });
-        console.log('🧹 Cleaned up local runner temp directory.');
       }
     } catch (_) {}
   }
