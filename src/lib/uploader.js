@@ -252,6 +252,7 @@ export async function uploadVideoFile(file, options = {}) {
   while (start < fileSize) {
     const end = Math.min(start + CHUNK_SIZE, fileSize) - 1;
     const chunkBlob = file.slice(start, end + 1);
+    const chunkBuffer = await chunkBlob.arrayBuffer();
     const contentRange = `bytes ${start}-${end}/${fileSize}`;
 
     let success = false;
@@ -262,7 +263,7 @@ export async function uploadVideoFile(file, options = {}) {
       try {
         const res = await uploadChunkXHR(
           uploadUrl,
-          chunkBlob,
+          chunkBuffer,
           contentRange,
           (chunkLoaded) => {
             const currentTotal = Math.min(start + chunkLoaded, fileSize);

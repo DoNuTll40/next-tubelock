@@ -370,9 +370,19 @@ export default function UploadPage() {
       addLog(`เริ่มส่งไฟล์ตรงเข้า OneDrive /raw/${serverRawName} (ขนาดก้อน ${chunkSizeMB} MB ไม่อั้นสปีด)...`);
 
       // 2. Direct Chunked Upload (Aligned to 320 KiB boundary)
-      const CHUNK_SIZE = chunkSizeMB === 50
+      const isMobile = typeof navigator !== 'undefined' && (
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+        (navigator.maxTouchPoints && navigator.maxTouchPoints > 1)
+      );
+
+      // บังคับใช้ Chunk Size ขนาดปลอดภัยสำหรับ Mobile (หรือขนาดไฟล์ต่ำกว่า 200MB) ไม่เกิน 10 MB เพื่อไม่ให้หน่วยความจำในมือถือล้น
+      const activeChunkSizeMB = (isMobile || file.size < 200 * 1024 * 1024)
+        ? Math.min(chunkSizeMB, 10)
+        : chunkSizeMB;
+
+      const CHUNK_SIZE = activeChunkSizeMB === 50
         ? 160 * 327680 // 52,428,800 bytes (50 MiB, exactly 160 x 320 KiB)
-        : chunkSizeMB === 20
+        : activeChunkSizeMB === 20
         ? 64 * 327680  // 20,971,520 bytes (20 MiB, exactly 64 x 320 KiB)
         : 32 * 327680; // 10,485,760 bytes (10 MiB, exactly 32 x 320 KiB)
 
@@ -385,9 +395,11 @@ export default function UploadPage() {
       while (start < totalSize) {
         // ตัด Chunk (Slicing) ตามมาตรฐาน Microsoft Graph API:
         // end = Math.min(start + CHUNK_SIZE, file.size) - 1
-        // chunk = file.slice(start, end + 1)
+        // chunkBlob = file.slice(start, end + 1)
         const end = Math.min(start + CHUNK_SIZE, totalSize) - 1;
-        const chunk = file.slice(start, end + 1);
+        const chunkBlob = file.slice(start, end + 1);
+        // แปลง Blob เป็น ArrayBuffer เสมอก่อนส่งเข้า XHR เพื่อให้อ่าน byte ตรงเข้า RAM และปลดล็อก Android ContentProvider stream
+        const chunkBuffer = await chunkBlob.arrayBuffer();
         const rangeHeader = `bytes ${start}-${end}/${totalSize}`;
 
         await new Promise((resolve, reject) => {
@@ -443,7 +455,7 @@ export default function UploadPage() {
               statusText: xhr.statusText,
               uploadUrl,
               rangeHeader,
-              chunkBytes: chunk.size,
+              chunkBytes: chunkBuffer.byteLength,
               event: e,
             });
             reject(new Error(`การเชื่อมต่อกับ OneDrive ขัดข้อง (Status: ${xhr.status || 0} CORS/Network Aborted) ขณะส่งก้อนที่ ${chunkIndex + 1}/${totalChunks} (Range: ${rangeHeader})`));
@@ -454,7 +466,7 @@ export default function UploadPage() {
           };
 
           xhr.timeout = 180000;
-          xhr.send(chunk);
+          xhr.send(chunkBuffer);
         });
 
         start = end + 1;
