@@ -22,7 +22,16 @@ export async function GET(request, context) {
       return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, video: rows[0] });
+    return NextResponse.json(
+      { success: true, video: rows[0] },
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+          'CDN-Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+          'Vercel-CDN-Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+        },
+      }
+    );
   } catch (err) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }

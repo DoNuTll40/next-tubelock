@@ -107,7 +107,17 @@ export default function WatchPage() {
         }
 
         setStreamUrl(resolved.url);
-        setStoryboard(resolved.storyboard || null);
+        if (resolved.storyboard) {
+          setStoryboard(resolved.storyboard);
+        } else if (resolved.storyboardPromise) {
+          resolved.storyboardPromise.then((sb) => {
+            if (!cancelled && sb) {
+              setStoryboard(sb);
+            }
+          }).catch(() => {});
+        } else {
+          setStoryboard(null);
+        }
       } catch (err) {
         console.error('[WatchPage Error]:', err);
         if (!cancelled) {

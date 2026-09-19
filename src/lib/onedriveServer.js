@@ -62,10 +62,13 @@ export async function getGraphToken(forceRefresh = false) {
   return cachedToken;
 }
 
+let cachedDriveId = null;
+
 /**
  * Get user's OneDrive Drive ID
  */
 export async function getUserDriveId(token) {
+  if (cachedDriveId) return cachedDriveId;
   const { userId } = getEnvConfig();
 
   const driveRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/drive`, {
@@ -78,7 +81,8 @@ export async function getUserDriveId(token) {
   }
 
   const data = await driveRes.json();
-  return data.id;
+  cachedDriveId = data.id;
+  return cachedDriveId;
 }
 
 /**

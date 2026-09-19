@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
-export async function GET() {
-  try {
-    const sql = getDb();
+let tableEnsured = false;
 
+async function ensureTable(sql) {
+  if (tableEnsured) return;
+  try {
     // Auto-create videos table if not exists with all required columns
     await sql`
       CREATE TABLE IF NOT EXISTS videos (
@@ -40,13 +41,36 @@ export async function GET() {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS raw_file_name TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS master_playlist_path TEXT DEFAULT '';`;
 
+    tableEnsured = true;
+  } catch (err) {
+    console.warn('[DB Init Warning]:', err.message);
+  }
+}
+
+export async function GET() {
+  try {
+    const sql = getDb();
+
+    if (!tableEnsured) {
+      await ensureTable(sql);
+    }
+
     // Normal feed only returns READY (or pre-existing NULL) videos
     const rows = await sql`
       SELECT * FROM videos 
       WHERE status = 'READY' OR status IS NULL 
       ORDER BY created_at DESC;
     `;
-    return NextResponse.json({ success: true, data: rows });
+    return NextResponse.json(
+      { success: true, data: rows },
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+          'CDN-Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+          'Vercel-CDN-Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+        },
+      }
+    );
   } catch (err) {
     console.error('[API_VIDEOS_GET_ERROR]:', err);
     return NextResponse.json({ success: false, error: err.message, data: [] }, { status: 500 });

@@ -186,7 +186,8 @@ export async function resolveClientPlaybackSource(sourceData) {
   // Case 2: HLS Stream from OneDrive items
   if (sourceData.type === 'hls' && Array.isArray(sourceData.items)) {
     const items = sourceData.items;
-    const storyboard = await resolveStoryboard(items);
+    // ⚡ Non-blocking Storyboard: Download & parse VTT thumbnails in the background so video begins buffering immediately
+    const storyboardPromise = resolveStoryboard(items);
     const segmentUrlMap = {};
     const subPlaylistItems = {};
     let masterPlaylistItem = null;
@@ -248,7 +249,7 @@ export async function resolveClientPlaybackSource(sourceData) {
         type: 'hls',
         url: masterBlobUrl,
         blobUrls: createdBlobUrls,
-        storyboard,
+        storyboardPromise,
       };
     }
 
@@ -265,7 +266,7 @@ export async function resolveClientPlaybackSource(sourceData) {
       type: 'hls',
       url: singleBlobUrl,
       blobUrls: createdBlobUrls,
-      storyboard,
+      storyboardPromise,
     };
   }
 

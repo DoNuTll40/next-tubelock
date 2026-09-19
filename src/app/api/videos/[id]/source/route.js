@@ -10,6 +10,12 @@ export const revalidate = 0;
 const sourceCache = globalThis.__tubelock_source_cache || (globalThis.__tubelock_source_cache = new Map());
 const inFlightRequests = globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
 
+const EDGE_CACHE_HEADERS = {
+  'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
+  'CDN-Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
+  'Vercel-CDN-Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
+};
+
 /**
  * GET /api/videos/[id]/source
  * Resolves direct playback URL from OneDrive via Azure Client Secret with 0ms in-memory cache & request coalescing
@@ -26,7 +32,7 @@ export async function GET(request, context) {
     // ⚡ 1. Ultra-fast Cache Hit (<1ms)
     const cached = sourceCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
-      return NextResponse.json(cached.data);
+      return NextResponse.json(cached.data, { headers: EDGE_CACHE_HEADERS });
     }
 
     // ⚡ 2. In-Flight Request Deduplication (prevents parallel duplicate calls from React StrictMode)
@@ -35,7 +41,7 @@ export async function GET(request, context) {
       if (data?.status && data.status !== 'READY' && !data.success) {
         return NextResponse.json(data, { status: 422 });
       }
-      return NextResponse.json(data);
+      return NextResponse.json(data, { headers: EDGE_CACHE_HEADERS });
     }
 
     // ⚡ 3. Cold Fetch with Promise Coalescing
@@ -70,7 +76,7 @@ export async function GET(request, context) {
       // Case 1: HLS Stream Folder
       if (video.source_type === 'hls' || video.onedrive_folder_id) {
         const folderId = video.onedrive_folder_id || video.onedrive_item_id;
-        let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$top=1000`;
+        let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$select=name,@microsoft.graph.downloadUrl&$top=1000`;
         const allItems = [];
 
         while (nextUrl) {
@@ -141,7 +147,7 @@ export async function GET(request, context) {
       if (data?.status && data.status !== 'READY' && !data.success) {
         return NextResponse.json(data, { status: 422 });
       }
-      return NextResponse.json(data);
+      return NextResponse.json(data, { headers: EDGE_CACHE_HEADERS });
     } finally {
       inFlightRequests.delete(cacheKey);
     }

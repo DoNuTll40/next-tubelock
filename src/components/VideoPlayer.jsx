@@ -46,7 +46,7 @@ export default function VideoPlayer({
   const scrubberKnobRef = useRef(null);
   const timeDisplayRef = useRef(null);
 
-  // Video aspect ratio
+  // Video aspect ratio & vertical detection
   const [videoRatio, setVideoRatio] = useState(() => {
     if (typeof resolution === 'string' && resolution.includes('x')) {
       const parts = resolution.split('x');
@@ -55,6 +55,16 @@ export default function VideoPlayer({
       if (w > 0 && h > 0) return w / h;
     }
     return 16 / 9;
+  });
+
+  const [isVerticalVideo, setIsVerticalVideo] = useState(() => {
+    if (typeof resolution === 'string' && resolution.includes('x')) {
+      const parts = resolution.split('x');
+      const w = parseFloat(parts[0]);
+      const h = parseFloat(parts[1]);
+      if (w > 0 && h > 0) return h > w;
+    }
+    return false;
   });
 
   // Playback states
@@ -937,13 +947,20 @@ export default function VideoPlayer({
         }
         setIsFullscreen(true);
 
-        // 📱 Auto orientation lock: Rotate mobile to landscape automatically when video is widescreen!
+        // 📱 Auto orientation lock:
+        // Horizontal video -> lock to landscape (หมุนนอนอัตโนมัติ)
+        // Vertical video (Shorts / 9:16 / Reels) -> lock to portrait (แนวตั้งตามวิดีโอ ไม่ต้องนอน)
         if (typeof window !== 'undefined' && window.screen?.orientation?.lock) {
           try {
-            if (videoRatio >= 1) {
-              await window.screen.orientation.lock('landscape');
+            const vEl = video.current;
+            const isVertical = (vEl && vEl.videoHeight > 0 && vEl.videoWidth > 0 && vEl.videoHeight > vEl.videoWidth)
+              || isVerticalVideo
+              || (videoRatio < 0.95);
+
+            if (isVertical) {
+              await window.screen.orientation.lock('portrait').catch(() => {});
             } else {
-              await window.screen.orientation.lock('portrait');
+              await window.screen.orientation.lock('landscape').catch(() => {});
             }
           } catch (orientErr) {
             console.log('Orientation lock notice:', orientErr);
@@ -1165,8 +1182,10 @@ export default function VideoPlayer({
         } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
         width: isFullscreen ? '100vw' : '100%',
-        maxWidth: isFullscreen ? undefined : `calc((100vh - 140px) * ${videoRatio})`,
-        aspectRatio: isFullscreen ? undefined : `${videoRatio}`,
+        maxWidth: isFullscreen ? undefined : (isVerticalVideo ? '480px' : `calc((100vh - 140px) * ${videoRatio})`),
+        aspectRatio: isFullscreen
+          ? undefined
+          : (isMobileView && isVerticalVideo ? '16 / 9' : `${videoRatio}`),
         maxHeight: isFullscreen ? undefined : 'calc(100vh - 140px)',
         margin: '0 auto',
         contain: 'paint layout',
@@ -1203,14 +1222,16 @@ export default function VideoPlayer({
           const { videoWidth, videoHeight } = e.target;
           if (videoWidth && videoHeight) {
             const isVertical = videoHeight > videoWidth;
-            setVideoRatio(isVertical ? (16 / 9) : (videoWidth / videoHeight));
+            setIsVerticalVideo(isVertical);
+            setVideoRatio(videoWidth / videoHeight);
           }
         }}
         onLoadedMetadata={(e) => {
           const { videoWidth, videoHeight, duration: dur } = e.target;
           if (videoWidth && videoHeight) {
             const isVertical = videoHeight > videoWidth;
-            setVideoRatio(isVertical ? (16 / 9) : (videoWidth / videoHeight));
+            setIsVerticalVideo(isVertical);
+            setVideoRatio(videoWidth / videoHeight);
           }
           if (dur) setDuration(dur);
           updateBufferProgress();
