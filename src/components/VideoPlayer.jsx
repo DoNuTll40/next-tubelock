@@ -584,14 +584,16 @@ export default function VideoPlayer({
     if (scrubThrottleTimerRef.current) clearTimeout(scrubThrottleTimerRef.current);
     scrubThrottleTimerRef.current = setTimeout(() => {
       const sv = scrubVideoRef.current;
-      if (sv && Math.abs(sv.currentTime - targetSec) > 0.35) {
-        if ('fastSeek' in sv) {
-          sv.fastSeek(targetSec);
-        } else {
-          sv.currentTime = targetSec;
-        }
+      if (sv && sv.readyState >= 1 && Math.abs(sv.currentTime - targetSec) > 0.2) {
+        try {
+          if ('fastSeek' in sv) {
+            sv.fastSeek(targetSec);
+          } else {
+            sv.currentTime = targetSec;
+          }
+        } catch (_) {}
       }
-    }, 45);
+    }, 40);
   }, []);
 
   // Scrubbing calculation
@@ -614,6 +616,7 @@ export default function VideoPlayer({
 
   const handleSeekMouseMove = (e) => {
     if (!seekTrackRef.current || duration <= 0) return;
+    if (!isScrubbing && !isHoveringSeek) return;
     const rect = seekTrackRef.current.getBoundingClientRect();
     const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
     const pct = (offsetX / rect.width) * 100;
@@ -627,11 +630,19 @@ export default function VideoPlayer({
   };
 
   const handlePointerDown = (e) => {
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
     setIsScrubbing(true);
     calculateScrubPosition(e.clientX);
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e) => {
+    try {
+      if (e?.currentTarget?.hasPointerCapture?.(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (_) {}
     if (isScrubbing) {
       commitSeek(previewTime);
       setIsScrubbing(false);
@@ -1260,47 +1271,52 @@ export default function VideoPlayer({
           <div 
             ref={seekTrackRef}
             onPointerDown={handlePointerDown}
+            onPointerMove={handleSeekMouseMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
             onMouseEnter={() => setIsHoveringSeek(true)}
             onMouseLeave={() => setIsHoveringSeek(false)}
             className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
           >
-            {/* Time Tooltip + Thumbnail Preview on Hover / Scrubbing */}
-            {(isScrubbing || isHoveringSeek) && (
-              <div
-                className="absolute -top-28 sm:-top-32 -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 animate-fadeIn"
-                style={{ left: `${Math.max(12, Math.min(isScrubbing ? previewPercent : hoverPercent, 88))}%` }}
-              >
-                {/* Thumbnail Preview Box */}
-                <div className="w-36 sm:w-44 aspect-video rounded-xl overflow-hidden border border-white/20 bg-black/95 shadow-2xl relative mb-1.5 ring-1 ring-black/50">
-                  <video
-                    ref={scrubVideoRef}
-                    muted
-                    playsInline
-                    preload="auto"
-                    onLoadedData={() => setScrubFrameLoaded(true)}
-                    onSeeked={() => setScrubFrameLoaded(true)}
-                    className={`w-full h-full object-cover transition-opacity duration-150 ${
-                      scrubFrameLoaded ? 'opacity-100' : 'opacity-0'
-                    }`}
+            {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
+            <div
+              className={`absolute -top-34 sm:-top-38 -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-all duration-150 ease-out ${
+                (isScrubbing || isHoveringSeek)
+                  ? 'opacity-100 scale-100 translate-y-0'
+                  : 'opacity-0 scale-90 translate-y-2 pointer-events-none'
+              }`}
+              style={{ left: `${Math.max(12, Math.min(isScrubbing ? previewPercent : hoverPercent, 88))}%` }}
+            >
+              {/* Preview Frame Thumbnail Card */}
+              <div className="w-44 sm:w-52 aspect-video rounded-xl overflow-hidden border-2 border-white/60 bg-black shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80">
+                <video
+                  ref={scrubVideoRef}
+                  muted
+                  playsInline
+                  preload="auto"
+                  onLoadedData={() => setScrubFrameLoaded(true)}
+                  onSeeked={() => setScrubFrameLoaded(true)}
+                  className={`w-full h-full object-cover transition-opacity duration-150 ${
+                    scrubFrameLoaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+                {/* Fallback to poster image if preview frame is buffering */}
+                {poster && !scrubFrameLoaded && (
+                  <img
+                    src={poster}
+                    alt="Thumbnail Preview"
+                    className="absolute inset-0 w-full h-full object-cover opacity-80"
                   />
-                  {/* Fallback to poster image if preview frame is buffering */}
-                  {poster && !scrubFrameLoaded && (
-                    <img
-                      src={poster}
-                      alt="Thumbnail Preview"
-                      className="absolute inset-0 w-full h-full object-cover opacity-80"
-                    />
-                  )}
-                  {/* Subtle vignette */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/15 pointer-events-none" />
-                </div>
-
-                {/* Time Badge */}
-                <div className="bg-[#18181B]/95 text-white border border-white/20 px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold shadow-xl whitespace-nowrap">
-                  {formatTime(isScrubbing ? previewTime : hoverTime)}
-                </div>
+                )}
+                {/* Subtle vignette */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none" />
               </div>
-            )}
+
+              {/* Time Badge */}
+              <div className="bg-black/90 text-white border border-white/20 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold shadow-xl whitespace-nowrap backdrop-blur-md">
+                {formatTime(isScrubbing ? previewTime : hoverTime)}
+              </div>
+            </div>
 
             {/* Progress Background Track */}
             <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
