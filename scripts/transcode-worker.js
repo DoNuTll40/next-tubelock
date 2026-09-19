@@ -503,7 +503,7 @@ async function main() {
       '-y',
       '-threads', '0',
       '-i', rawFilePath,
-      '-vf', 'scale=w=256:h=144:force_original_aspect_ratio=decrease,pad=256:144:(ow-iw)/2:(oh-ih)/2',
+      '-vf', 'scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2',
       '-c:v', 'libx264', '-preset', 'ultrafast',
       '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
       '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
@@ -549,9 +549,10 @@ async function main() {
       ]);
       const vttSD = generateWebVTT({ duration, interval: 5, cols: 10, rows: 10, width: 160, height: 90, prefix: 'sprite_sd_' });
       const vttHD = generateWebVTT({ duration, interval: 5, cols: 5, rows: 5, width: 320, height: 180, prefix: 'sprite_hd_' });
+      const vttStd = generateWebVTT({ duration, interval: 5, cols: 10, rows: 10, width: 160, height: 90, prefix: 'sprite_' });
       fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails_sd.vtt'), vttSD);
       fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails_hd.vtt'), vttHD);
-      fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails.vtt'), vttSD);
+      fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails.vtt'), vttStd);
 
       // Create standard sprite_%03d.jpg aliases for backward compatibility
       const sdSprites = fs.readdirSync(hlsOutputDir).filter((f) => f.startsWith('sprite_sd_'));
@@ -600,7 +601,7 @@ async function main() {
         '-y',
         '-threads', '0',
         '-i', rawFilePath,
-        '-vf', 'scale=w=640:h=360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2',
+        '-vf', 'scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
         '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
@@ -644,7 +645,7 @@ async function main() {
         '-y',
         '-threads', '0',
         '-i', rawFilePath,
-        '-vf', 'scale=w=854:h=480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2',
+        '-vf', 'scale=w=854:h=480:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
         '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
@@ -688,7 +689,7 @@ async function main() {
         '-y',
         '-threads', '0',
         '-i', rawFilePath,
-        '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2',
+        '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
         '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '4000k',
@@ -732,7 +733,7 @@ async function main() {
         '-y',
         '-threads', '0',
         '-i', rawFilePath,
-        '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2',
+        '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
         '-b:v', '4500k', '-maxrate', '5000k', '-bufsize', '7500k',
@@ -776,7 +777,7 @@ async function main() {
         '-y',
         '-threads', '0',
         '-i', rawFilePath,
-        '-vf', 'scale=w=2560:h=1440:force_original_aspect_ratio=decrease,pad=2560:1440:(ow-iw)/2:(oh-ih)/2',
+        '-vf', 'scale=w=2560:h=1440:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
         '-b:v', '8500k', '-maxrate', '9500k', '-bufsize', '14000k',
@@ -820,7 +821,7 @@ async function main() {
         '-y',
         '-threads', '0',
         '-i', rawFilePath,
-        '-vf', 'scale=w=3840:h=2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2',
+        '-vf', 'scale=w=3840:h=2160:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
         '-b:v', '14000k', '-maxrate', '16000k', '-bufsize', '24000k',

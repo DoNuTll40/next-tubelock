@@ -555,31 +555,67 @@ export default function VideoPlayer({
     const elHd = scrubThumbHdRef.current;
     if (!elSd) return;
 
+    const safeSec = Math.max(0, targetSec || 0);
     const cuesSD = storyboard?.cuesSD || storyboard?.cues || [];
-    if (cuesSD.length === 0) {
-      elSd.style.opacity = '0';
-      if (elHd) elHd.style.opacity = '0';
-      return;
+    const spriteMap = storyboard?.spriteMap || {};
+
+    let resolvedUrl = null;
+    let col = 0;
+    let row = 0;
+    let cols = 10;
+    let rows = 10;
+
+    // 1. WebVTT Cue Matching (Exact second matching: start <= targetSec < end)
+    if (cuesSD.length > 0) {
+      let cue = cuesSD.find((c) => safeSec >= c.start && safeSec < c.end);
+      if (!cue) {
+        const interval = storyboard?.interval || 5;
+        const estIdx = Math.min(cuesSD.length - 1, Math.max(0, Math.floor(safeSec / interval)));
+        cue = cuesSD[estIdx] || cuesSD[0];
+      }
+
+      if (cue) {
+        resolvedUrl = cue.url;
+        col = cue.col ?? 0;
+        row = cue.row ?? 0;
+        cols = cue.cols || 10;
+      }
     }
 
-    const interval = storyboard.interval || 5;
+    // 2. Direct Math Fallback (if no cue or cue URL is unresolved)
+    if (!resolvedUrl || !resolvedUrl.startsWith('http')) {
+      const INTERVAL = storyboard?.interval || 5;
+      const frameIndex = Math.floor(safeSec / INTERVAL);
+      const sheetIndex = Math.floor(frameIndex / 100) + 1; // 100 tiles per sheet (10x10)
+      const indexInSheet = frameIndex % 100;
+      col = indexInSheet % 10;
+      row = Math.floor(indexInSheet / 10);
+      cols = 10;
+      rows = 10;
 
-    // Tier 1: Instant Fast SD Preview (0ms latency, 10x10 grid)
-    const sdIdx = Math.min(cuesSD.length - 1, Math.max(0, Math.floor(targetSec / interval)));
-    const sdCue = cuesSD[sdIdx];
-    if (sdCue) {
-      const col = sdCue.col ?? 0;
-      const row = sdCue.row ?? 0;
-      const posX = (col / 9) * 100;
-      const posY = (row / 9) * 100;
+      const sheetPadded = String(sheetIndex).padStart(3, '0');
+      const sheetKeyStd = `sprite_${sheetPadded}.jpg`;
+      const sheetKeySD = `sprite_sd_${sheetPadded}.jpg`;
+      const sheetKeyHD = `sprite_hd_${sheetPadded}.jpg`;
 
-      elSd.style.backgroundImage = `url("${sdCue.url}")`;
+      // Lookup authenticated OneDrive downloadUrl from spriteMap
+      resolvedUrl = spriteMap[sheetKeySD] || spriteMap[sheetKeyStd] || spriteMap[sheetKeyHD]
+        || spriteMap[sheetPadded] || spriteMap[String(sheetIndex)]
+        || `/streams/${videoId}/thumbnails/sprite_${sheetPadded}.jpg`;
+    }
+
+    if (resolvedUrl) {
+      // CSS Percentage positioning: aligns exact column and row within dynamic aspect-ratio container
+      const posX = cols > 1 ? (col / (cols - 1)) * 100 : 0;
+      const posY = rows > 1 ? (row / (rows - 1)) * 100 : 0;
+
+      elSd.style.backgroundImage = `url("${resolvedUrl}")`;
       elSd.style.backgroundPosition = `${posX}% ${posY}%`;
-      elSd.style.backgroundSize = '1000% 1000%';
+      elSd.style.backgroundSize = `${cols * 100}% ${rows * 100}%`;
       elSd.style.opacity = '1';
     }
 
-    // Tier 2: Sharp HD Preview (Crossfades when pointer pauses/dwells > 300ms, 5x5 grid)
+    // Tier 2: Sharp HD Preview (Crossfades when hovering > 300ms)
     if (hdDwellTimerRef.current) {
       clearTimeout(hdDwellTimerRef.current);
       hdDwellTimerRef.current = null;
@@ -587,26 +623,31 @@ export default function VideoPlayer({
 
     const cuesHD = storyboard?.cuesHD || [];
     if (cuesHD.length > 0 && elHd) {
-      // Keep HD hidden while scrubbing fast so low-latency SD is displayed
       elHd.style.opacity = '0';
 
       hdDwellTimerRef.current = setTimeout(() => {
-        const hdIdx = Math.min(cuesHD.length - 1, Math.max(0, Math.floor(targetSec / interval)));
-        const hdCue = cuesHD[hdIdx];
+        let hdCue = cuesHD.find((c) => safeSec >= c.start && safeSec < c.end);
+        if (!hdCue) {
+          const interval = storyboard?.interval || 5;
+          const estIdx = Math.min(cuesHD.length - 1, Math.max(0, Math.floor(safeSec / interval)));
+          hdCue = cuesHD[estIdx];
+        }
+
         if (hdCue && scrubThumbHdRef.current) {
-          const col = hdCue.col ?? 0;
-          const row = hdCue.row ?? 0;
-          const posX = (col / 4) * 100;
-          const posY = (row / 4) * 100;
+          const hdCol = hdCue.col ?? 0;
+          const hdRow = hdCue.row ?? 0;
+          const hdCols = hdCue.cols || 5;
+          const posX = hdCols > 1 ? (hdCol / (hdCols - 1)) * 100 : 0;
+          const posY = hdCols > 1 ? (hdRow / (hdCols - 1)) * 100 : 0;
 
           scrubThumbHdRef.current.style.backgroundImage = `url("${hdCue.url}")`;
           scrubThumbHdRef.current.style.backgroundPosition = `${posX}% ${posY}%`;
-          scrubThumbHdRef.current.style.backgroundSize = '500% 500%';
+          scrubThumbHdRef.current.style.backgroundSize = `${hdCols * 100}% ${hdCols * 100}%`;
           scrubThumbHdRef.current.style.opacity = '1';
         }
       }, 300);
     }
-  }, [storyboard]);
+  }, [storyboard, videoId]);
 
   // Scrubbing calculation
   const calculateScrubPosition = (clientX) => {
@@ -683,7 +724,7 @@ export default function VideoPlayer({
   // - 0% - 35% (Left): Double Click/Tap = Seek -10s with left animated ripple
   // - 65% - 100% (Right): Double Click/Tap = Seek +10s with right animated ripple
   // - 35% - 65% (Center): Double Click/Tap = Toggle Fullscreen
-  // - Single Click anywhere: Toggles Play/Pause (debounced by ~250ms to prevent pause misfire during double-click)
+  // - Single Click anywhere: Toggles Play/Pause (debounced by ~220ms to completely eliminate pause stutter during double-click)
   const handlePlayerOverlayClick = (e) => {
     if (contextMenu) {
       setContextMenu(null);
@@ -697,10 +738,10 @@ export default function VideoPlayer({
     const now = Date.now();
 
     const prev = clickStateRef.current;
-    const isDouble = (now - prev.time < 280) && (prev.zone === zone || (zone === 'center' && prev.zone === 'center'));
+    const isDouble = (e.detail >= 2) || ((now - prev.time < 280) && (prev.zone === zone || (zone === 'center' && prev.zone === 'center')));
 
     if (isDouble) {
-      // Cancel pending single click!
+      // Cancel pending single click immediately! (Play/Pause will NEVER be triggered)
       if (singleClickTimerRef.current) {
         clearTimeout(singleClickTimerRef.current);
         singleClickTimerRef.current = null;
@@ -751,15 +792,18 @@ export default function VideoPlayer({
       return;
     }
 
-    // First click: record state and start debounce timer (~250ms)
+    // First click: cancel any previous timeout, record state, and debounce Play/Pause by ~220ms
+    if (singleClickTimerRef.current) {
+      clearTimeout(singleClickTimerRef.current);
+      singleClickTimerRef.current = null;
+    }
     clickStateRef.current = { time: now, zone };
-    if (singleClickTimerRef.current) clearTimeout(singleClickTimerRef.current);
 
     singleClickTimerRef.current = setTimeout(() => {
       togglePlay();
       singleClickTimerRef.current = null;
       clickStateRef.current = { time: 0, zone: null };
-    }, 250);
+    }, 220);
   };
 
   // YouTube-Style Right-Click Context Menu
@@ -1448,7 +1492,7 @@ export default function VideoPlayer({
             {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
             <div
               ref={scrubPreviewRef}
-              className={`absolute bottom-7 -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
+              className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
                 (isScrubbing || isHoveringSeek)
                   ? 'opacity-100 scale-100 translate-y-0'
                   : 'opacity-0 scale-90 translate-y-2 pointer-events-none'

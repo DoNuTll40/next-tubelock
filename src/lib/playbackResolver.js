@@ -39,6 +39,25 @@ function parseVttTimeToSeconds(timeStr) {
   return Number(timeStr) || 0;
 }
 
+function resolveSpriteUrl(spriteMap, fileName) {
+  if (!spriteMap || !fileName) return fileName;
+  const clean = fileName.replace(/^\.?\//, '').trim();
+  if (spriteMap[clean]) return spriteMap[clean];
+  const lower = clean.toLowerCase();
+  if (spriteMap[lower]) return spriteMap[lower];
+  if (lower.includes('_sd_') && spriteMap[lower.replace('_sd_', '_')]) {
+    return spriteMap[lower.replace('_sd_', '_')];
+  }
+  if (!lower.includes('_sd_') && spriteMap[lower.replace('sprite_', 'sprite_sd_')]) {
+    return spriteMap[lower.replace('sprite_', 'sprite_sd_')];
+  }
+  const match = lower.match(/(\d+)\./);
+  if (match && spriteMap[match[1]]) {
+    return spriteMap[match[1]];
+  }
+  return fileName;
+}
+
 async function parseSingleVtt(vttUrl, spriteMap, defaultW, defaultH, colsCount) {
   try {
     const res = await fetch(vttUrl);
@@ -58,7 +77,7 @@ async function parseSingleVtt(vttUrl, spriteMap, defaultW, defaultH, colsCount) 
         const [fileName, frag] = cueMediaLine.split('#xywh=');
         if (!frag) continue;
         const [x, y, w, h] = frag.split(',').map(Number);
-        const resolvedSpriteUrl = spriteMap[fileName] || fileName;
+        const resolvedSpriteUrl = resolveSpriteUrl(spriteMap, fileName);
 
         cues.push({
           start: parseVttTimeToSeconds(startStr),
@@ -99,6 +118,17 @@ export async function resolveStoryboard(items) {
       vttDefault = item;
     } else if (lower.startsWith('sprite_') && (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp') || lower.endsWith('.png'))) {
       spriteMap[item.name] = item.downloadUrl;
+      spriteMap[lower] = item.downloadUrl;
+      if (lower.includes('_sd_')) {
+        spriteMap[lower.replace('_sd_', '_')] = item.downloadUrl;
+      } else if (!lower.includes('_hd_')) {
+        spriteMap[lower.replace('sprite_', 'sprite_sd_')] = item.downloadUrl;
+      }
+      const match = lower.match(/(\d+)\./);
+      if (match) {
+        spriteMap[match[1]] = item.downloadUrl;
+        spriteMap[String(parseInt(match[1], 10))] = item.downloadUrl;
+      }
     }
   }
 
@@ -116,6 +146,7 @@ export async function resolveStoryboard(items) {
       cues: activeCues, // Default SD
       cuesSD: cuesSD || activeCues,
       cuesHD: cuesHD || null,
+      spriteMap,
       interval: activeCues.length > 1 ? Math.max(1, activeCues[1].start - activeCues[0].start) : 5,
     };
   } catch (err) {
