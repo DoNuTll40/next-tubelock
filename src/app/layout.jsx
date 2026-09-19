@@ -2,6 +2,7 @@ import "./globals.css";
 import { ViewModeProvider } from "@/context/ViewModeContext";
 import { SidebarProvider } from "@/context/SidebarContext";
 import AppShell from "@/components/AppShell";
+import DevTools from "@/components/DevTools";
 
 export const metadata = {
   title: "TubeLock - Private HLS Streaming",
@@ -17,6 +18,7 @@ export default function RootLayout({ children }) {
             <AppShell>{children}</AppShell>
           </SidebarProvider>
         </ViewModeProvider>
+        <DevTools />
       </body>
     </html>
   );
