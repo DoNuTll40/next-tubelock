@@ -11,7 +11,7 @@ const sourceCache = globalThis.__tubelock_source_cache || (globalThis.__tubelock
 const inFlightRequests = globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
 
 const EDGE_CACHE_HEADERS = {
-  'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
+  'Cache-Control': 'public, max-age=0, s-maxage=3600, stale-while-revalidate=1800',
   'CDN-Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
   'Vercel-CDN-Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
 };
@@ -31,7 +31,7 @@ export async function GET(request, context) {
 
     // ⚡ 1. Ultra-fast Cache Hit (<1ms)
     const cached = sourceCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0) {
       return NextResponse.json(cached.data, { headers: EDGE_CACHE_HEADERS });
     }
 
@@ -76,7 +76,8 @@ export async function GET(request, context) {
       // Case 1: HLS Stream Folder
       if (video.source_type === 'hls' || video.onedrive_folder_id) {
         const folderId = video.onedrive_folder_id || video.onedrive_item_id;
-        let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$select=name,@microsoft.graph.downloadUrl&$top=1000`;
+        // Do NOT use $select here: Graph API strips @microsoft.graph.downloadUrl if $select is present!
+        let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$top=1000`;
         const allItems = [];
 
         while (nextUrl) {
@@ -91,14 +92,22 @@ export async function GET(request, context) {
           nextUrl = data['@odata.nextLink'] || null;
         }
 
+        const validItems = allItems
+          .filter(i => i.name && i['@microsoft.graph.downloadUrl'])
+          .map(i => ({
+            name: i.name,
+            downloadUrl: i['@microsoft.graph.downloadUrl'],
+          }));
+
+        if (validItems.length === 0) {
+          throw new Error('ไม่พบไฟล์ที่พร้อมเล่นในโฟลเดอร์ HLS จาก OneDrive');
+        }
+
         const resultData = {
           success: true,
           type: 'hls',
           video,
-          items: allItems.map(i => ({
-            name: i.name,
-            downloadUrl: i['@microsoft.graph.downloadUrl'],
-          })),
+          items: validItems,
         };
 
         // Cache for 60 minutes

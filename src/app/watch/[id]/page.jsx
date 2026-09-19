@@ -84,8 +84,8 @@ export default function WatchPage() {
           })
           .catch(() => {});
 
-        // ⚡ Step 3: Fetch Stream Source from OneDrive (cached on server in 50ms)
-        const sourceRes = await fetch(`/api/videos/${id}/source`);
+        // ⚡ Step 3: Fetch Stream Source from OneDrive (Edge CDN cached on server)
+        const sourceRes = await fetch(`/api/videos/${id}/source`, { cache: 'no-store' });
         if (!sourceRes.ok) {
           const errData = await sourceRes.json().catch(() => ({}));
           throw new Error(errData.error || `ไม่สามารถโหลดวิดีโอได้ (รหัส ${sourceRes.status})`);
