@@ -23,6 +23,84 @@ async function rewriteSubPlaylistToBlobUrl(subPlaylistUrl, segmentUrlMap) {
   return URL.createObjectURL(blob);
 }
 
+function parseVttTimeToSeconds(timeStr) {
+  if (!timeStr) return 0;
+  const parts = timeStr.split(':');
+  if (parts.length === 3) {
+    const [h, m, rest] = parts;
+    const [s, ms] = (rest || '').split('.');
+    return Number(h) * 3600 + Number(m) * 60 + Number(s) + Number(ms || 0) / 1000;
+  }
+  if (parts.length === 2) {
+    const [m, rest] = parts;
+    const [s, ms] = (rest || '').split('.');
+    return Number(m) * 60 + Number(s) + Number(ms || 0) / 1000;
+  }
+  return Number(timeStr) || 0;
+}
+
+export async function resolveStoryboard(items) {
+  if (!Array.isArray(items)) return null;
+
+  let vttItem = null;
+  const spriteMap = {};
+
+  for (const item of items) {
+    if (!item.downloadUrl) continue;
+    const lower = item.name.toLowerCase();
+    if (lower === 'thumbnails.vtt' || lower.endsWith('.vtt')) {
+      vttItem = item;
+    } else if (lower.startsWith('sprite_') && (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.webp') || lower.endsWith('.png'))) {
+      spriteMap[item.name] = item.downloadUrl;
+    }
+  }
+
+  if (!vttItem) return null;
+
+  try {
+    const res = await fetch(vttItem.downloadUrl);
+    if (!res.ok) return null;
+    const text = await res.text();
+
+    const cues = [];
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes('-->')) {
+        const [startStr, endStr] = line.split('-->').map((s) => s.trim());
+        const cueMediaLine = lines[i + 1];
+        if (!cueMediaLine) continue;
+
+        const [fileName, frag] = cueMediaLine.split('#xywh=');
+        if (!frag) continue;
+        const [x, y, w, h] = frag.split(',').map(Number);
+        const resolvedSpriteUrl = spriteMap[fileName] || fileName;
+
+        cues.push({
+          start: parseVttTimeToSeconds(startStr),
+          end: parseVttTimeToSeconds(endStr),
+          url: resolvedSpriteUrl,
+          x,
+          y,
+          w: w || 160,
+          h: h || 90,
+          col: Math.round(x / (w || 160)),
+          row: Math.round(y / (h || 90)),
+        });
+      }
+    }
+
+    return {
+      cues,
+      interval: cues.length > 1 ? Math.max(1, cues[1].start - cues[0].start) : 5,
+    };
+  } catch (err) {
+    console.warn('[Storyboard Resolver Warning]:', err.message);
+    return null;
+  }
+}
+
 export async function resolveClientPlaybackSource(sourceData) {
   if (!sourceData) throw new Error('ไม่พบข้อมูล Source');
 
@@ -32,12 +110,14 @@ export async function resolveClientPlaybackSource(sourceData) {
       type: 'mp4',
       url: sourceData.url,
       blobUrls: [],
+      storyboard: null,
     };
   }
 
   // Case 2: HLS Stream from OneDrive items
   if (sourceData.type === 'hls' && Array.isArray(sourceData.items)) {
     const items = sourceData.items;
+    const storyboard = await resolveStoryboard(items);
     const segmentUrlMap = {};
     const subPlaylistItems = {};
     let masterPlaylistItem = null;
@@ -99,6 +179,7 @@ export async function resolveClientPlaybackSource(sourceData) {
         type: 'hls',
         url: masterBlobUrl,
         blobUrls: createdBlobUrls,
+        storyboard,
       };
     }
 
@@ -115,6 +196,7 @@ export async function resolveClientPlaybackSource(sourceData) {
       type: 'hls',
       url: singleBlobUrl,
       blobUrls: createdBlobUrls,
+      storyboard,
     };
   }
 

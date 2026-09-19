@@ -22,6 +22,7 @@ export default function WatchPage() {
   const [relatedVideos, setRelatedVideos] = useState([]);
   const [playerConfig, setPlayerConfig] = useState(null);
   const [streamUrl, setStreamUrl] = useState('');
+  const [storyboard, setStoryboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -85,6 +86,7 @@ export default function WatchPage() {
         }
 
         setStreamUrl(resolved.url);
+        setStoryboard(resolved.storyboard || null);
 
         // 3. Fetch Related Videos
         const listRes = await fetch('/api/videos');
@@ -210,6 +212,7 @@ export default function WatchPage() {
               <VideoPlayer
                 src={streamUrl}
                 poster={video.thumbnail_url}
+                storyboard={storyboard}
                 resolution={video.resolution}
                 fps={video.fps}
                 codec={video.codec}

@@ -13,6 +13,7 @@ import { formatResolutionBadge } from '@/lib/videoUtils';
 export default function VideoPlayer({ 
   src, 
   poster, 
+  storyboard = null,
   resolution,
   fps,
   codec = 'h264',
@@ -98,12 +99,9 @@ export default function VideoPlayer({
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
   const [hoverTime, setHoverTime] = useState(0);
   const [hoverPercent, setHoverPercent] = useState(0);
-  const scrubVideoRef = useRef(null);
-  const scrubHlsRef = useRef(null);
   const scrubPreviewRef = useRef(null);
   const scrubBadgeRef = useRef(null);
-  const [scrubFrameLoaded, setScrubFrameLoaded] = useState(false);
-  const scrubThrottleTimerRef = useRef(null);
+  const scrubThumbSpriteRef = useRef(null);
 
   // Double Tap Seeking
   const [doubleTapSide, setDoubleTapSide] = useState(null);
@@ -329,99 +327,6 @@ export default function VideoPlayer({
     }
   }, [isPlaying, isScrubbing, showSettingsMenu, showStats]);
 
-  // Lightweight HLS setup for Timeline Thumbnail Scrub Preview
-  const setupScrubHls = useCallback(async (mediaSrc) => {
-    const sv = scrubVideoRef.current;
-    if (!sv || !mediaSrc) return;
-    const isHls = mediaSrc.startsWith('blob:') || mediaSrc.includes('.m3u8') || mediaSrc.includes('playlist');
-
-    if (isHls) {
-      try {
-        const { default: Hls } = await import('hls.js');
-        if (Hls.isSupported()) {
-          if (scrubHlsRef.current) {
-            scrubHlsRef.current.destroy();
-            scrubHlsRef.current = null;
-          }
-          const sHls = new Hls({
-            maxBufferLength: 4,
-            maxMaxBufferLength: 8,
-            enableWorker: true,
-            startLevel: 0,
-            capLevelToPlayerSize: true,
-            lowLatencyMode: false,
-            backBufferLength: 4,
-          });
-          sHls.loadSource(mediaSrc);
-          sHls.attachMedia(sv);
-          sHls.on(Hls.Events.MANIFEST_PARSED, (e, d) => {
-            if (d.levels && d.levels.length > 0) {
-              let minIdx = 0;
-              let minH = d.levels[0].height || 9999;
-              d.levels.forEach((lvl, idx) => {
-                if (lvl.height && lvl.height < minH) {
-                  minH = lvl.height;
-                  minIdx = idx;
-                }
-              });
-              sHls.currentLevel = minIdx;
-              sHls.loadLevel = minIdx;
-            }
-          });
-          sHls.on(Hls.Events.ERROR, (event, data) => {
-            if (data.fatal) {
-              switch (data.type) {
-                case Hls.ErrorTypes.NETWORK_ERROR:
-                  try { sHls.startLoad(); } catch (_) {}
-                  break;
-                case Hls.ErrorTypes.MEDIA_ERROR:
-                  try { sHls.recoverMediaError(); } catch (_) {}
-                  break;
-                default:
-                  try {
-                    sHls.destroy();
-                    scrubHlsRef.current = null;
-                  } catch (_) {}
-                  break;
-              }
-            }
-          });
-          scrubHlsRef.current = sHls;
-        } else if (sv.canPlayType('application/vnd.apple.mpegurl')) {
-          sv.src = mediaSrc;
-        }
-      } catch (err) {
-        console.warn('Scrub HLS init error:', err);
-      }
-    } else {
-      sv.src = mediaSrc;
-    }
-  }, []);
-
-  // Handle Tab Switch (Visibility Change) to prevent black frame freeze
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        if (scrubHlsRef.current) {
-          try {
-            scrubHlsRef.current.startLoad();
-            scrubHlsRef.current.recoverMediaError();
-          } catch (_) {}
-        } else if (src) {
-          setupScrubHls(src);
-        }
-        if (scrubVideoRef.current) {
-          try {
-            const cur = scrubVideoRef.current.currentTime || 0;
-            scrubVideoRef.current.currentTime = Math.max(0, cur);
-          } catch (_) {}
-        }
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [src, setupScrubHls]);
-
   // Initialize HLS or Native Player
   useEffect(() => {
     const v = video.current;
@@ -528,17 +433,13 @@ export default function VideoPlayer({
               }
             }
           });
-          // Setup scrub preview stream
-          setupScrubHls(src);
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
           // Native Safari Apple hardware acceleration
           v.src = src;
-          setupScrubHls(src);
         }
       } else {
         // Direct MP4 - Clean Native Playback
         v.src = src;
-        setupScrubHls(src);
         if (defaultAutoplay && !isUserPausedRef.current) {
           v.play().then(() => setIsPlaying(true)).catch(() => {
             v.muted = true;
@@ -556,10 +457,6 @@ export default function VideoPlayer({
       if (hlsInstanceRef.current) {
         hlsInstanceRef.current.destroy();
         hlsInstanceRef.current = null;
-      }
-      if (scrubHlsRef.current) {
-        scrubHlsRef.current.destroy();
-        scrubHlsRef.current = null;
       }
     };
   }, [src, defaultAutoplay, resolution, video, showToast]);
@@ -640,37 +537,31 @@ export default function VideoPlayer({
     pendingTargetTimeRef.current = null;
   }, [duration, video]);
 
-  // Throttled frame seeking for thumbnail preview
-  const updateScrubPreviewTime = useCallback((targetSec) => {
-    if (!scrubVideoRef.current || isNaN(targetSec)) return;
-    if (scrubThrottleTimerRef.current) clearTimeout(scrubThrottleTimerRef.current);
-    scrubThrottleTimerRef.current = setTimeout(() => {
-      const sv = scrubVideoRef.current;
-      if (!sv) return;
+  // YouTube-Style Sprite Sheet Thumbnail Lookup (Direct DOM)
+  const updateStoryboardThumbnail = useCallback((targetSec) => {
+    if (!scrubThumbSpriteRef.current) return;
+    const el = scrubThumbSpriteRef.current;
 
-      // Resume HLS loading if paused/suspended in background
-      if (scrubHlsRef.current) {
-        try {
-          scrubHlsRef.current.startLoad();
-        } catch (_) {}
-      } else if (src) {
-        setupScrubHls(src);
-      }
+    if (!storyboard?.cues || storyboard.cues.length === 0) {
+      el.style.opacity = '0';
+      return;
+    }
 
-      if (Math.abs(sv.currentTime - targetSec) > 0.1) {
-        try {
-          sv.currentTime = targetSec;
-        } catch (_) {
-          try {
-            if (scrubHlsRef.current) {
-              scrubHlsRef.current.recoverMediaError();
-              sv.currentTime = targetSec;
-            }
-          } catch (_) {}
-        }
-      }
-    }, 25);
-  }, [src, setupScrubHls]);
+    const interval = storyboard.interval || 5;
+    const idx = Math.min(storyboard.cues.length - 1, Math.max(0, Math.floor(targetSec / interval)));
+    const cue = storyboard.cues[idx];
+    if (!cue) return;
+
+    const col = cue.col ?? 0;
+    const row = cue.row ?? 0;
+    const posX = (col / 9) * 100;
+    const posY = (row / 9) * 100;
+
+    el.style.backgroundImage = `url("${cue.url}")`;
+    el.style.backgroundPosition = `${posX}% ${posY}%`;
+    el.style.backgroundSize = '1000% 1000%';
+    el.style.opacity = '1';
+  }, [storyboard]);
 
   // Scrubbing calculation
   const calculateScrubPosition = (clientX) => {
@@ -694,7 +585,7 @@ export default function VideoPlayer({
 
     setPreviewPercent(percent);
     setPreviewTime(calculatedSec);
-    updateScrubPreviewTime(calculatedSec);
+    updateStoryboardThumbnail(calculatedSec);
   };
 
   const handleSeekMouseMove = (e) => {
@@ -716,7 +607,7 @@ export default function VideoPlayer({
 
     setHoverPercent(pct);
     setHoverTime(time);
-    updateScrubPreviewTime(time);
+    updateStoryboardThumbnail(time);
     if (isScrubbing) {
       calculateScrubPosition(e.clientX);
     }
@@ -1391,17 +1282,14 @@ export default function VideoPlayer({
                     className="absolute inset-0 w-full h-full object-cover opacity-75"
                   />
                 )}
-                {/* Real-time Decoded Video Frame */}
-                <video
-                  ref={scrubVideoRef}
-                  muted
-                  playsInline
-                  preload="auto"
-                  onLoadedData={() => setScrubFrameLoaded(true)}
-                  onSeeked={() => setScrubFrameLoaded(true)}
-                  className={`w-full h-full object-cover transition-opacity duration-150 relative z-10 ${
-                    scrubFrameLoaded ? 'opacity-100' : 'opacity-0'
-                  }`}
+                {/* YouTube-Style WebVTT Sprite Sheet Thumbnail Box */}
+                <div
+                  ref={scrubThumbSpriteRef}
+                  className="absolute inset-0 w-full h-full bg-no-repeat transition-opacity duration-75 relative z-10 opacity-0"
+                  style={{
+                    backgroundSize: '1000% 1000%',
+                    backgroundPosition: '0% 0%',
+                  }}
                 />
                 {/* Subtle vignette */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none z-20" />

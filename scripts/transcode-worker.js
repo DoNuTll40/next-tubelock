@@ -65,6 +65,9 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
       if (extra.master_playlist_path) {
         await sql`UPDATE videos SET master_playlist_path = ${extra.master_playlist_path} WHERE id = ${vidNum};`;
       }
+      if (extra.storyboard_vtt_path) {
+        await sql`UPDATE videos SET storyboard_vtt_path = ${extra.storyboard_vtt_path} WHERE id = ${vidNum};`;
+      }
       if (extra.duration) {
         await sql`UPDATE videos SET duration = ${extra.duration} WHERE id = ${vidNum};`;
       }
@@ -327,6 +330,37 @@ function buildMasterM3U8(qualities) {
   return lines.join('\n') + '\n';
 }
 
+function formatVttTime(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.floor((sec % 1) * 1000);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+}
+
+function generateWebVTT({ duration, interval = 5, cols = 10, rows = 10, width = 160, height = 90 }) {
+  const totalFrames = Math.max(1, Math.ceil(duration / interval));
+  const tilesPerSheet = cols * rows;
+  let vtt = 'WEBVTT\n\n';
+
+  for (let i = 0; i < totalFrames; i++) {
+    const startSec = i * interval;
+    const endSec = Math.min((i + 1) * interval, duration);
+    const sheetIdx = Math.floor(i / tilesPerSheet) + 1;
+    const sheetName = `sprite_${String(sheetIdx).padStart(3, '0')}.jpg`;
+    const indexInSheet = i % tilesPerSheet;
+    const col = indexInSheet % cols;
+    const row = Math.floor(indexInSheet / cols);
+    const x = col * width;
+    const y = row * height;
+
+    vtt += `${formatVttTime(startSec)} --> ${formatVttTime(endSec)}\n`;
+    vtt += `${sheetName}#xywh=${x},${y},${width},${height}\n\n`;
+  }
+
+  return vtt;
+}
+
 // 4. Main Progressive Worker
 async function main() {
   const tempDir = path.resolve('./temp_transcode', String(VIDEO_ID));
@@ -493,8 +527,32 @@ async function main() {
     const masterPath = path.join(hlsOutputDir, 'master.m3u8');
     fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
-    // Upload 144p files + master.m3u8
-    const pass1Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('144p') || f === 'master.m3u8');
+    // Generate YouTube-style Storyboard Sprite Sheet & WebVTT metadata
+    console.log('📸 Generating YouTube-style Storyboard Sprite Sheets & WebVTT...');
+    const spritePattern = path.join(hlsOutputDir, 'sprite_%03d.jpg');
+    let hasStoryboard = false;
+    try {
+      await runFFmpeg([
+        '-y',
+        '-ss', '0',
+        '-i', rawFilePath,
+        '-vf', 'fps=1/5,scale=160:90,tile=10x10',
+        '-q:v', '3',
+        '-an',
+        spritePattern,
+      ]);
+      const vttContent = generateWebVTT({ duration, interval: 5, cols: 10, rows: 10, width: 160, height: 90 });
+      fs.writeFileSync(path.join(hlsOutputDir, 'thumbnails.vtt'), vttContent);
+      hasStoryboard = true;
+      console.log('✅ Storyboard Sprite Sheets and thumbnails.vtt created successfully!');
+    } catch (spriteErr) {
+      console.warn('⚠️ Storyboard generation warning:', spriteErr.message);
+    }
+
+    // Upload 144p files + master.m3u8 + thumbnails/sprites
+    const pass1Files = fs.readdirSync(hlsOutputDir).filter((f) => 
+      f.includes('144p') || f === 'master.m3u8' || f === 'thumbnails.vtt' || f.startsWith('sprite_')
+    );
     for (const f of pass1Files) {
       await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
     }
@@ -508,6 +566,7 @@ async function main() {
       extra: {
         onedrive_folder_id: streamFolderId,
         master_playlist_path: masterPlaylistPath,
+        storyboard_vtt_path: hasStoryboard ? `/streams/stream_vid_${VIDEO_ID}/thumbnails.vtt` : null,
         duration,
         resolution: resolutionLabel,
         fps,
