@@ -39,7 +39,7 @@ export async function POST(request) {
     const finalRawFileName = rawFileName || currentVideo.raw_file_name;
     const finalTitle = title || currentVideo.title;
 
-    // 2. Mark as QUEUED in Neon DB
+    // 2. Mark as QUEUED in Neon DB and save comprehensive client metadata
     await sql`
       UPDATE videos 
       SET 
@@ -49,6 +49,10 @@ export async function POST(request) {
         title = ${finalTitle},
         raw_file_name = ${finalRawFileName},
         duration = CASE WHEN ${clientMeta.duration || 0} > 0 THEN ${Math.floor(clientMeta.duration || 0)} ELSE duration END,
+        resolution = CASE WHEN ${clientMeta.resolution || ''} <> '' THEN ${clientMeta.resolution} ELSE resolution END,
+        fps = CASE WHEN ${clientMeta.fps || 0} > 0 THEN ${clientMeta.fps} ELSE fps END,
+        codec = CASE WHEN ${clientMeta.codec || ''} <> '' THEN ${clientMeta.codec} ELSE codec END,
+        thumbnail_url = CASE WHEN ${clientMeta.thumbnailDataUrl || ''} <> '' THEN ${clientMeta.thumbnailDataUrl} ELSE thumbnail_url END,
         updated_at = NOW()
       WHERE id = ${videoId};
     `;
