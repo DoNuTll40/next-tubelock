@@ -319,9 +319,10 @@ function runFFmpeg(args, onProgress) {
 }
 
 function buildMasterM3U8(qualities) {
-  // qualities is array of objects: { name: '480p', width: 854, height: 480, bitrate: 1000000 }
+  // Sort descending by bitrate so highest resolution is at top
+  const sorted = [...qualities].sort((a, b) => b.bitrate - a.bitrate);
   let lines = ['#EXTM3U', '#EXT-X-VERSION:3'];
-  for (const q of qualities) {
+  for (const q of sorted) {
     lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height}`);
     lines.push(`${q.name}.m3u8`);
   }
@@ -405,7 +406,7 @@ async function main() {
     const duration = Math.round(parseFloat(probeData.format?.duration || vStream.duration || '0'));
     const fps = vStream.r_frame_rate ? Math.round(eval(vStream.r_frame_rate) || 30) : 30;
     const codec = vStream.codec_name || 'h264';
-    const resolutionLabel = srcHeight >= 2160 ? '4K' : srcHeight >= 1080 ? '1080p' : srcHeight >= 720 ? '720p' : '480p';
+    const resolutionLabel = (srcHeight >= 2160 || srcWidth >= 3840) ? '4K' : (srcHeight >= 1440 || srcWidth >= 2560) ? '2K' : srcHeight >= 1080 ? '1080p' : srcHeight >= 720 ? '720p' : '480p';
 
     console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, codec: ${codec}`);
 
@@ -598,7 +599,87 @@ async function main() {
     }
 
     // =========================================================================
-    // PASS 4: Cleanup raw file & Mark 100% complete
+    // PASS 4: 1440p (2K Quad HD) in background (if source >= 1440p)
+    // =========================================================================
+    if (srcHeight >= 1440 || srcWidth >= 2560) {
+      console.log('⚡ Slicing 1440p (2K) in background...');
+      await runFFmpeg([
+        '-y', '-i', rawFilePath,
+        '-vf', 'scale=w=2560:h=1440:force_original_aspect_ratio=decrease,pad=2560:1440:(ow-iw)/2:(oh-ih)/2',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '8500k', '-maxrate', '9500k', '-bufsize', '14000k',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-f', 'hls',
+        '-hls_time', '6',
+        '-hls_playlist_type', 'vod',
+        '-hls_flags', 'independent_segments',
+        '-hls_segment_type', 'mpegts',
+        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_1440p_%03d.ts'),
+        path.join(hlsOutputDir, '1440p.m3u8'),
+      ], (sec) => {
+        if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+          lastProgressUpdate = Date.now();
+          const pct = Math.min(99, Math.round((sec / duration) * 100));
+          const overall = Math.min(92, 80 + Math.round(pct * 0.12));
+          updateDbStatus({
+            status: 'READY',
+            progress: overall,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 2K Quad HD (1440p): ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+          });
+        }
+      });
+
+      readyQualities.unshift({ name: '1440p', width: 2560, height: 1440, bitrate: 8500000 });
+      fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
+
+      const pass4Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1440p') || f === 'master.m3u8');
+      for (const f of pass4Files) {
+        await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
+      }
+      console.log('✅ 1440p (2K) uploaded and master.m3u8 updated.');
+    }
+
+    // =========================================================================
+    // PASS 5: 2160p (4K Ultra HD) in background (if source >= 2160p)
+    // =========================================================================
+    if (srcHeight >= 2160 || srcWidth >= 3840) {
+      console.log('⚡ Slicing 2160p (4K UHD) in background...');
+      await runFFmpeg([
+        '-y', '-i', rawFilePath,
+        '-vf', 'scale=w=3840:h=2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '14000k', '-maxrate', '16000k', '-bufsize', '24000k',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-f', 'hls',
+        '-hls_time', '6',
+        '-hls_playlist_type', 'vod',
+        '-hls_flags', 'independent_segments',
+        '-hls_segment_type', 'mpegts',
+        '-hls_segment_filename', path.join(hlsOutputDir, 'stream_2160p_%03d.ts'),
+        path.join(hlsOutputDir, '2160p.m3u8'),
+      ], (sec) => {
+        if (Date.now() - lastProgressUpdate > 3000 && duration > 0) {
+          lastProgressUpdate = Date.now();
+          const pct = Math.min(99, Math.round((sec / duration) * 100));
+          const overall = Math.min(98, 91 + Math.round(pct * 0.07));
+          updateDbStatus({
+            status: 'READY',
+            progress: overall,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 4K UHD (2160p): ${pct}% (แปลงได้ ${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+          });
+        }
+      });
+
+      readyQualities.unshift({ name: '2160p', width: 3840, height: 2160, bitrate: 14000000 });
+      fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
+
+      const pass5Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('2160p') || f === 'master.m3u8');
+      for (const f of pass5Files) {
+        await uploadFileToOneDrive(token, driveId, streamFolderId, f, path.join(hlsOutputDir, f));
+      }
+      console.log('✅ 2160p (4K UHD) uploaded and master.m3u8 updated.');
+    }
+
+    // =========================================================================
+    // FINAL PASS: Cleanup raw file & Mark 100% complete
     // =========================================================================
     try {
       console.log(`🗑️ Deleting raw file /raw/${RAW_FILE_NAME}...`);

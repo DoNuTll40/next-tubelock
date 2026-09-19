@@ -1,7 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 
 /**
- * Shared Neon DB client with URL sanitization
+ * Shared Neon DB client
  */
 export function getDb() {
   let url = process.env.DATABASE_URL || process.env.NEXT_DATABASE_URL;
@@ -9,13 +9,9 @@ export function getDb() {
     throw new Error('DATABASE_URL environment variable is not defined');
   }
 
-  // ลบ zero-width space ที่อาจติดมาตอนก๊อปปี้ URL
-  url = url.replace(/%E2%80%8B/g, '').replace(/\u200b/g, '').trim();
+  // ทำความสะอาดเฉพาะ space ทั่วไปหัวท้าย
+  url = url.trim();
 
-  // ปรับชื่อ database เป็น neondb ถ้าเผลอใส่ mytube_db
-  if (url.includes('/mytube_db')) {
-    url = url.replace('/mytube_db', '/neondb');
-  }
-
+  // ไม่ต้องแทนที่ /mytube_db เป็น /neondb แล้ว ให้เชื่อมต่อตรงตาม URL ที่ตั้งไว้
   return neon(url);
 }

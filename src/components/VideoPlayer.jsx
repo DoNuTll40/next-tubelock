@@ -1101,7 +1101,7 @@ export default function VideoPlayer({
                 {currentLevelIndex === -1 && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
               </button>
 
-              {levels.map((lvl) => {
+              {[...levels].sort((a, b) => (b.height || 0) - (a.height || 0)).map((lvl) => {
                 const isSelected = currentLevelIndex === lvl.index;
                 return (
                   <button
