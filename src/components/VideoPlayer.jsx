@@ -1077,6 +1077,22 @@ export default function VideoPlayer({
   const isHD = is4K || (resolution && (resolution.toString().includes('1080') || resolution.toString().includes('720') || resolution.toString().includes('1440'))) ||
                (activeLevelLabel && (activeLevelLabel.includes('1080') || activeLevelLabel.includes('720') || activeLevelLabel.includes('1440')));
 
+  // Persistent progress and time values (Prevents flicker/reset to 0% and 00:00 on state re-render!)
+  const currentVideoTime = video.current?.currentTime || 0;
+  const currentProgressPct = duration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / duration) * 100)) : 0;
+  const currentTimeDisplay = `${formatTime(currentVideoTime)} / ${formatTime(duration)}`;
+
+  let initialBufferPct = 0;
+  if (video.current && duration > 0) {
+    const b = video.current.buffered;
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) <= currentVideoTime && currentVideoTime <= b.end(i)) {
+        initialBufferPct = Math.min((b.end(i) / duration) * 100, 100);
+        break;
+      }
+    }
+  }
+
   return (
     <div 
       ref={containerRef}
@@ -1776,100 +1792,103 @@ export default function VideoPlayer({
       )}
 
       {/* Modern High-Performance Bottom Controls Bar */}
-      {(showControls || !isPlaying || isScrubbing) && (
+      <div 
+        className={`absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-all duration-200 ${
+          (showControls || !isPlaying || isScrubbing)
+            ? 'opacity-100 pointer-events-auto translate-y-0'
+            : 'opacity-0 pointer-events-none translate-y-1'
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Seekbar with Direct DOM Updates */}
         <div 
-          className="absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-opacity duration-150"
-          onClick={(e) => e.stopPropagation()}
+          ref={seekTrackRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handleSeekMouseMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          onMouseEnter={() => setIsHoveringSeek(true)}
+          onMouseLeave={() => setIsHoveringSeek(false)}
+          className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
         >
-          {/* Seekbar with Direct DOM Updates */}
-          <div 
-            ref={seekTrackRef}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handleSeekMouseMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            onMouseEnter={() => setIsHoveringSeek(true)}
-            onMouseLeave={() => setIsHoveringSeek(false)}
-            className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
+          {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
+          <div
+            ref={scrubPreviewRef}
+            className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
+              (isScrubbing || isHoveringSeek)
+                ? 'opacity-100 scale-100 translate-y-0'
+                : 'opacity-0 scale-90 translate-y-2 pointer-events-none'
+            }`}
+            style={{ left: `${Math.max(10, Math.min(isScrubbing ? previewPercent : hoverPercent, 90))}%` }}
           >
-            {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
-            <div
-              ref={scrubPreviewRef}
-              className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
-                (isScrubbing || isHoveringSeek)
-                  ? 'opacity-100 scale-100 translate-y-0'
-                  : 'opacity-0 scale-90 translate-y-2 pointer-events-none'
-              }`}
-              style={{ left: `${Math.max(10, Math.min(isScrubbing ? previewPercent : hoverPercent, 90))}%` }}
+            {/* Preview Frame Thumbnail Card */}
+            <div 
+              className="w-44 sm:w-52 rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80"
+              style={{ aspectRatio: videoRatio }}
             >
-              {/* Preview Frame Thumbnail Card */}
-              <div 
-                className="w-44 sm:w-52 rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80"
-                style={{ aspectRatio: videoRatio }}
-              >
-                {/* Poster fallback layer: always present underneath so it NEVER turns pure black */}
-                {poster && (
-                  <img
-                    src={poster}
-                    alt="Thumbnail Preview"
-                    className="absolute inset-0 w-full h-full object-cover opacity-75"
-                  />
-                )}
-                {/* Tier 1: Fast SD Sprite Sheet Layer (0ms Scrubbing) */}
-                <div
-                  ref={scrubThumbSdRef}
-                  className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0"
-                />
-                {/* Tier 2: Sharp HD Sprite Sheet Layer (Fade in when hovering > 300ms) */}
-                <div
-                  ref={scrubThumbHdRef}
-                  className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-200"
-                />
-                {/* Subtle vignette */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none z-20" />
-              </div>
-
-              {/* Time Badge */}
-              <div 
-                ref={scrubBadgeRef}
-                className="bg-black/90 text-white border border-white/20 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold shadow-xl whitespace-nowrap backdrop-blur-md"
-              >
-                {formatTime(isScrubbing ? previewTime : hoverTime)}
-              </div>
-            </div>
-
-            {/* Progress Background Track */}
-            <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
-              {/* Buffer Track (Direct DOM) */}
-              <div 
-                ref={bufferBarRef}
-                className="absolute left-0 top-0 bottom-0 bg-white/40"
-                style={{ width: '0%' }}
-              />
-              {/* Hover Preview Track */}
-              {isHoveringSeek && !isScrubbing && (
-                <div 
-                  className="absolute left-0 top-0 bottom-0 bg-white/30"
-                  style={{ width: `${hoverPercent}%` }}
+              {/* Poster fallback layer: always present underneath so it NEVER turns pure black */}
+              {poster && (
+                <img
+                  src={poster}
+                  alt="Thumbnail Preview"
+                  className="absolute inset-0 w-full h-full object-cover opacity-75"
                 />
               )}
-              {/* Playback Progress (Direct DOM - TubeLock Orange) */}
-              <div 
-                ref={progressBarRef}
-                className="absolute left-0 top-0 bottom-0 bg-[#FF7A00]"
-                style={{ width: '0%' }}
+              {/* Tier 1: Fast SD Sprite Sheet Layer (0ms Scrubbing) */}
+              <div
+                ref={scrubThumbSdRef}
+                className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0"
               />
+              {/* Tier 2: Sharp HD Sprite Sheet Layer (Fade in when hovering > 300ms) */}
+              <div
+                ref={scrubThumbHdRef}
+                className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-200"
+              />
+              {/* Subtle vignette */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none z-20" />
             </div>
 
-            {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
+            {/* Time Badge */}
             <div 
-              ref={scrubberKnobRef}
-              className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
-                isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
-              }`}
-              style={{ left: '0%' }}
+              ref={scrubBadgeRef}
+              className="bg-black/90 text-white border border-white/20 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold shadow-xl whitespace-nowrap backdrop-blur-md"
+            >
+              {formatTime(isScrubbing ? previewTime : hoverTime)}
+            </div>
+          </div>
+
+          {/* Progress Background Track */}
+          <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
+            {/* Buffer Track (Direct DOM) */}
+            <div 
+              ref={bufferBarRef}
+              className="absolute left-0 top-0 bottom-0 bg-white/40"
+              style={{ width: `${initialBufferPct}%` }}
+            />
+            {/* Hover Preview Track */}
+            {isHoveringSeek && !isScrubbing && (
+              <div 
+                className="absolute left-0 top-0 bottom-0 bg-white/30"
+                style={{ width: `${hoverPercent}%` }}
+              />
+            )}
+            {/* Playback Progress (Direct DOM - TubeLock Orange) */}
+            <div 
+              ref={progressBarRef}
+              className="absolute left-0 top-0 bottom-0 bg-[#FF7A00]"
+              style={{ width: `${currentProgressPct}%` }}
             />
           </div>
+
+          {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
+          <div 
+            ref={scrubberKnobRef}
+            className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
+              isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
+            }`}
+            style={{ left: `${currentProgressPct}%` }}
+          />
+        </div>
 
           {/* Bottom Bar: Clean division between Desktop (Windowed & Fullscreen) and Mobile */}
           {!isMobileView ? (
@@ -1927,7 +1946,7 @@ export default function VideoPlayer({
 
                 {/* Time Display */}
                 <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 select-none font-medium ml-1">
-                  00:00 / {formatTime(duration)}
+                  {currentTimeDisplay}
                 </span>
               </div>
 
@@ -2115,7 +2134,7 @@ export default function VideoPlayer({
               {/* Left Action Buttons */}
               <div className="flex items-center gap-1.5">
                 <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 font-medium mr-1 select-none">
-                  00:00 / {formatTime(duration)}
+                  {currentTimeDisplay}
                 </span>
 
                 {/* Like */}
@@ -2235,7 +2254,7 @@ export default function VideoPlayer({
             /* ============================================================ */
             <div className="flex items-center justify-between text-white text-xs pt-0.5">
               <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-300 font-medium select-none">
-                00:00 / {formatTime(duration)}
+                {currentTimeDisplay}
               </span>
 
               <div className="flex items-center gap-1.5">
@@ -2262,7 +2281,6 @@ export default function VideoPlayer({
             </div>
           )}
         </div>
-      )}
     </div>
   );
 }
