@@ -83,6 +83,12 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
       if (extra.thumbnail_url) {
         await sql`UPDATE videos SET thumbnail_url = ${extra.thumbnail_url} WHERE id = ${vidNum};`;
       }
+      if (extra.bitrate) {
+        try {
+          await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS bitrate INTEGER;`;
+          await sql`UPDATE videos SET bitrate = ${extra.bitrate} WHERE id = ${vidNum};`;
+        } catch (_) {}
+      }
       if (extra.file_size_bytes) {
         await sql`UPDATE videos SET file_size_bytes = ${extra.file_size_bytes} WHERE id = ${vidNum};`;
       }
@@ -438,10 +444,11 @@ async function main() {
     const duration = Math.round(parseFloat(probeData.format?.duration || vStream.duration || '0'));
     const fps = vStream.r_frame_rate ? Math.round(eval(vStream.r_frame_rate) || 30) : 30;
     const codec = vStream.codec_name || 'h264';
+    const bitrate = probeData.format?.bit_rate ? Math.round(parseInt(probeData.format.bit_rate)) : (vStream.bit_rate ? Math.round(parseInt(vStream.bit_rate)) : 0);
     const resolutionLabel = (srcHeight >= 2160 || srcWidth >= 3840) ? '4K' : (srcHeight >= 1440 || srcWidth >= 2560) ? '2K' : srcHeight >= 1080 ? '1080p' : srcHeight >= 720 ? '720p' : '480p';
     const gopSize = String(fps > 0 ? Math.round(fps * 2) : 60);
 
-    console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, GOP: ${gopSize}, codec: ${codec}`);
+    console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, bitrate: ${bitrate}, GOP: ${gopSize}, codec: ${codec}`);
 
     // Create HLS Destination Folder on OneDrive
     const streamFolderName = `stream_vid_${VIDEO_ID}`;
@@ -471,19 +478,43 @@ async function main() {
     const streamFolderId = streamFolderData.id;
     const masterPlaylistPath = `/streams/${streamFolderName}/master.m3u8`;
 
-    // Step 4: Extract Video Thumbnail Poster
+    // Step 4: Extract Video Thumbnail Poster (Default 00:00:03 per requirements)
     const posterPath = path.join(hlsOutputDir, 'poster.jpg');
-    console.log('📸 Generating poster thumbnail...');
+    console.log('📸 Generating poster thumbnail (00:00:03)...');
+    const seekTime = duration > 3 ? '00:00:03' : '00:00:01';
     await runFFmpeg([
       '-y',
       '-threads', '0',
-      '-ss', Math.min(1.5, Math.max(0.5, duration * 0.1)).toFixed(1),
+      '-ss', seekTime,
       '-i', rawFilePath,
       '-vframes', '1',
       '-q:v', '2',
       posterPath,
     ]);
+
+    console.log(`⬆️ Uploading poster.jpg to OneDrive (/streams/${streamFolderName}/poster.jpg)...`);
     await uploadFileToOneDrive(token, driveId, streamFolderId, 'poster.jpg', posterPath);
+
+    // Convert poster to base64 Data URI for instant zero-lag rendering across all devices
+    const posterBase64 = fs.readFileSync(posterPath).toString('base64');
+    const thumbnailUrl = `data:image/jpeg;base64,${posterBase64}`;
+
+    // ⚡ IMMEDIATELY UPDATE METADATA AND POSTER IN NEON DB!
+    console.log('💾 Syncing full metadata and poster thumbnail to Neon DB immediately...');
+    await updateDbStatus({
+      status: 'PROCESSING',
+      progress: 25,
+      stageDetail: `วิเคราะห์สเปกสำเร็จ: ${srcWidth}x${srcHeight} (${resolutionLabel}), ${duration}s, ${fps}fps พร้อมบันทึกภาพหน้าปก`,
+      extra: {
+        duration,
+        resolution: resolutionLabel,
+        fps,
+        codec,
+        bitrate,
+        thumbnail_url: thumbnailUrl,
+        onedrive_folder_id: streamFolderId,
+      },
+    });
 
     // Track active qualities in master.m3u8
     const readyQualities = [];

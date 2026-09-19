@@ -2,8 +2,8 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Play, Pause, Volume2, VolumeX, Volume1, Maximize, Minimize, 
+import {
+  Play, Pause, Volume2, VolumeX, Volume1, Maximize, Minimize,
   Settings, Check, ChevronRight, ChevronLeft, Loader2, Info, X,
   Scan, Expand, Crop, PictureInPicture2, Copy, Activity, Zap,
   AlertTriangle, Gauge, Sparkles, ShieldCheck, RotateCcw, RotateCw,
@@ -12,9 +12,9 @@ import {
 } from 'lucide-react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
 
-export default function VideoPlayer({ 
-  src, 
-  poster, 
+export default function VideoPlayer({
+  src,
+  poster,
   storyboard = null,
   title = '',
   channelName = 'TubeLock',
@@ -29,9 +29,9 @@ export default function VideoPlayer({
   defaultFit = 'fit',
   seekStep = 10,
   autoStats = false,
-  onTimeUpdate, 
-  onLoadedMetadata, 
-  videoRef: externalVideoRef 
+  onTimeUpdate,
+  onLoadedMetadata,
+  videoRef: externalVideoRef
 }) {
   const localRef = useRef(null);
   const video = externalVideoRef || localRef;
@@ -121,7 +121,28 @@ export default function VideoPlayer({
   // Controls & Menus
   const [showControls, setShowControls] = useState(true);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const settingsMenuRef = useRef(null);
   const [activeMenuTab, setActiveMenuTab] = useState('main'); // 'main' | 'speed' | 'quality' | 'aspect'
+
+  // Click Outside to Dismiss Settings Menu (YouTube Standard)
+  useEffect(() => {
+    if (!showSettingsMenu) return;
+
+    const handlePointerDownOutside = (e) => {
+      if (settingsMenuRef.current && settingsMenuRef.current.contains(e.target)) {
+        return;
+      }
+      if (e.target?.closest?.('[data-settings-btn="true"]')) {
+        return;
+      }
+      setShowSettingsMenu(false);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownOutside);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDownOutside);
+    };
+  }, [showSettingsMenu]);
 
   // HLS ABR Levels
   const [levels, setLevels] = useState([]);
@@ -130,6 +151,11 @@ export default function VideoPlayer({
 
   // Scrubbing & Hover Preview
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const isScrubbingRef = useRef(false);
+  const latestScrubTimeRef = useRef(null);
+  useEffect(() => {
+    isScrubbingRef.current = isScrubbing;
+  }, [isScrubbing]);
   const [previewTime, setPreviewTime] = useState(0);
   const [previewPercent, setPreviewPercent] = useState(0);
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
@@ -246,7 +272,7 @@ export default function VideoPlayer({
     const dur = e.target.duration || duration;
 
     // Direct DOM manipulation - doesn't re-render the 1400 lines of React components!
-    if (dur > 0 && !isScrubbing) {
+    if (dur > 0 && !isScrubbing && !isScrubbingRef.current) {
       const pct = (cur / dur) * 100;
       if (progressBarRef.current) {
         progressBarRef.current.style.width = `${pct}%`;
@@ -402,8 +428,9 @@ export default function VideoPlayer({
 
         if (Hls.isSupported()) {
           const hls = new Hls({
-            maxBufferLength: 15, // Optimized for mobile memory
-            maxMaxBufferLength: 30,
+            startLevel: 1, // Start level (360p/480p) for instant fast start without buffering
+            maxBufferLength: 30, // YouTube standard buffer
+            maxMaxBufferLength: 60,
             enableWorker: true,
             lowLatencyMode: false,
             fragLoadingTimeOut: 25000,
@@ -436,7 +463,7 @@ export default function VideoPlayer({
               v.play().then(() => setIsPlaying(true)).catch(() => {
                 v.muted = true;
                 setIsMuted(true);
-                v.play().then(() => setIsPlaying(true)).catch(() => {});
+                v.play().then(() => setIsPlaying(true)).catch(() => { });
               });
             }
           });
@@ -492,7 +519,7 @@ export default function VideoPlayer({
           v.play().then(() => setIsPlaying(true)).catch(() => {
             v.muted = true;
             setIsMuted(true);
-            v.play().then(() => setIsPlaying(true)).catch(() => {});
+            v.play().then(() => setIsPlaying(true)).catch(() => { });
           });
         }
       }
@@ -509,10 +536,11 @@ export default function VideoPlayer({
     };
   }, [src, defaultAutoplay, resolution, video, showToast]);
 
-  // Quality selector
+  // Quality selector (Seamless switch: updates nextLevel & currentLevel without resetting stream or reloading src)
   const handleSelectQuality = (levelIdx) => {
     setCurrentLevelIndex(levelIdx);
     if (hlsInstanceRef.current) {
+      hlsInstanceRef.current.nextLevel = levelIdx;
       hlsInstanceRef.current.currentLevel = levelIdx;
       if (levelIdx === -1) {
         showToast('ความละเอียด: Auto (ปรับตามเน็ต)');
@@ -694,6 +722,8 @@ export default function VideoPlayer({
     const calculatedSec = (offsetX / rect.width) * duration;
     const clampedPercent = Math.max(10, Math.min(percent, 90));
 
+    latestScrubTimeRef.current = calculatedSec;
+
     // Zero-lag direct DOM updates!
     if (scrubPreviewRef.current) {
       scrubPreviewRef.current.style.left = `${clampedPercent}%`;
@@ -738,7 +768,8 @@ export default function VideoPlayer({
   const handlePointerDown = (e) => {
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
-    } catch (_) {}
+    } catch (_) { }
+    isScrubbingRef.current = true;
     setIsScrubbing(true);
     calculateScrubPosition(e.clientX);
   };
@@ -748,9 +779,12 @@ export default function VideoPlayer({
       if (e?.currentTarget?.hasPointerCapture?.(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
-    } catch (_) {}
-    if (isScrubbing) {
-      commitSeek(previewTime);
+    } catch (_) { }
+    if (isScrubbing || isScrubbingRef.current) {
+      const targetSec = latestScrubTimeRef.current !== null ? latestScrubTimeRef.current : previewTime;
+      commitSeek(targetSec);
+      latestScrubTimeRef.current = null;
+      isScrubbingRef.current = false;
       setIsScrubbing(false);
       resetControlsTimer();
     }
@@ -764,6 +798,10 @@ export default function VideoPlayer({
   const handlePlayerOverlayClick = (e) => {
     if (contextMenu) {
       setContextMenu(null);
+      return;
+    }
+    if (showSettingsMenu) {
+      setShowSettingsMenu(false);
       return;
     }
     if (!containerRef.current) return;
@@ -785,8 +823,8 @@ export default function VideoPlayer({
       clickStateRef.current = { time: 0, zone: null };
 
       if (zone === 'left') {
-        const currentTime = pendingTargetTimeRef.current !== null 
-          ? pendingTargetTimeRef.current 
+        const currentTime = pendingTargetTimeRef.current !== null
+          ? pendingTargetTimeRef.current
           : (video.current?.currentTime || 0);
         const target = Math.max(0, currentTime - seekStep);
         pendingTargetTimeRef.current = target;
@@ -805,8 +843,8 @@ export default function VideoPlayer({
         showToast(`-${seekStep} วินาที`);
         resetControlsTimer(4500);
       } else if (zone === 'right') {
-        const currentTime = pendingTargetTimeRef.current !== null 
-          ? pendingTargetTimeRef.current 
+        const currentTime = pendingTargetTimeRef.current !== null
+          ? pendingTargetTimeRef.current
           : (video.current?.currentTime || 0);
         const target = Math.min(duration, currentTime + seekStep);
         pendingTargetTimeRef.current = target;
@@ -926,7 +964,7 @@ export default function VideoPlayer({
           setTimeout(() => {
             try {
               window.screen.orientation.unlock();
-            } catch (_) {}
+            } catch (_) { }
           }, 600);
         }
       } catch (err) {
@@ -956,7 +994,7 @@ export default function VideoPlayer({
       if (!isFull && typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
         try {
           window.screen.orientation.unlock();
-        } catch (_) {}
+        } catch (_) { }
       }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -967,7 +1005,7 @@ export default function VideoPlayer({
       if (typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
         try {
           window.screen.orientation.unlock();
-        } catch (_) {}
+        } catch (_) { }
       }
     };
   }, []);
@@ -1072,15 +1110,18 @@ export default function VideoPlayer({
 
   const targetFpsNumber = Number(fps) || 30;
   const currentFpsNumber = Number(realtimeFps);
-  const is4K = (resolution && resolution.toString().includes('2160')) || 
-               (activeLevelLabel && (activeLevelLabel.includes('4K') || activeLevelLabel.includes('2160p')));
+  const is4K = (resolution && resolution.toString().includes('2160')) ||
+    (activeLevelLabel && (activeLevelLabel.includes('4K') || activeLevelLabel.includes('2160p')));
   const isHD = is4K || (resolution && (resolution.toString().includes('1080') || resolution.toString().includes('720') || resolution.toString().includes('1440'))) ||
-               (activeLevelLabel && (activeLevelLabel.includes('1080') || activeLevelLabel.includes('720') || activeLevelLabel.includes('1440')));
+    (activeLevelLabel && (activeLevelLabel.includes('1080') || activeLevelLabel.includes('720') || activeLevelLabel.includes('1440')));
 
   // Persistent progress and time values (Prevents flicker/reset to 0% and 00:00 on state re-render!)
   const currentVideoTime = video.current?.currentTime || 0;
   const currentProgressPct = duration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / duration) * 100)) : 0;
-  const currentTimeDisplay = `${formatTime(currentVideoTime)} / ${formatTime(duration)}`;
+  const activeScrubPercent = isScrubbing ? previewPercent : currentProgressPct;
+  const activeTimeDisplay = isScrubbing
+    ? `${formatTime(previewTime)} / ${formatTime(duration)}`
+    : `${formatTime(currentVideoTime)} / ${formatTime(duration)}`;
 
   let initialBufferPct = 0;
   if (video.current && duration > 0) {
@@ -1094,7 +1135,7 @@ export default function VideoPlayer({
   }
 
   return (
-    <div 
+    <div
       ref={containerRef}
       onContextMenu={handleContextMenu}
       onClick={() => { if (contextMenu) setContextMenu(null); }}
@@ -1105,11 +1146,10 @@ export default function VideoPlayer({
       }}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}
-      className={`relative bg-black select-none overflow-hidden group/player ${
-        isFullscreen 
-          ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none' 
-          : 'rounded-2xl border border-black/10 shadow-md'
-      } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
+      className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
+        ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
+        : 'rounded-2xl border border-black/10 shadow-md'
+        } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
         width: isFullscreen ? '100vw' : '100%',
         maxWidth: isFullscreen ? undefined : `calc(min(75vh, calc(100vh - 160px)) * ${videoRatio})`,
@@ -1132,9 +1172,9 @@ export default function VideoPlayer({
         disablePictureInPicture={false}
         disableRemotePlayback
         onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => { 
-          setIsBuffering(false); 
-          setIsPlaying(true); 
+        onPlaying={() => {
+          setIsBuffering(false);
+          setIsPlaying(true);
           isUserPausedRef.current = false;
         }}
         onPause={() => setIsPlaying(false)}
@@ -1161,13 +1201,12 @@ export default function VideoPlayer({
           updateBufferProgress();
           if (onLoadedMetadata) onLoadedMetadata(e);
         }}
-        className={`w-full h-full pointer-events-none block ${
-          aspectMode === 'crop'
-            ? 'object-cover scale-[1.08]' // ตัดแถบดำด้านบน-ล่างอย่างนุ่มนวล
-            : aspectMode === 'fill'
+        className={`w-full h-full pointer-events-none block ${aspectMode === 'crop'
+          ? 'object-cover scale-[1.08]' // ตัดแถบดำด้านบน-ล่างอย่างนุ่มนวล
+          : aspectMode === 'fill'
             ? 'object-cover'
             : 'object-contain'
-        }`}
+          }`}
         style={{
           transform: aspectMode === 'crop' ? 'scale(1.08)' : 'none',
           willChange: 'auto',
@@ -1176,15 +1215,15 @@ export default function VideoPlayer({
       />
 
       {/* Unified 3-Zone Click / Double-Click Overlay (Left -10s, Center Play/Pause/Fullscreen, Right +10s) */}
-      <div 
+      <div
         onClick={handlePlayerOverlayClick}
-        className="absolute inset-0 z-10 cursor-pointer touch-manipulation" 
+        className="absolute inset-0 z-10 cursor-pointer touch-manipulation"
       />
 
       {/* On-Screen Toast Notification */}
       {toastMessage && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 bg-[#151413]/90 text-white px-3.5 py-1.5 rounded-full border border-white/15 text-xs font-semibold shadow-xl flex items-center gap-2 pointer-events-none animate-fadeIn">
-          <Sparkles className="w-3.5 h-3.5 text-[#FF7A00]" />
+        <div className="absolute top-10 left-1/2 -translate-x-1/2 z-40 bg-[#151413]/40 backdrop-blur-md text-white px-4 py-2 rounded-full border border-white/15 text-xs font-semibold shadow-xl flex items-center gap-2 pointer-events-none animate-fadeIn">
+          {/* <Sparkles className="w-3.5 h-3.5 text-[#FF7A00]" /> */}
           <span>{toastMessage}</span>
         </div>
       )}
@@ -1228,10 +1267,9 @@ export default function VideoPlayer({
 
       {/* Top Bar: On PC Desktop fullscreen, shows only the Title text at top-left. On Mobile, shows Mobile Top Bar */}
       {(showControls || !isPlaying) && (
-        <div 
-          className={`absolute top-0 left-0 right-0 px-4 sm:px-6 pt-3.5 sm:pt-4 pb-8 bg-gradient-to-b from-black/85 via-black/35 to-transparent flex items-center justify-between z-30 transition-opacity duration-150 ${
-            !isFullscreen && !isMobileView ? 'hidden' : ''
-          }`}
+        <div
+          className={`absolute top-0 left-0 right-0 px-4 sm:px-6 pt-3.5 sm:pt-4 pb-8 bg-gradient-to-b from-black/85 via-black/35 to-transparent flex items-center justify-between z-30 transition-opacity duration-150 ${!isFullscreen && !isMobileView ? 'hidden' : ''
+            }`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Top-Left: Title in Fullscreen (Matches Screenshot 2), or Back Button in Mobile Portrait */}
@@ -1279,15 +1317,13 @@ export default function VideoPlayer({
                   showToast(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
                   resetControlsTimer();
                 }}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
-                  isAutoplay ? 'bg-white' : 'bg-white/30'
-                }`}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${isAutoplay ? 'bg-white' : 'bg-white/30'
+                  }`}
                 title={isAutoplay ? 'การเล่นอัตโนมัติเปิดอยู่' : 'การเล่นอัตโนมัติปิดอยู่'}
               >
-                <span 
-                  className={`inline-flex items-center justify-center h-3.5 w-3.5 transform rounded-full transition-transform ${
-                    isAutoplay ? 'translate-x-4.5 bg-black' : 'translate-x-1 bg-white'
-                  }`}
+                <span
+                  className={`inline-flex items-center justify-center h-3.5 w-3.5 transform rounded-full transition-transform ${isAutoplay ? 'translate-x-4.5 bg-black' : 'translate-x-1 bg-white'
+                    }`}
                 >
                   {isAutoplay ? (
                     <Play className="w-2 h-2 fill-current text-white" />
@@ -1318,9 +1354,8 @@ export default function VideoPlayer({
                   showToast(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
                   resetControlsTimer();
                 }}
-                className={`p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                  isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-300 hover:text-white'
-                }`}
+                className={`p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer ${isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-300 hover:text-white'
+                  }`}
                 title="คำบรรยาย (CC)"
               >
                 <Subtitles className="w-4.5 h-4.5" />
@@ -1329,6 +1364,7 @@ export default function VideoPlayer({
               {/* Settings */}
               <button
                 type="button"
+                data-settings-btn="true"
                 onClick={() => {
                   setSettingsPlacement('top');
                   setShowSettingsMenu(!showSettingsMenu);
@@ -1519,10 +1555,10 @@ export default function VideoPlayer({
               </span>
               <span className="font-bold font-mono">
                 <span className={
-                  !isPlaying 
-                    ? 'text-zinc-400' 
-                    : (currentFpsNumber > 0 && currentFpsNumber < targetFpsNumber - 4) 
-                      ? 'text-rose-400' 
+                  !isPlaying
+                    ? 'text-zinc-400'
+                    : (currentFpsNumber > 0 && currentFpsNumber < targetFpsNumber - 4)
+                      ? 'text-rose-400'
                       : 'text-emerald-400'
                 }>
                   {isPlaying ? realtimeFps : '0.0'}
@@ -1553,10 +1589,9 @@ export default function VideoPlayer({
                 </span>
               </div>
               <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full transition-all duration-300 rounded-full ${
-                    nerdStats.bufferHealth > 15 ? 'bg-emerald-400' : nerdStats.bufferHealth > 5 ? 'bg-amber-400' : 'bg-rose-400'
-                  }`}
+                <div
+                  className={`h-full transition-all duration-300 rounded-full ${nerdStats.bufferHealth > 15 ? 'bg-emerald-400' : nerdStats.bufferHealth > 5 ? 'bg-amber-400' : 'bg-rose-400'
+                    }`}
                   style={{ width: `${Math.min((nerdStats.bufferHealth / 40) * 100, 100)}%` }}
                 />
               </div>
@@ -1564,13 +1599,14 @@ export default function VideoPlayer({
           </div>
         </div>
       )}
- 
+
       {/* YouTube-Style Context Menu */}
       {contextMenu && (
-        <div 
-          className="absolute z-50 bg-[#1f1f1f]/95 border border-white/15 rounded-xl py-1.5 w-56 text-xs text-zinc-200 shadow-2xl backdrop-blur-md"
+        <div
+          className="absolute z-50 bg-[#1f1f1f]/65 border border-white/15 rounded-xl py-1.5 w-56 text-xs text-zinc-200 shadow-2xl backdrop-blur-md"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
+          onMouseLeave={() => setContextMenu(null)}
         >
           <button
             type="button"
@@ -1640,12 +1676,12 @@ export default function VideoPlayer({
 
       {/* Multi-Tab Settings Menu (Positioned dynamically above or below clicked gear button) */}
       {showSettingsMenu && (
-        <div 
-          className={`absolute ${
-            settingsPlacement === 'top' 
-              ? 'top-14 right-3 sm:right-6' 
-              : 'bottom-16 right-3 sm:right-6'
-          } bg-[#18181B]/98 border border-white/15 rounded-2xl py-1.5 w-56 text-xs text-zinc-200 z-40 shadow-2xl overflow-hidden backdrop-blur-md`}
+        <div
+          ref={settingsMenuRef}
+          className={`absolute ${settingsPlacement === 'top'
+            ? 'top-14 right-3 sm:right-6'
+            : 'bottom-18 right-3 sm:right-6'
+            } bg-[#18181B]/65 border border-white/15 rounded-2xl py-1.5 w-56 text-xs text-zinc-200 z-40 shadow-2xl overflow-hidden backdrop-blur-md`}
           onClick={(e) => e.stopPropagation()}
         >
           {activeMenuTab === 'main' && (
@@ -1792,16 +1828,15 @@ export default function VideoPlayer({
       )}
 
       {/* Modern High-Performance Bottom Controls Bar */}
-      <div 
-        className={`absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-all duration-200 ${
-          (showControls || !isPlaying || isScrubbing)
-            ? 'opacity-100 pointer-events-auto translate-y-0'
-            : 'opacity-0 pointer-events-none translate-y-1'
-        }`}
+      <div
+        className={`absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-all duration-200 ${(showControls || !isPlaying || isScrubbing)
+          ? 'opacity-100 pointer-events-auto translate-y-0'
+          : 'opacity-0 pointer-events-none translate-y-1'
+          }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Seekbar with Direct DOM Updates */}
-        <div 
+        <div
           ref={seekTrackRef}
           onPointerDown={handlePointerDown}
           onPointerMove={handleSeekMouseMove}
@@ -1814,15 +1849,14 @@ export default function VideoPlayer({
           {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
           <div
             ref={scrubPreviewRef}
-            className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
-              (isScrubbing || isHoveringSeek)
-                ? 'opacity-100 scale-100 translate-y-0'
-                : 'opacity-0 scale-90 translate-y-2 pointer-events-none'
-            }`}
+            className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${(isScrubbing || isHoveringSeek)
+              ? 'opacity-100 scale-100 translate-y-0'
+              : 'opacity-0 scale-90 translate-y-2 pointer-events-none'
+              }`}
             style={{ left: `${Math.max(10, Math.min(isScrubbing ? previewPercent : hoverPercent, 90))}%` }}
           >
             {/* Preview Frame Thumbnail Card */}
-            <div 
+            <div
               className="w-44 sm:w-52 rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80"
               style={{ aspectRatio: videoRatio }}
             >
@@ -1849,7 +1883,7 @@ export default function VideoPlayer({
             </div>
 
             {/* Time Badge */}
-            <div 
+            <div
               ref={scrubBadgeRef}
               className="bg-black/90 text-white border border-white/20 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold shadow-xl whitespace-nowrap backdrop-blur-md"
             >
@@ -1860,427 +1894,415 @@ export default function VideoPlayer({
           {/* Progress Background Track */}
           <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
             {/* Buffer Track (Direct DOM) */}
-            <div 
+            <div
               ref={bufferBarRef}
               className="absolute left-0 top-0 bottom-0 bg-white/40"
               style={{ width: `${initialBufferPct}%` }}
             />
             {/* Hover Preview Track */}
             {isHoveringSeek && !isScrubbing && (
-              <div 
+              <div
                 className="absolute left-0 top-0 bottom-0 bg-white/30"
                 style={{ width: `${hoverPercent}%` }}
               />
             )}
             {/* Playback Progress (Direct DOM - TubeLock Orange) */}
-            <div 
+            <div
               ref={progressBarRef}
               className="absolute left-0 top-0 bottom-0 bg-[#FF7A00]"
-              style={{ width: `${currentProgressPct}%` }}
+              style={{ width: `${activeScrubPercent}%` }}
             />
           </div>
 
           {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
-          <div 
+          <div
             ref={scrubberKnobRef}
-            className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
-              isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
-            }`}
-            style={{ left: `${currentProgressPct}%` }}
+            className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
+              }`}
+            style={{ left: `${activeScrubPercent}%` }}
           />
         </div>
 
-          {/* Bottom Bar: Clean division between Desktop (Windowed & Fullscreen) and Mobile */}
-          {!isMobileView ? (
-            /* ============================================================ */
-            /* PC DESKTOP BOTTOM BAR (Matches YouTube Screenshots 2 & 3)    */
-            /* ============================================================ */
-            <div className="flex items-center justify-between text-white text-xs pt-1 px-1 sm:px-2 select-none">
-              {/* Left Controls: Play/Pause, Volume + Hover Slider, Time Display */}
-              <div className="flex items-center gap-2 sm:gap-3.5">
-                {/* Play/Pause */}
-                <button 
+        {/* Bottom Bar: Clean division between Desktop (Windowed & Fullscreen) and Mobile */}
+        {!isMobileView ? (
+          /* ============================================================ */
+          /* PC DESKTOP BOTTOM BAR (Matches YouTube Screenshots 2 & 3)    */
+          /* ============================================================ */
+          <div className="flex items-center justify-between text-white text-xs pt-1 px-1 sm:px-2 select-none">
+            {/* Left Controls: Play/Pause, Volume + Hover Slider, Time Display */}
+            <div className="flex items-center gap-2 sm:gap-3.5">
+              {/* Play/Pause */}
+              <button
+                type="button"
+                onClick={togglePlay}
+                className="active:scale-90 transition cursor-pointer p-1.5 rounded-lg hover:bg-white/15"
+                title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่น (k)'}
+              >
+                {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white ml-0.5" />}
+              </button>
+
+              {/* YouTube Expandable Volume Slider */}
+              <div
+                className="flex items-center group/vol relative"
+                onMouseEnter={() => setShowVolumeSlider(true)}
+                onMouseLeave={() => setShowVolumeSlider(false)}
+              >
+                <button
                   type="button"
-                  onClick={togglePlay} 
-                  className="active:scale-90 transition cursor-pointer p-1.5 rounded-lg hover:bg-white/15"
-                  title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่น (k)'}
+                  onClick={toggleMute}
+                  className="cursor-pointer p-1.5 rounded-lg hover:bg-white/15 transition"
+                  title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
                 >
-                  {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white ml-0.5" />}
+                  {isMuted || volume === 0 ? (
+                    <VolumeX className="w-5 h-5 fill-white text-white" />
+                  ) : volume < 0.5 ? (
+                    <Volume1 className="w-5 h-5 fill-white text-white" />
+                  ) : (
+                    <Volume2 className="w-5 h-5 fill-white text-white" />
+                  )}
                 </button>
 
-                {/* YouTube Expandable Volume Slider */}
-                <div 
-                  className="flex items-center group/vol relative"
-                  onMouseEnter={() => setShowVolumeSlider(true)}
-                  onMouseLeave={() => setShowVolumeSlider(false)}
-                >
-                  <button 
-                    type="button"
-                    onClick={toggleMute} 
-                    className="cursor-pointer p-1.5 rounded-lg hover:bg-white/15 transition"
-                    title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
-                  >
-                    {isMuted || volume === 0 ? (
-                      <VolumeX className="w-5 h-5 fill-white text-white" />
-                    ) : volume < 0.5 ? (
-                      <Volume1 className="w-5 h-5 fill-white text-white" />
-                    ) : (
-                      <Volume2 className="w-5 h-5 fill-white text-white" />
-                    )}
-                  </button>
-
-                  <div className={`overflow-hidden transition-all duration-200 flex items-center ${
-                    showVolumeSlider ? 'w-20 sm:w-24 opacity-100 ml-1' : 'w-0 opacity-0 pointer-events-none'
+                <div className={`overflow-hidden transition-all duration-200 flex items-center ${showVolumeSlider ? 'w-20 sm:w-24 opacity-100 ml-1' : 'w-0 opacity-0 pointer-events-none'
                   }`}>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={isMuted ? 0 : volume}
-                      onChange={handleVolumeChange}
-                      className="w-full h-1 bg-white/30 rounded-full cursor-pointer accent-white appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white"
-                    />
-                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={isMuted ? 0 : volume}
+                    onChange={handleVolumeChange}
+                    className="w-full h-1 bg-white/30 rounded-full cursor-pointer accent-white appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-white"
+                  />
                 </div>
-
-                {/* Time Display */}
-                <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 select-none font-medium ml-1">
-                  {currentTimeDisplay}
-                </span>
               </div>
 
-              {/* Right Controls: Desktop Fullscreen vs Desktop Windowed */}
-              <div className="flex items-center gap-1 sm:gap-2">
-                {/* On PC Fullscreen: Like, Dislike, Comment, Share, More (Matches Screenshot 2) */}
-                {isFullscreen && (
-                  <div className="flex items-center gap-1 sm:gap-2 mr-2 border-r border-white/15 pr-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !isLiked;
-                        setIsLiked(next);
-                        if (next && isDisliked) setIsDisliked(false);
-                        showToast(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
-                      }}
-                      className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                        isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
-                      }`}
-                      title="ถูกใจ"
-                    >
-                      <ThumbsUp className="w-4.5 h-4.5" />
-                    </button>
+              {/* Time Display */}
+              <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 select-none font-medium ml-1">
+                {activeTimeDisplay}
+              </span>
+            </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const next = !isDisliked;
-                        setIsDisliked(next);
-                        if (next && isLiked) setIsLiked(false);
-                        showToast(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
-                      }}
-                      className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                        isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
-                      }`}
-                      title="ไม่ชอบ"
-                    >
-                      <ThumbsDown className="w-4.5 h-4.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => showToast('ส่วนความคิดเห็น')}
-                      className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
-                      title="ความคิดเห็น"
-                    >
-                      <MessageSquare className="w-4.5 h-4.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (typeof window !== 'undefined') {
-                          navigator.clipboard.writeText(window.location.href);
-                          showToast('คัดลอกลิงก์วิดีโอแล้ว');
-                        }
-                      }}
-                      className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
-                      title="แชร์วิดีโอ"
-                    >
-                      <Share2 className="w-4.5 h-4.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setContextMenu({ x: rect.left, y: Math.max(10, rect.top - 180) });
-                      }}
-                      className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
-                      title="เพิ่มเติม"
-                    >
-                      <MoreHorizontal className="w-4.5 h-4.5" />
-                    </button>
-                  </div>
-                )}
-
-                {/* Autoplay Switch (YouTube Style) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isAutoplay;
-                    setIsAutoplay(next);
-                    showToast(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
-                  }}
-                  className={`relative inline-flex h-4.5 w-8 items-center rounded-full transition-colors cursor-pointer mr-1 ${
-                    isAutoplay ? 'bg-white' : 'bg-white/30'
-                  }`}
-                  title={isAutoplay ? 'การเล่นอัตโนมัติเปิดอยู่' : 'การเล่นอัตโนมัติปิดอยู่'}
-                >
-                  <span 
-                    className={`inline-flex items-center justify-center h-3 w-3 transform rounded-full transition-transform ${
-                      isAutoplay ? 'translate-x-4 bg-black' : 'translate-x-1 bg-white'
-                    }`}
-                  >
-                    {isAutoplay ? (
-                      <Play className="w-1.5 h-1.5 fill-current text-white" />
-                    ) : (
-                      <Pause className="w-1.5 h-1.5 fill-current text-black" />
-                    )}
-                  </span>
-                </button>
-
-                {/* CC (Subtitles) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCcActive(!isCcActive);
-                    showToast(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
-                  }}
-                  className={`p-1.5 rounded-lg hover:bg-white/15 transition cursor-pointer ${
-                    isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
-                  }`}
-                  title="คำบรรยาย (c)"
-                >
-                  <Subtitles className="w-4.5 h-4.5" />
-                </button>
-
-                {/* Settings Gear with 4K Badge */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSettingsPlacement('bottom');
-                    setShowSettingsMenu(!showSettingsMenu);
-                    setActiveMenuTab('main');
-                  }}
-                  title="การตั้งค่าเครื่องเล่น"
-                  className={`relative p-1.5 rounded-lg transition cursor-pointer ${
-                    showSettingsMenu ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
-                  }`}
-                >
-                  <Settings className="w-4.5 h-4.5" />
-                  {is4K ? (
-                    <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-1 py-0.5 rounded shadow pointer-events-none">
-                      4K
-                    </span>
-                  ) : isHD ? (
-                    <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-0.5 py-0.5 rounded shadow pointer-events-none">
-                      HD
-                    </span>
-                  ) : null}
-                </button>
-
-                {/* Miniplayer (PiP - Only in windowed mode) */}
-                {!isFullscreen && (
+            {/* Right Controls: Desktop Fullscreen vs Desktop Windowed */}
+            <div className="flex items-center gap-1 sm:gap-2">
+              {/* On PC Fullscreen: Like, Dislike, Comment, Share, More (Matches Screenshot 2) */}
+              {isFullscreen && (
+                <div className="flex items-center gap-1 sm:gap-2 mr-2 border-r border-white/15 pr-2">
                   <button
                     type="button"
-                    onClick={togglePiP}
-                    title="เล่นแบบหน้าต่างลอย (PiP)"
-                    className="p-1.5 rounded-lg text-zinc-200 hover:text-white hover:bg-white/15 transition cursor-pointer"
+                    onClick={() => {
+                      const next = !isLiked;
+                      setIsLiked(next);
+                      if (next && isDisliked) setIsDisliked(false);
+                      showToast(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
+                    }}
+                    className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                      }`}
+                    title="ถูกใจ"
                   >
-                    <PictureInPicture2 className="w-4.5 h-4.5" />
+                    <ThumbsUp className="w-4.5 h-4.5" />
                   </button>
-                )}
 
-                {/* Aspect Ratio */}
-                <button
-                  type="button"
-                  onClick={cycleAspectMode}
-                  title={`สัดส่วน: ${aspectMode.toUpperCase()} (คลิกเพื่อเปลี่ยน)`}
-                  className={`px-2 py-1 rounded-lg transition cursor-pointer flex items-center gap-1 font-mono uppercase text-[11px] font-semibold ${
-                    aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !isDisliked;
+                      setIsDisliked(next);
+                      if (next && isLiked) setIsLiked(false);
+                      showToast(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
+                    }}
+                    className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
+                      }`}
+                    title="ไม่ชอบ"
+                  >
+                    <ThumbsDown className="w-4.5 h-4.5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => showToast('ส่วนความคิดเห็น')}
+                    className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                    title="ความคิดเห็น"
+                  >
+                    <MessageSquare className="w-4.5 h-4.5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window !== 'undefined') {
+                        navigator.clipboard.writeText(window.location.href);
+                        showToast('คัดลอกลิงก์วิดีโอแล้ว');
+                      }
+                    }}
+                    className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                    title="แชร์วิดีโอ"
+                  >
+                    <Share2 className="w-4.5 h-4.5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setContextMenu({ x: rect.left, y: Math.max(10, rect.top - 180) });
+                    }}
+                    className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                    title="เพิ่มเติม"
+                  >
+                    <MoreHorizontal className="w-4.5 h-4.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Autoplay Switch (YouTube Style) */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isAutoplay;
+                  setIsAutoplay(next);
+                  showToast(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
+                }}
+                className={`relative inline-flex h-4.5 w-8 items-center rounded-full transition-colors cursor-pointer mr-1 ${isAutoplay ? 'bg-white' : 'bg-white/30'
                   }`}
+                title={isAutoplay ? 'การเล่นอัตโนมัติเปิดอยู่' : 'การเล่นอัตโนมัติปิดอยู่'}
+              >
+                <span
+                  className={`inline-flex items-center justify-center h-3 w-3 transform rounded-full transition-transform ${isAutoplay ? 'translate-x-4 bg-black' : 'translate-x-1 bg-white'
+                    }`}
                 >
-                  {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
-                  <span>{aspectMode}</span>
-                </button>
-
-                {/* Fullscreen Toggle */}
-                <button 
-                  type="button"
-                  onClick={toggleFullscreen} 
-                  title={isFullscreen ? 'ออกจากเต็มจอ (f)' : 'เต็มจอ (f)'}
-                  className="p-1.5 rounded-lg text-white hover:bg-white/15 transition cursor-pointer active:scale-90"
-                >
-                  {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-          ) : isFullscreen ? (
-            /* ============================================================ */
-            /* MOBILE FULLSCREEN BOTTOM BAR                                 */
-            /* ============================================================ */
-            <div className="flex items-center justify-between text-white text-xs pt-1 px-1">
-              {/* Left Action Buttons */}
-              <div className="flex items-center gap-1.5">
-                <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 font-medium mr-1 select-none">
-                  {currentTimeDisplay}
+                  {isAutoplay ? (
+                    <Play className="w-1.5 h-1.5 fill-current text-white" />
+                  ) : (
+                    <Pause className="w-1.5 h-1.5 fill-current text-black" />
+                  )}
                 </span>
+              </button>
 
-                {/* Like */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isLiked;
-                    setIsLiked(next);
-                    if (next && isDisliked) setIsDisliked(false);
-                    showToast(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
-                  }}
-                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                    isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+              {/* CC (Subtitles) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCcActive(!isCcActive);
+                  showToast(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
+                }}
+                className={`p-1.5 rounded-lg hover:bg-white/15 transition cursor-pointer ${isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
                   }`}
-                  title="ถูกใจ"
-                >
-                  <ThumbsUp className="w-4.5 h-4.5" />
-                </button>
+                title="คำบรรยาย (c)"
+              >
+                <Subtitles className="w-4.5 h-4.5" />
+              </button>
 
-                {/* Dislike */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isDisliked;
-                    setIsDisliked(next);
-                    if (next && isLiked) setIsLiked(false);
-                    showToast(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
-                  }}
-                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                    isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
+              {/* Settings Gear with 4K Badge */}
+              <button
+                type="button"
+                data-settings-btn="true"
+                onClick={() => {
+                  setSettingsPlacement('bottom');
+                  setShowSettingsMenu(!showSettingsMenu);
+                  setActiveMenuTab('main');
+                }}
+                title="การตั้งค่าเครื่องเล่น"
+                className={`relative p-1.5 rounded-lg transition cursor-pointer ${showSettingsMenu ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
                   }`}
-                  title="ไม่ชอบ"
-                >
-                  <ThumbsDown className="w-4.5 h-4.5" />
-                </button>
+              >
+                <Settings className="w-4.5 h-4.5" />
+                {is4K ? (
+                  <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-1 py-0.5 rounded shadow pointer-events-none">
+                    4K
+                  </span>
+                ) : isHD ? (
+                  <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-0.5 py-0.5 rounded shadow pointer-events-none">
+                    HD
+                  </span>
+                ) : null}
+              </button>
 
-                {/* Comments */}
+              {/* Miniplayer (PiP - Only in windowed mode) */}
+              {!isFullscreen && (
                 <button
                   type="button"
-                  onClick={() => showToast('ส่วนความคิดเห็น')}
-                  className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
-                  title="ความคิดเห็น"
+                  onClick={togglePiP}
+                  title="เล่นแบบหน้าต่างลอย (PiP)"
+                  className="p-1.5 rounded-lg text-zinc-200 hover:text-white hover:bg-white/15 transition cursor-pointer"
                 >
-                  <MessageSquare className="w-4.5 h-4.5" />
+                  <PictureInPicture2 className="w-4.5 h-4.5" />
                 </button>
+              )}
 
-                {/* Save */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isSaved;
-                    setIsSaved(next);
-                    showToast(next ? 'บันทึกในเพลย์ลิสต์แล้ว' : 'นำออกจากเพลย์ลิสต์');
-                  }}
-                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                    isSaved ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+              {/* Aspect Ratio */}
+              <button
+                type="button"
+                onClick={cycleAspectMode}
+                title={`สัดส่วน: ${aspectMode.toUpperCase()} (คลิกเพื่อเปลี่ยน)`}
+                className={`px-2 py-1 rounded-lg transition cursor-pointer flex items-center gap-1 font-mono uppercase text-[11px] font-semibold ${aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
                   }`}
-                  title="บันทึกในเพลย์ลิสต์"
-                >
-                  <Plus className="w-4.5 h-4.5" />
-                </button>
+              >
+                {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
+                <span>{aspectMode}</span>
+              </button>
 
-                {/* Share */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof window !== 'undefined') {
-                      navigator.clipboard.writeText(window.location.href);
-                      showToast('คัดลอกลิงก์วิดีโอแล้ว');
-                    }
-                  }}
-                  className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
-                  title="แชร์วิดีโอ"
-                >
-                  <Share2 className="w-4.5 h-4.5" />
-                </button>
-
-                {/* More */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setContextMenu({ x: rect.left, y: Math.max(10, rect.top - 180) });
-                  }}
-                  className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
-                  title="เพิ่มเติม"
-                >
-                  <MoreHorizontal className="w-4.5 h-4.5" />
-                </button>
-              </div>
-
-              {/* Right: Aspect ratio + Exit Fullscreen */}
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={cycleAspectMode}
-                  title={`สัดส่วน: ${aspectMode.toUpperCase()}`}
-                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-mono uppercase text-[11px] font-semibold transition active:scale-90 cursor-pointer flex items-center gap-1"
-                >
-                  {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
-                  <span>{aspectMode}</span>
-                </button>
-
-                <button 
-                  type="button"
-                  onClick={toggleFullscreen} 
-                  title="ออกจากเต็มจอ"
-                  className="p-1.5 rounded-lg text-white hover:bg-white/15 transition active:scale-90 cursor-pointer"
-                >
-                  <Minimize className="w-5 h-5" />
-                </button>
-              </div>
+              {/* Fullscreen Toggle */}
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                title={isFullscreen ? 'ออกจากเต็มจอ (f)' : 'เต็มจอ (f)'}
+                className="p-1.5 rounded-lg text-white hover:bg-white/15 transition cursor-pointer active:scale-90"
+              >
+                {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+              </button>
             </div>
-          ) : (
-            /* ============================================================ */
-            /* MOBILE PORTRAIT BOTTOM BAR                                   */
-            /* ============================================================ */
-            <div className="flex items-center justify-between text-white text-xs pt-0.5">
-              <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-300 font-medium select-none">
-                {currentTimeDisplay}
+          </div>
+        ) : isFullscreen ? (
+          /* ============================================================ */
+          /* MOBILE FULLSCREEN BOTTOM BAR                                 */
+          /* ============================================================ */
+          <div className="flex items-center justify-between text-white text-xs pt-1 px-1">
+            {/* Left Action Buttons */}
+            <div className="flex items-center gap-1.5">
+              <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-200 font-medium mr-1 select-none">
+                {activeTimeDisplay}
               </span>
 
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={cycleAspectMode}
-                  title={`สัดส่วน: ${aspectMode.toUpperCase()}`}
-                  className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${
-                    aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-zinc-200'
+              {/* Like */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isLiked;
+                  setIsLiked(next);
+                  if (next && isDisliked) setIsDisliked(false);
+                  showToast(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
+                }}
+                className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
                   }`}
-                >
-                  {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
-                </button>
+                title="ถูกใจ"
+              >
+                <ThumbsUp className="w-4.5 h-4.5" />
+              </button>
 
-                <button 
-                  type="button"
-                  onClick={toggleFullscreen} 
-                  title="เต็มจอ"
-                  className="p-1.5 rounded-lg text-white hover:bg-white/15 transition active:scale-90 cursor-pointer"
-                >
-                  <Maximize className="w-4.5 h-4.5" />
-                </button>
-              </div>
+              {/* Dislike */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isDisliked;
+                  setIsDisliked(next);
+                  if (next && isLiked) setIsLiked(false);
+                  showToast(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
+                }}
+                className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
+                  }`}
+                title="ไม่ชอบ"
+              >
+                <ThumbsDown className="w-4.5 h-4.5" />
+              </button>
+
+              {/* Comments */}
+              <button
+                type="button"
+                onClick={() => showToast('ส่วนความคิดเห็น')}
+                className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                title="ความคิดเห็น"
+              >
+                <MessageSquare className="w-4.5 h-4.5" />
+              </button>
+
+              {/* Save */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isSaved;
+                  setIsSaved(next);
+                  showToast(next ? 'บันทึกในเพลย์ลิสต์แล้ว' : 'นำออกจากเพลย์ลิสต์');
+                }}
+                className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isSaved ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                  }`}
+                title="บันทึกในเพลย์ลิสต์"
+              >
+                <Plus className="w-4.5 h-4.5" />
+              </button>
+
+              {/* Share */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof window !== 'undefined') {
+                    navigator.clipboard.writeText(window.location.href);
+                    showToast('คัดลอกลิงก์วิดีโอแล้ว');
+                  }
+                }}
+                className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                title="แชร์วิดีโอ"
+              >
+                <Share2 className="w-4.5 h-4.5" />
+              </button>
+
+              {/* More */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setContextMenu({ x: rect.left, y: Math.max(10, rect.top - 180) });
+                }}
+                className="p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
+                title="เพิ่มเติม"
+              >
+                <MoreHorizontal className="w-4.5 h-4.5" />
+              </button>
             </div>
-          )}
-        </div>
+
+            {/* Right: Aspect ratio + Exit Fullscreen */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={cycleAspectMode}
+                title={`สัดส่วน: ${aspectMode.toUpperCase()}`}
+                className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-mono uppercase text-[11px] font-semibold transition active:scale-90 cursor-pointer flex items-center gap-1"
+              >
+                {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
+                <span>{aspectMode}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                title="ออกจากเต็มจอ"
+                className="p-1.5 rounded-lg text-white hover:bg-white/15 transition active:scale-90 cursor-pointer"
+              >
+                <Minimize className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ============================================================ */
+          /* MOBILE PORTRAIT BOTTOM BAR                                   */
+          /* ============================================================ */
+          <div className="flex items-center justify-between text-white text-xs pt-0.5">
+            <span ref={timeDisplayRef} className="font-mono text-xs text-zinc-300 font-medium select-none">
+              {activeTimeDisplay}
+            </span>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={cycleAspectMode}
+                title={`สัดส่วน: ${aspectMode.toUpperCase()}`}
+                className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-zinc-200'
+                  }`}
+              >
+                {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                title="เต็มจอ"
+                className="p-1.5 rounded-lg text-white hover:bg-white/15 transition active:scale-90 cursor-pointer"
+              >
+                <Maximize className="w-4.5 h-4.5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

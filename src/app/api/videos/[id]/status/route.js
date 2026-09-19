@@ -17,22 +17,7 @@ export async function GET(request, context) {
 
     const sql = getDb();
     const rows = await sql`
-      SELECT 
-        id, 
-        title, 
-        status, 
-        transcode_progress, 
-        stage_detail, 
-        error_message, 
-        raw_file_name, 
-        master_playlist_path,
-        onedrive_folder_id,
-        duration, 
-        resolution, 
-        thumbnail_url,
-        file_size_bytes,
-        created_at, 
-        updated_at
+      SELECT *
       FROM videos 
       WHERE id = ${id} 
       LIMIT 1;
@@ -61,6 +46,9 @@ export async function GET(request, context) {
         onedriveFolderId: video.onedrive_folder_id || '',
         duration: video.duration || 0,
         resolution: video.resolution || '1080p',
+        fps: video.fps || 0,
+        codec: video.codec || '',
+        bitrate: video.bitrate || 0,
         thumbnailUrl: video.thumbnail_url || '',
         fileSizeBytes: video.file_size_bytes || 0,
         createdAt: video.created_at,

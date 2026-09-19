@@ -319,6 +319,23 @@ export default function UploadPage() {
         setTranscodeProgress(vid.transcodeProgress || 0);
         setStageDetail(vid.stageDetail || '');
 
+        // 🌟 If worker captured the thumbnail, display it immediately!
+        if (vid.thumbnailUrl) {
+          setThumbnailUrl(vid.thumbnailUrl);
+        }
+
+        // 🌟 If worker extracted metadata with ffprobe, update file details!
+        if (vid.duration || vid.resolution) {
+          setFileDetails((prev) => ({
+            ...prev,
+            durationSec: vid.duration || prev.durationSec,
+            durationFormatted: vid.duration ? formatDuration(vid.duration) : prev.durationFormatted,
+            resolution: vid.resolution || prev.resolution,
+            fps: vid.fps || prev.fps,
+            codec: vid.codec || prev.codec,
+          }));
+        }
+
         if (vid.status === 'READY') {
           // Keep polling until 100% complete if it's still doing background passes, or stop when 100
           setCompletedVideo(vid);
@@ -683,7 +700,7 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 select-none pb-24">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 select-none pb-36 sm:pb-24">
       {/* Top Bar Navigation */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-[#EFECE6] mb-6">
         <div>
@@ -1089,12 +1106,25 @@ export default function UploadPage() {
                       <img
                         src={thumbnailUrl}
                         alt="Video Thumbnail Preview"
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover animate-fadeIn"
                       />
                     ) : (
-                      <div className="flex flex-col items-center justify-center text-white/40 gap-2">
-                        <Film className="w-8 h-8 stroke-[1.5]" />
-                        <span className="text-xs">ไม่มีภาพตัวอย่าง</span>
+                      <div className="flex flex-col items-center justify-center text-white/50 gap-2.5 p-4 text-center">
+                        <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center animate-pulse">
+                          <Film className="w-5 h-5 text-[#FF7A00]" />
+                        </div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-semibold text-white/80">
+                            {currentStatus === 'UPLOADING'
+                              ? 'กำลังส่งไฟล์เข้า Cloud...'
+                              : currentStatus === 'PROCESSING' || currentStatus === 'TRANSCODING'
+                              ? 'กำลังสกัดภาพหน้าปกจาก Cloud Worker...'
+                              : 'รอประมวลผลภาพหน้าปก'}
+                          </span>
+                          <span className="text-[10px] text-white/40">
+                            ภาพปกจะแสดงอัตโนมัติเมื่อ Worker แคปภาพเสร็จ
+                          </span>
+                        </div>
                       </div>
                     )}
                     <span className="absolute bottom-2 right-2 bg-black/70 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded">
