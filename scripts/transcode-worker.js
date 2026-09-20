@@ -495,9 +495,8 @@ async function main() {
     console.log(`⬆️ Uploading poster.jpg to OneDrive (/streams/${streamFolderName}/poster.jpg)...`);
     await uploadFileToOneDrive(token, driveId, streamFolderId, 'poster.jpg', posterPath);
 
-    // Convert poster to base64 Data URI for instant zero-lag rendering across all devices
-    const posterBase64 = fs.readFileSync(posterPath).toString('base64');
-    const thumbnailUrl = `data:image/jpeg;base64,${posterBase64}`;
+    // 🖼️ Save standardized relative path (/streams/stream_vid_{id}/poster.jpg) instead of heavy Base64
+    const thumbnailUrl = `/streams/${streamFolderName}/poster.jpg`;
 
     // ⚡ IMMEDIATELY UPDATE METADATA AND POSTER IN NEON DB!
     console.log('💾 Syncing full metadata and poster thumbnail to Neon DB immediately...');
