@@ -29,6 +29,7 @@ export default function VideoPlayer({
   autoStats = false,
   onTimeUpdate,
   onLoadedMetadata,
+  onRatioChange = null,
   videoRef: externalVideoRef
 }) {
   const localRef = useRef(null);
@@ -54,6 +55,13 @@ export default function VideoPlayer({
     }
     return 16 / 9;
   });
+
+  const updateRatio = useCallback((newRatio) => {
+    if (newRatio && newRatio > 0 && !isNaN(newRatio)) {
+      setVideoRatio(newRatio);
+      if (onRatioChange) onRatioChange(newRatio);
+    }
+  }, [onRatioChange]);
 
   const [isVerticalVideo, setIsVerticalVideo] = useState(() => {
     if (typeof resolution === 'string' && resolution.includes('x')) {
@@ -458,6 +466,14 @@ export default function VideoPlayer({
               }));
               setLevels(parsed);
               setCurrentLevelIndex(hls.currentLevel);
+
+              // Auto-detect aspect ratio from highest or initial HLS level
+              const bestLevel = data.levels[0];
+              if (bestLevel?.width && bestLevel?.height) {
+                const isVertical = bestLevel.height > bestLevel.width;
+                setIsVerticalVideo(isVertical);
+                updateRatio(bestLevel.width / bestLevel.height);
+              }
             }
 
             if (defaultAutoplay && !isUserPausedRef.current) {
@@ -474,6 +490,11 @@ export default function VideoPlayer({
             if (lvl) {
               const activeLabel = formatResolutionBadge(`${lvl.height}p`);
               setActiveLevelLabel(activeLabel);
+              if (lvl.width && lvl.height) {
+                const isVertical = lvl.height > lvl.width;
+                setIsVerticalVideo(isVertical);
+                updateRatio(lvl.width / lvl.height);
+              }
             }
           });
 
@@ -1172,12 +1193,11 @@ export default function VideoPlayer({
         } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
         width: isFullscreen ? '100vw' : '100%',
-        maxWidth: isFullscreen ? undefined : (isVerticalVideo ? '480px' : `calc((100vh - 140px) * ${videoRatio})`),
+        maxWidth: isFullscreen ? undefined : (isVerticalVideo ? '480px' : undefined),
         aspectRatio: isFullscreen
           ? undefined
           : `${videoRatio}`,
-        maxHeight: isFullscreen ? undefined : 'calc(100vh - 140px)',
-        margin: '0 auto',
+        margin: isVerticalVideo ? '0 auto' : undefined,
         contain: 'paint layout',
         WebkitTouchCallout: 'none',
       }}
@@ -1213,7 +1233,7 @@ export default function VideoPlayer({
           if (videoWidth && videoHeight) {
             const isVertical = videoHeight > videoWidth;
             setIsVerticalVideo(isVertical);
-            setVideoRatio(videoWidth / videoHeight);
+            updateRatio(videoWidth / videoHeight);
           }
         }}
         onLoadedMetadata={(e) => {
@@ -1221,7 +1241,7 @@ export default function VideoPlayer({
           if (videoWidth && videoHeight) {
             const isVertical = videoHeight > videoWidth;
             setIsVerticalVideo(isVertical);
-            setVideoRatio(videoWidth / videoHeight);
+            updateRatio(videoWidth / videoHeight);
           }
           if (dur) setDuration(dur);
           updateBufferProgress();

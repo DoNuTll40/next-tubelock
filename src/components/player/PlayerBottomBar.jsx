@@ -77,11 +77,10 @@ export default function PlayerBottomBar({
 
   return (
     <div
-      className={`absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-all duration-200 ${
-        showControls || !isPlaying || isScrubbing
-          ? 'opacity-100 pointer-events-auto translate-y-0'
-          : 'opacity-0 pointer-events-none translate-y-1'
-      }`}
+      className={`absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
+        ? 'opacity-100 pointer-events-auto translate-y-0'
+        : 'opacity-0 pointer-events-none translate-y-1'
+        }`}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Seekbar with Direct DOM Updates */}
@@ -156,9 +155,8 @@ export default function PlayerBottomBar({
               </button>
 
               <div
-                className={`overflow-hidden transition-all duration-200 flex items-center ${
-                  showVolumeSlider ? 'w-20 sm:w-24 opacity-100 ml-1' : 'w-0 opacity-0 pointer-events-none'
-                }`}
+                className={`overflow-hidden transition-all duration-200 flex items-center ${showVolumeSlider ? 'w-20 sm:w-24 opacity-100 ml-1 h-5 bg-white/10 px-2 rounded-full' : 'w-0 opacity-0 pointer-events-none'
+                  }`}
               >
                 <input
                   type="range"
@@ -191,9 +189,8 @@ export default function PlayerBottomBar({
                     if (next && isDisliked) setIsDisliked(false);
                     showToast?.(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
                   }}
-                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                    isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
-                  }`}
+                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                    }`}
                   title="ถูกใจ"
                 >
                   <ThumbsUp className="w-4.5 h-4.5" />
@@ -207,9 +204,8 @@ export default function PlayerBottomBar({
                     if (next && isLiked) setIsLiked(false);
                     showToast?.(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
                   }}
-                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                    isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
-                  }`}
+                  className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
+                    }`}
                   title="ไม่ชอบ"
                 >
                   <ThumbsDown className="w-4.5 h-4.5" />
@@ -260,15 +256,13 @@ export default function PlayerBottomBar({
                 setIsAutoplay(next);
                 showToast?.(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
               }}
-              className={`relative inline-flex h-4.5 w-8 items-center rounded-full transition-colors cursor-pointer mr-1 ${
-                isAutoplay ? 'bg-white' : 'bg-white/30'
-              }`}
+              className={`relative inline-flex h-4.5 w-8 items-center rounded-full transition-colors cursor-pointer mr-1 ${isAutoplay ? 'bg-white' : 'bg-white/30'
+                }`}
               title={isAutoplay ? 'การเล่นอัตโนมัติเปิดอยู่' : 'การเล่นอัตโนมัติปิดอยู่'}
             >
               <span
-                className={`inline-flex items-center justify-center h-3 w-3 transform rounded-full transition-transform ${
-                  isAutoplay ? 'translate-x-4 bg-black' : 'translate-x-1 bg-white'
-                }`}
+                className={`inline-flex items-center justify-center h-3 w-3 transform rounded-full transition-transform ${isAutoplay ? 'translate-x-4 bg-black' : 'translate-x-1 bg-white'
+                  }`}
               >
                 {isAutoplay ? (
                   <Play className="w-1.5 h-1.5 fill-current text-white" />
@@ -285,9 +279,8 @@ export default function PlayerBottomBar({
                 setIsCcActive(!isCcActive);
                 showToast?.(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
               }}
-              className={`p-1.5 rounded-lg hover:bg-white/15 transition cursor-pointer ${
-                isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
-              }`}
+              className={`p-1.5 rounded-lg hover:bg-white/15 transition cursor-pointer ${isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                }`}
               title="คำบรรยาย (c)"
             >
               <Subtitles className="w-4.5 h-4.5" />
@@ -303,9 +296,8 @@ export default function PlayerBottomBar({
                 setActiveMenuTab?.('main');
               }}
               title="การตั้งค่าเครื่องเล่น"
-              className={`relative p-1.5 rounded-lg transition cursor-pointer ${
-                showSettingsMenu ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
-              }`}
+              className={`relative p-1.5 rounded-lg transition cursor-pointer ${showSettingsMenu ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
+                }`}
             >
               <Settings className="w-4.5 h-4.5" />
               {is4K ? (
@@ -336,9 +328,8 @@ export default function PlayerBottomBar({
               type="button"
               onClick={cycleAspectMode}
               title={`สัดส่วน: ${aspectMode.toUpperCase()} (คลิกเพื่อเปลี่ยน)`}
-              className={`px-2 py-1 rounded-lg transition cursor-pointer flex items-center gap-1 font-mono uppercase text-[11px] font-semibold ${
-                aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
-              }`}
+              className={`px-2 py-1 rounded-lg transition cursor-pointer flex items-center gap-1 font-mono uppercase text-[11px] font-semibold ${aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white hover:bg-white/15'
+                }`}
             >
               {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
               <span>{aspectMode}</span>
@@ -375,9 +366,8 @@ export default function PlayerBottomBar({
                 if (next && isDisliked) setIsDisliked(false);
                 showToast?.(next ? 'ถูกใจวิดีโอแล้ว' : 'ยกเลิกการถูกใจ');
               }}
-              className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
-              }`}
+              className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isLiked ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                }`}
               title="ถูกใจ"
             >
               <ThumbsUp className="w-4.5 h-4.5" />
@@ -392,9 +382,8 @@ export default function PlayerBottomBar({
                 if (next && isLiked) setIsLiked(false);
                 showToast?.(next ? 'ไม่ชอบวิดีโอ' : 'ยกเลิก');
               }}
-              className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
-              }`}
+              className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isDisliked ? 'text-zinc-400 bg-white/15' : 'text-zinc-200 hover:text-white'
+                }`}
               title="ไม่ชอบ"
             >
               <ThumbsDown className="w-4.5 h-4.5" />
@@ -418,9 +407,8 @@ export default function PlayerBottomBar({
                 setIsSaved(next);
                 showToast?.(next ? 'บันทึกในเพลย์ลิสต์แล้ว' : 'นำออกจากเพลย์ลิสต์');
               }}
-              className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-                isSaved ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
-              }`}
+              className={`p-1.5 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer ${isSaved ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
+                }`}
               title="บันทึกในเพลย์ลิสต์"
             >
               <Plus className="w-4.5 h-4.5" />
@@ -491,9 +479,8 @@ export default function PlayerBottomBar({
               type="button"
               onClick={cycleAspectMode}
               title={`สัดส่วน: ${aspectMode.toUpperCase()}`}
-              className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${
-                aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-zinc-200'
-              }`}
+              className={`p-1.5 rounded-lg transition active:scale-90 flex items-center gap-1 text-[11px] cursor-pointer ${aspectMode !== 'fit' ? 'text-[#FF7A00] bg-white/10 font-bold' : 'text-zinc-200'
+                }`}
             >
               {aspectMode === 'crop' ? <Crop className="w-4 h-4" /> : aspectMode === 'fill' ? <Scan className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
             </button>

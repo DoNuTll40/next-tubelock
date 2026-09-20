@@ -198,14 +198,15 @@ export default function UploadPage() {
 
     const isMobile = typeof navigator !== 'undefined' && (
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-      (navigator.maxTouchPoints && navigator.maxTouchPoints > 1)
+      (Boolean(navigator.maxTouchPoints && navigator.maxTouchPoints > 1) && /Macintosh/i.test(navigator.userAgent))
     );
+    const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
 
     // In-Memory Clone Workaround for Android SAF Permission Revocation:
     // บน Android Content URI จะถูกเพิกถอนสิทธิ์ทันทีหากปล่อยให้มี Async Delay (เช่น รอ fetch API)
     // ดังนั้นเราต้องดึง ArrayBuffer เข้า RAM ทันทีตั้งแต่ใน User Event Tick ก่อนที่จะมี Network Delay ใดๆ
     let activeFile = selectedFile;
-    if (isMobile || selectedFile.size <= 250 * 1024 * 1024) {
+    if (isAndroid && selectedFile.size <= 250 * 1024 * 1024) {
       try {
         addLog(`กำลังอ่านไฟล์เข้า Memory Cache ทันที เพื่อป้องกัน Android SAF Revoke (${sizeFormatted})...`);
         const buffer = await selectedFile.arrayBuffer();
@@ -386,8 +387,14 @@ export default function UploadPage() {
 
   // Start Pipeline: Direct Full-Speed Upload to OneDrive
   const handleStartPipeline = async (overrideFile = null) => {
-    const activeFile = overrideFile || fileRef.current || file;
+    // 1. Guard against React SyntheticEvent when invoked via onClick
+    const candidateFile = (overrideFile && (overrideFile instanceof Blob || overrideFile instanceof File))
+      ? overrideFile
+      : null;
+    const activeFile = candidateFile || fileRef.current || file;
     if (!activeFile || isUploading) return;
+
+    const resolvedFileName = activeFile.name || fileDetails.name || `video_${Date.now()}.mp4`;
 
     setIsUploading(true);
     setErrorMsg(null);
@@ -395,10 +402,10 @@ export default function UploadPage() {
     setCurrentStatus('UPLOADING');
     setTranscodeProgress(0);
     setStageDetail('กำลังสร้าง Upload Session กับ Microsoft Graph API...');
-    addLog(`เริ่มต้น: ขอ Direct Upload Session เข้า OneDrive Business (/raw/)`);
+    addLog(`เริ่มต้น: ขอ Direct Upload Session เข้า OneDrive Business (/raw/) สำหรับ "${resolvedFileName}"`);
 
     try {
-      const activeTitle = (titleRef.current || title || '').trim() || activeFile.name.replace(/\.[^/.]+$/, '');
+      const activeTitle = (titleRef.current || title || '').trim() || resolvedFileName.replace(/\.[^/.]+$/, '');
       const activeDesc = (descriptionRef.current || description || '').trim();
 
       // 1. Session Request
@@ -406,10 +413,10 @@ export default function UploadPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fileName: activeFile.name,
+          fileName: resolvedFileName,
           title: activeTitle,
           description: activeDesc,
-          fileSize: activeFile.size,
+          fileSize: activeFile.size || 0,
         }),
       });
 
@@ -546,7 +553,7 @@ export default function UploadPage() {
       addLog(`เรียก POST /api/upload/complete เพื่อ Trigger GitHub Actions...`);
 
       // 3. Trigger Complete & Dispatch with latest edited title & description
-      const finalTitle = (titleRef.current || title || '').trim() || activeFile.name.replace(/\.[^/.]+$/, '');
+      const finalTitle = (titleRef.current || title || '').trim() || resolvedFileName.replace(/\.[^/.]+$/, '');
       const finalDesc = (descriptionRef.current || description || '').trim();
 
       const completeRes = await fetch('/api/upload/complete', {
@@ -562,7 +569,8 @@ export default function UploadPage() {
             resolution: fileDetails.resolution,
             fps: fileDetails.fps,
             codec: fileDetails.codec,
-            thumbnailDataUrl: thumbnailUrl || '',
+            // รอให้ GitHub Actions สร้าง poster.jpg และอัปเดตลง DB ตามที่ผู้ใช้ระบุ ไม่ส่ง base64 ขนาดใหญ่
+            thumbnailDataUrl: (thumbnailUrl && !thumbnailUrl.startsWith('data:')) ? thumbnailUrl : '',
           },
         }),
       });
@@ -599,6 +607,12 @@ export default function UploadPage() {
 
   // Retry Trigger
   const handleRetryTrigger = async (vidId, rFileName, vidTitle) => {
+    if (!vidId) {
+      addLog(`ยังไม่มี Video ID ในระบบ กำลังเริ่มต้นอัปโหลดใหม่ตั้งแต่ขั้นตอนแรก...`);
+      handleStartPipeline();
+      return;
+    }
+
     try {
       addLog(`สั่งรัน GitHub Actions ใหม่สำหรับ Video #${vidId}...`);
       setErrorMsg(null);
@@ -617,7 +631,7 @@ export default function UploadPage() {
             resolution: fileDetails.resolution,
             fps: fileDetails.fps,
             codec: fileDetails.codec,
-            thumbnailDataUrl: thumbnailUrl || '',
+            thumbnailDataUrl: (thumbnailUrl && !thumbnailUrl.startsWith('data:')) ? thumbnailUrl : '',
           },
         }),
       });
@@ -984,8 +998,14 @@ export default function UploadPage() {
                       {currentStatus === 'FAILED' && (
                         <button
                           type="button"
-                          onClick={() => handleRetryTrigger(activeVideoId, rawFileName, title)}
-                          className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs transition"
+                          onClick={() => {
+                            if (activeVideoId && rawFileName) {
+                              handleRetryTrigger(activeVideoId, rawFileName, title);
+                            } else {
+                              handleStartPipeline();
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs transition cursor-pointer"
                         >
                           <RotateCcw className="w-3 h-3" />
                           <span>ลองใหม่อีกครั้ง</span>
@@ -1037,7 +1057,7 @@ export default function UploadPage() {
                 {!currentStatus && (
                   <button
                     type="button"
-                    onClick={handleStartPipeline}
+                    onClick={() => handleStartPipeline()}
                     disabled={isUploading}
                     className="w-full py-3 px-6 rounded-xl bg-[#FF7A00] hover:bg-[#E56E00] active:scale-[0.99] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
                   >

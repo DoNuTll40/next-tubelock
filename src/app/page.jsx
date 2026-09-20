@@ -122,10 +122,9 @@ export default function FeedPage() {
               style={{ y: pullY - 10, scale: Math.min(pullY / PULL_THRESHOLD, 1) }}
               className="w-10 h-10 rounded-full bg-white border border-[#EFECE6] shadow-lg flex items-center justify-center"
             >
-              <Loader2 
-                className={`w-5 h-5 text-[#FF7A00] transition-transform ${
-                  pullY >= PULL_THRESHOLD ? 'animate-spin' : ''
-                }`}
+              <Loader2
+                className={`w-5 h-5 text-[#FF7A00] transition-transform ${pullY >= PULL_THRESHOLD ? 'animate-spin' : ''
+                  }`}
                 style={{ transform: `rotate(${pullY * 4}deg)` }}
               />
             </motion.div>
@@ -167,15 +166,17 @@ export default function FeedPage() {
           </div>
         ) : (
           /* YOUTUBE PC & MOBILE RESPONSIVE VIDEO GRID */
-          <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-7"}>
+          <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-y-7 "}>
             {filteredVideos.map((vid) => (
-              <VideoCard 
-                key={vid.id} 
-                video={vid} 
-                onDelete={(deletedId) => {
-                  setVideos((prev) => prev.filter((v) => v.id !== deletedId));
-                }}
-              />
+              <div className='bg-transparent hover:bg-neutral-200 rounded-2xl p-2 transition-all duration-500 cursor-pointer hover:shadow-sm'>
+                <VideoCard
+                  key={vid.id}
+                  video={vid}
+                  onDelete={(deletedId) => {
+                    setVideos((prev) => prev.filter((v) => v.id !== deletedId));
+                  }}
+                />
+              </div>
             ))}
           </div>
         )}

@@ -18,7 +18,7 @@ export default function RootLayout({ children }) {
             <AppShell>{children}</AppShell>
           </SidebarProvider>
         </ViewModeProvider>
-        <DevTools />
+        {/* <DevTools /> */}
       </body>
     </html>
   );

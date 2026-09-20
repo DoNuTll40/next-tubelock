@@ -6,6 +6,23 @@ export const dynamic = 'force-dynamic';
 
 const assetCache = globalThis.__tubelock_asset_cache || (globalThis.__tubelock_asset_cache = new Map());
 
+function isTempauthValid(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const urlObj = new URL(url);
+    const tempauth = urlObj.searchParams.get('tempauth');
+    if (!tempauth) return true;
+    const parts = tempauth.split('.');
+    if (parts.length < 2) return true;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    const expSeconds = Number(payload.exp);
+    if (!expSeconds) return true;
+    return (expSeconds * 1000) > (Date.now() + 5 * 60 * 1000);
+  } catch (_) {
+    return true;
+  }
+}
+
 /**
  * GET /streams/[...path]
  * Proxies/redirects relative stream asset paths (e.g. /streams/stream_vid_823/poster.jpg)
@@ -22,10 +39,12 @@ export async function GET(request, context) {
     const fileName = path.slice(1).join('/'); // e.g. 'poster.jpg'
     const cacheKey = `${folderName}/${fileName}`.toLowerCase();
 
-    // ⚡ 1. Ultra-fast In-Memory Hit (<1ms)
+    // ⚡ 1. Ultra-fast In-Memory Hit (<1ms) with Token Expiration Check
     const cached = assetCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
+    if (cached && cached.expiresAt > Date.now() && isTempauthValid(cached.url)) {
       return NextResponse.redirect(cached.url, 307);
+    } else {
+      assetCache.delete(cacheKey);
     }
 
     const sql = getDb();
@@ -62,8 +81,7 @@ export async function GET(request, context) {
     if (!folderId) {
       return new NextResponse('OneDrive folder ID not found for video', { status: 404 });
     }
-
-    // ⚡ 3. Check if downloadUrl is already in source_cache
+    // ⚡ 3. Check if downloadUrl is already in source_cache and still valid
     if (video.source_cache) {
       const cacheData = typeof video.source_cache === 'string'
         ? JSON.parse(video.source_cache)
@@ -71,10 +89,10 @@ export async function GET(request, context) {
       const foundItem = cacheData?.items?.find(
         (i) => i.name.toLowerCase() === fileName.toLowerCase()
       );
-      if (foundItem?.downloadUrl) {
+      if (foundItem?.downloadUrl && isTempauthValid(foundItem.downloadUrl)) {
         assetCache.set(cacheKey, {
           url: foundItem.downloadUrl,
-          expiresAt: Date.now() + 60 * 60 * 1000,
+          expiresAt: Date.now() + 40 * 60 * 1000,
         });
         return NextResponse.redirect(foundItem.downloadUrl, 307);
       }

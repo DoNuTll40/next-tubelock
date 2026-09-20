@@ -6,15 +6,33 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 // High-speed In-Memory Cache (Global across server restarts/HMR in dev)
-// OneDrive download tokens are valid for multiple hours; cache for 60 minutes.
 const sourceCache = globalThis.__tubelock_source_cache || (globalThis.__tubelock_source_cache = new Map());
 const inFlightRequests = globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
 
+// Prevent Vercel CDN from caching expiring OneDrive tempauth tokens
 const EDGE_CACHE_HEADERS = {
-  'Cache-Control': 'public, max-age=0, s-maxage=3600, stale-while-revalidate=1800',
-  'CDN-Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
-  'Vercel-CDN-Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=1800',
+  'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+  'CDN-Cache-Control': 'no-store',
+  'Vercel-CDN-Cache-Control': 'no-store',
 };
+
+function isTempauthValid(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const urlObj = new URL(url);
+    const tempauth = urlObj.searchParams.get('tempauth');
+    if (!tempauth) return true;
+    const parts = tempauth.split('.');
+    if (parts.length < 2) return true;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    const expSeconds = Number(payload.exp);
+    if (!expSeconds) return true;
+    // Require at least 5 minutes remaining before token expiry
+    return (expSeconds * 1000) > (Date.now() + 5 * 60 * 1000);
+  } catch (_) {
+    return true;
+  }
+}
 
 let columnsChecked = false;
 async function ensureSourceCacheColumns(sql) {
@@ -44,10 +62,15 @@ export async function GET(request, context) {
     if (forceFresh) {
       sourceCache.delete(cacheKey);
     } else {
-      // ⚡ 1. Ultra-fast Cache Hit (<1ms)
+      // ⚡ 1. Ultra-fast Cache Hit (<1ms) with Token Expiry Validation
       const cached = sourceCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0) {
-        return NextResponse.json(cached.data, { headers: EDGE_CACHE_HEADERS });
+        const sampleUrl = cached.data.items[0]?.downloadUrl || cached.data.url;
+        if (isTempauthValid(sampleUrl)) {
+          return NextResponse.json(cached.data, { headers: EDGE_CACHE_HEADERS });
+        } else {
+          sourceCache.delete(cacheKey);
+        }
       }
     }
 
@@ -100,11 +123,14 @@ export async function GET(request, context) {
           ? JSON.parse(video.source_cache)
           : video.source_cache;
 
+        const sampleUrl = parsedCache?.items?.[0]?.downloadUrl || parsedCache?.url;
+        const isTokenValid = isTempauthValid(sampleUrl);
+
         // Verify that HLS cache is not an incomplete early snapshot (e.g. only 144p cached while transcode finished)
         const cachedM3u8Count = parsedCache?.items?.filter((i) => i.name?.endsWith('.m3u8')).length || 0;
         const isStaleEarlySnapshot = (video.transcode_progress === 100 || video.status === 'READY') && cachedM3u8Count <= 2 && (parsedCache?.items?.length || 0) < 150;
 
-        if (!isStaleEarlySnapshot && parsedCache && (parsedCache.items?.length > 0 || parsedCache.url)) {
+        if (isTokenValid && !isStaleEarlySnapshot && parsedCache && (parsedCache.items?.length > 0 || parsedCache.url)) {
           const resultData = {
             ...parsedCache,
             video,
@@ -117,7 +143,7 @@ export async function GET(request, context) {
         }
       }
 
-      // If not in DB cache or expired, fetch fresh download URLs from OneDrive (valid for 90-120 mins)
+      // If not in DB cache or expired, fetch fresh download URLs from OneDrive (valid for 60 mins)
       const token = await getGraphToken();
       const driveId = await getUserDriveId(token);
 
@@ -158,9 +184,9 @@ export async function GET(request, context) {
           items: validItems,
         };
 
-        // Cache for 90 minutes if 100% complete; otherwise cache for only 15 seconds so upcoming qualities are picked up
+        // Cache for 40 minutes if complete (leaving a 20-minute safety buffer before Microsoft 60-minute expiry)
         const isCompleted = Number(video.transcode_progress || 0) >= 100;
-        const expiresAt = Date.now() + (isCompleted ? 90 * 60 * 1000 : 15 * 1000);
+        const expiresAt = Date.now() + (isCompleted ? 40 * 60 * 1000 : 15 * 1000);
 
         sourceCache.set(cacheKey, {
           data: resultData,
