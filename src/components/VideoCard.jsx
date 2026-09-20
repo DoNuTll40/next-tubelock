@@ -7,6 +7,7 @@ import { formatResolutionBadge } from '@/lib/videoUtils';
 
 export default function VideoCard({ video, replace = false, compact = false }) {
   const [showMenu, setShowMenu] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
   const formatDuration = (sec) => {
     if (!sec) return '00:00';
@@ -28,17 +29,19 @@ export default function VideoCard({ video, replace = false, compact = false }) {
           replace={replace}
           className="relative w-36 sm:w-40 aspect-video rounded-xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] shrink-0 shadow-2xs"
         >
-          {video.thumbnail_url ? (
+          {video.thumbnail_url && !imgError ? (
             <>
               <img
                 src={video.thumbnail_url}
                 alt=""
                 aria-hidden="true"
+                onError={() => setImgError(true)}
                 className="absolute inset-0 w-full h-full object-cover blur-sm scale-110 opacity-30 select-none pointer-events-none"
               />
               <img
                 src={video.thumbnail_url}
                 alt={video.title}
+                onError={() => setImgError(true)}
                 className="relative z-10 w-full h-full object-contain drop-shadow-xs"
                 loading="lazy"
               />
@@ -100,17 +103,19 @@ export default function VideoCard({ video, replace = false, compact = false }) {
       >
         {/* 16:9 Thumbnail Screen */}
         <div className="relative aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] shadow-xs">
-          {video.thumbnail_url ? (
+          {video.thumbnail_url && !imgError ? (
             <>
               <img
                 src={video.thumbnail_url}
                 alt=""
                 aria-hidden="true"
+                onError={() => setImgError(true)}
                 className="absolute inset-0 w-full h-full object-cover blur-sm scale-110 opacity-30 select-none pointer-events-none"
               />
               <img
                 src={video.thumbnail_url}
                 alt={video.title}
+                onError={() => setImgError(true)}
                 className="relative z-10 w-full h-full object-contain drop-shadow-sm"
                 loading="lazy"
               />

@@ -233,6 +233,7 @@ export default function WatchPage() {
                 <img
                   src={video.thumbnail_url}
                   alt={video?.title || 'Thumbnail'}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
                   className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
                 />
               )}
