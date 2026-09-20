@@ -483,7 +483,6 @@ export default function VideoPlayer({
             if (lvl) {
               const activeLabel = formatResolutionBadge(`${lvl.height}p`);
               setActiveLevelLabel(activeLabel);
-              showToast(`คุณภาพ : ${activeLabel}`);
             }
           });
 
@@ -1178,14 +1177,14 @@ export default function VideoPlayer({
       onPointerUp={handlePointerUp}
       className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
         ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
-        : 'rounded-2xl border border-black/10 shadow-md'
+        : 'w-full rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-md'
         } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
         width: isFullscreen ? '100vw' : '100%',
         maxWidth: isFullscreen ? undefined : (isVerticalVideo ? '480px' : `calc((100vh - 140px) * ${videoRatio})`),
         aspectRatio: isFullscreen
           ? undefined
-          : (isMobileView && isVerticalVideo ? '16 / 9' : `${videoRatio}`),
+          : `${videoRatio}`,
         maxHeight: isFullscreen ? undefined : 'calc(100vh - 140px)',
         margin: '0 auto',
         contain: 'paint layout',

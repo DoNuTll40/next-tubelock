@@ -31,6 +31,7 @@ export default function WatchPage() {
   const [disliked, setDisliked] = useState(false);
   const [likeCount, setLikeCount] = useState(652);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
 
   const videoRef = useRef(null);
@@ -259,10 +260,10 @@ export default function WatchPage() {
         </div>
 
         {/* 📱 YouTube-Style Video Details Section (Left Col Row 2 on desktop) */}
-        <div className="flex flex-col gap-3.5 p-3.5 sm:px-0 sm:pt-4 bg-[#FBF9F5] lg:col-start-1 lg:row-start-2">
+        <div className="flex flex-col gap-3 p-3.5 sm:px-0 sm:pt-4 bg-[#FBF9F5] lg:col-start-1 lg:row-start-2">
           {/* Title */}
           {video ? (
-            <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] leading-snug line-clamp-2">
+            <h1 className="text-[16.5px] sm:text-xl font-bold text-[#0F0F0F] leading-snug line-clamp-2">
               {video.title}
             </h1>
           ) : (
@@ -285,15 +286,15 @@ export default function WatchPage() {
             </button>
           </div>
 
-          {/* 👤 YouTube Channel Row */}
-          <div className="flex items-center justify-between gap-3 py-1">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white shadow-xs shrink-0">
-                <Layers className="w-5 h-5 text-white" />
+          {/* 👤 YouTube Channel Row (Single compact row on mobile) */}
+          <div className="flex items-center justify-between gap-2 py-1">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white shadow-xs shrink-0">
+                <Layers className="w-4 h-4 text-white" />
               </div>
               <div className="flex flex-col min-w-0">
                 <div className="flex items-center gap-1">
-                  <span className="font-bold text-[14px] text-[#0F0F0F] truncate">
+                  <span className="font-bold text-[13.5px] sm:text-[14px] text-[#0F0F0F] truncate">
                     OneDrive Cloud Storage
                   </span>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="เชื่อมต่อแล้ว" />
@@ -304,14 +305,13 @@ export default function WatchPage() {
               </div>
             </div>
 
-            {/* YouTube-Style Subscribe / Save Pill Button */}
+            {/* YouTube-Style Subscribe Capsule Button */}
             <button
               type="button"
               onClick={() => {
                 setIsSubscribed(!isSubscribed);
-                showToast && showToast(isSubscribed ? 'ยกเลิกการติดตามแล้ว' : 'ติดตามช่องนี้แล้ว');
               }}
-              className={`px-4 py-2 rounded-full text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
+              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
                 isSubscribed 
                   ? 'bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F]' 
                   : 'bg-[#0F0F0F] hover:bg-[#272727] text-white'
@@ -321,7 +321,7 @@ export default function WatchPage() {
             </button>
           </div>
 
-          {/* 🔘 YouTube Pill Action Buttons Bar */}
+          {/* 🔘 YouTube Pill Action Buttons Bar (Clean: Like/Dislike, Share, Save) */}
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
             {/* Like / Dislike Split Pill */}
             <div className="flex items-center bg-[#F2F2F2] rounded-full text-xs font-semibold text-[#0F0F0F] shrink-0">
@@ -353,38 +353,47 @@ export default function WatchPage() {
               <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
             </button>
 
-            {/* Resolution / Codec Badge Pill */}
-            <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-[#FF7A00]" />
-              <span>{resBadge || '4K'} • {video?.codec ? video.codec.toUpperCase() : 'H264'}</span>
-            </div>
-
-            {/* File Size MB */}
-            <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
-              <HardDrive className="w-3.5 h-3.5 text-zinc-500" />
-              <span>{fileSizeMB} MB</span>
-            </div>
-
-            {/* Duration Pill */}
-            <div className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] text-[#0F0F0F] text-xs font-semibold shrink-0">
-              <Clock className="w-3.5 h-3.5 text-zinc-500" />
-              <span>{formatDuration(video?.duration)}</span>
-            </div>
+            {/* Save / Bookmark Pill */}
+            <button
+              type="button"
+              onClick={() => setIsSaved(!isSaved)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
+            >
+              <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F]'}`} />
+              <span>{isSaved ? 'บันทึกแล้ว' : 'บันทึก'}</span>
+            </button>
           </div>
 
-          {/* 💬 YouTube-Style Comments & Description Preview Card */}
+          {/* 💬 YouTube-Style Comments & Description Preview Card with Technical Badges */}
           <div 
             onClick={() => setIsDescOpen(!isDescOpen)}
-            className="bg-[#F2F2F2] hover:bg-[#EBEBEB] rounded-2xl p-3.5 flex flex-col gap-2 transition cursor-pointer select-none"
+            className="bg-[#F2F2F2] hover:bg-[#EBEBEB] rounded-2xl p-3.5 flex flex-col gap-2.5 transition cursor-pointer select-none"
           >
             <div className="flex items-center justify-between text-xs font-bold text-[#0F0F0F]">
               <div className="flex items-center gap-2">
-                <span>รายละเอียดและข้อมูลไฟล์</span>
+                <span>คำอธิบายและข้อมูลไฟล์</span>
                 <span className="text-[11px] text-[#606060] font-normal">
                   {formatDuration(video?.duration)} • {fileSizeMB} MB
                 </span>
               </div>
               {isDescOpen ? <ChevronUp className="w-4 h-4 text-[#606060]" /> : <ChevronDown className="w-4 h-4 text-[#606060]" />}
+            </div>
+
+            {/* Technical Metadata Pills inside Description Card */}
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[#606060] font-medium pt-0.5">
+              <span className="bg-[#E5E5E5] px-2 py-0.5 rounded font-semibold text-[#0F0F0F]">
+                {resBadge || '4K'} • {video?.codec ? video.codec.toUpperCase() : 'H264'}
+              </span>
+              <span>•</span>
+              <span>{fileSizeMB} MB</span>
+              <span>•</span>
+              <span>{formatDuration(video?.duration)}</span>
+              {video?.fps && (
+                <>
+                  <span>•</span>
+                  <span>{video.fps} fps</span>
+                </>
+              )}
             </div>
 
             <div className={`text-xs text-[#282828] leading-relaxed transition-all ${isDescOpen ? 'block' : 'line-clamp-2'}`}>
@@ -393,7 +402,7 @@ export default function WatchPage() {
           </div>
 
           {/* 🏷️ YouTube Recommendation Filter Chips */}
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-0.5 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
             {[
               { id: 'all', label: 'ทั้งหมด' },
               { id: 'cloud', label: 'จาก OneDrive' },
@@ -430,11 +439,21 @@ export default function WatchPage() {
               ไม่มีวิดีโออื่นในคลัง
             </div>
           ) : (
-            <div className="flex flex-col gap-3 sm:gap-3">
-              {relatedVideos.map((item) => (
-                <VideoCard key={item.id} video={item} replace={true} compact={true} />
-              ))}
-            </div>
+            <>
+              {/* Mobile: Full-width feed cards (YouTube mobile app experience) */}
+              <div className="flex flex-col gap-4 sm:hidden">
+                {relatedVideos.map((item) => (
+                  <VideoCard key={`mob-${item.id}`} video={item} replace={true} compact={false} />
+                ))}
+              </div>
+
+              {/* Desktop / Tablet: Compact sidebar cards */}
+              <div className="hidden sm:flex flex-col gap-3">
+                {relatedVideos.map((item) => (
+                  <VideoCard key={`desk-${item.id}`} video={item} replace={true} compact={true} />
+                ))}
+              </div>
+            </>
           )}
         </div>
       </div>
