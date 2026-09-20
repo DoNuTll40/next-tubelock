@@ -19,7 +19,7 @@ export default function AppShell({ children }) {
   const isExcludedPage = pathname?.startsWith('/watch') || pathname?.startsWith('/settings');
 
   return (
-    <div className="flex flex-col min-h-screen w-full relative bg-[#FBF9F5]">
+    <div className="flex flex-col min-h-screen w-full relative bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1] transition-colors duration-200">
       {/* Top Navigation */}
       <Navbar />
 

@@ -78,27 +78,27 @@ export default function SyncPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 flex flex-col gap-6 select-none">
       {/* Header */}
-      <div className="pb-3 border-b border-[#EFECE6]">
-        <h1 className="text-2xl font-bold text-[#212529] tracking-tight">ซิงก์คลังสื่อ OneDrive</h1>
-        <p className="text-xs text-[#8C857B] mt-1">
+      <div className="pb-3 border-b border-[#EFECE6] dark:border-white/10">
+        <h1 className="text-2xl font-bold text-[#212529] dark:text-[#F1F1F1] tracking-tight">ซิงก์คลังสื่อ OneDrive</h1>
+        <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
           ดึงข้อมูลไฟล์วิดีโอและชุด HLS จาก OneDrive เข้าสู่ฐานข้อมูล TubeLock โดยตรงผ่าน Azure Client Secret (ไม่ต้องเข้าสู่ระบบ)
         </p>
       </div>
 
       {/* Cloud Service Connection Status Card */}
-      <div className="bg-white border border-[#EFECE6] rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
             <ShieldCheck className="w-5 h-5 stroke-[2.2]" />
           </div>
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-[#212529]">Microsoft OneDrive Service Principal</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
+              <span className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1]">Microsoft OneDrive Service Principal</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
                 เชื่อมต่อแล้ว
               </span>
             </div>
-            <span className="text-[10px] text-emerald-600 font-semibold mt-0.5 flex items-center gap-1.5">
+            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               พร้อมใช้งานผ่าน Azure Client Secret ตลอด 24 ชม. (ไม่ต้องล็อกอินหน้าเว็บ)
             </span>
@@ -107,14 +107,14 @@ export default function SyncPage() {
       </div>
 
       {/* Target Path Info Card */}
-      <div className="bg-white border border-[#EFECE6] rounded-2xl p-4 flex items-center justify-between shadow-xs">
+      <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-4 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-[#FFF4EB] text-[#FF7A00] rounded-xl shrink-0">
+          <div className="p-2.5 bg-[#FFF4EB] dark:bg-[#FF7A00]/15 text-[#FF7A00] rounded-xl shrink-0">
             <Folder className="w-5 h-5 stroke-[2]" />
           </div>
           <div>
-            <p className="text-[11px] text-[#8C857B]">โฟลเดอร์ต้นทางตามการตั้งค่า</p>
-            <p className="text-sm font-bold text-[#212529] font-mono">{targetFolder}</p>
+            <p className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA]">โฟลเดอร์ต้นทางตามการตั้งค่า</p>
+            <p className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] font-mono">{targetFolder}</p>
           </div>
         </div>
 
@@ -128,15 +128,15 @@ export default function SyncPage() {
       </div>
 
       {/* Sync Action Area */}
-      <div className="bg-white border border-[#EFECE6] rounded-2xl p-7 shadow-xs flex flex-col items-center text-center gap-3.5">
-        <div className="w-14 h-14 rounded-2xl bg-[#FFF4EB] flex items-center justify-center text-[#FF7A00] shadow-inner">
+      <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-7 shadow-xs flex flex-col items-center text-center gap-3.5">
+        <div className="w-14 h-14 rounded-2xl bg-[#FFF4EB] dark:bg-[#FF7A00]/15 flex items-center justify-center text-[#FF7A00] shadow-inner">
           <RefreshCw className={`w-7 h-7 stroke-[2.2] ${syncing ? 'animate-spin' : ''}`} />
         </div>
 
         <div>
-          <h2 className="text-base font-bold text-[#212529]">เริ่มการสแกนและนำเข้าวิดีโอ</h2>
-          <p className="text-xs text-[#8C857B] mt-1 max-w-md mx-auto leading-relaxed">
-            ระบบจะสแกนโฟลเดอร์ <strong>{targetFolder}</strong> บน OneDrive ของคุณแบบอัตโนมัติ ตรวจจับทั้งไฟล์ MP4 และชุดโฟลเดอร์ HLS (ABR) แล้วบันทึกลงฐานข้อมูล Neon DB ทันที
+          <h2 className="text-base font-bold text-[#212529] dark:text-[#F1F1F1]">เริ่มการสแกนและนำเข้าวิดีโอ</h2>
+          <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1 max-w-md mx-auto leading-relaxed">
+            ระบบจะสแกนโฟลเดอร์ <strong className="text-[#212529] dark:text-[#F1F1F1]">{targetFolder}</strong> บน OneDrive ของคุณแบบอัตโนมัติ ตรวจจับทั้งไฟล์ MP4 และชุดโฟลเดอร์ HLS (ABR) แล้วบันทึกลงฐานข้อมูล Neon DB ทันที
           </p>
         </div>
 
@@ -153,14 +153,14 @@ export default function SyncPage() {
 
       {/* Sync Summary Banner */}
       {summary && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-emerald-900 text-xs animate-fadeIn">
+        <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-emerald-900 dark:text-emerald-200 text-xs animate-fadeIn">
           <div className="flex items-center gap-3">
-            <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0" />
             <div>
-              <p className="font-bold text-sm text-emerald-950">
+              <p className="font-bold text-sm text-emerald-950 dark:text-emerald-100">
                 ซิงก์สำเร็จ! นำเข้าวิดีโอแล้ว {summary.imported} รายการ
               </p>
-              <p className="text-[11px] text-emerald-800 mt-0.5">
+              <p className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-0.5">
                 พบรายการทั้งหมดใน OneDrive {summary.total} รายการ ข้อมูลพร้อมแสดงผลบนหน้าแรกแล้ว
               </p>
             </div>
@@ -178,8 +178,8 @@ export default function SyncPage() {
 
       {/* Error Alert */}
       {errorMsg && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-center gap-3 text-red-800 text-xs">
-          <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+        <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/40 rounded-2xl p-4 flex items-center gap-3 text-red-800 dark:text-red-300 text-xs">
+          <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
@@ -187,7 +187,7 @@ export default function SyncPage() {
       {/* Terminal Log Console */}
       {logs.length > 0 && (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-1 text-xs font-bold text-[#8C857B]">
+          <div className="flex items-center gap-2 px-1 text-xs font-bold text-[#8C857B] dark:text-[#AAAAAA]">
             <Terminal className="w-4 h-4 text-[#FF7A00]" />
             <span>บันทึกการทำงานสด (Live Logs)</span>
           </div>

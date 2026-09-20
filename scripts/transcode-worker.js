@@ -426,10 +426,11 @@ async function main() {
 
     const probeData = await new Promise((resolve) => {
       const proc = spawn('ffprobe', [
-        '-v', 'quiet',
-        '-print_format', 'json',
-        '-show_format',
-        '-show_streams',
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,duration,r_frame_rate,codec_name',
+        '-show_entries', 'format=duration,bit_rate',
+        '-of', 'json',
         rawFilePath,
       ]);
 
@@ -440,14 +441,29 @@ async function main() {
       });
     });
 
-    const vStream = (probeData.streams || []).find((s) => s.codec_type === 'video') || {};
+    const vStream = (probeData.streams || []).find((s) => s.codec_type === 'video') || (probeData.streams || [])[0] || {};
     const srcWidth = vStream.width || 1920;
     const srcHeight = vStream.height || 1080;
     const duration = Math.round(parseFloat(probeData.format?.duration || vStream.duration || '0'));
     const fps = vStream.r_frame_rate ? Math.round(eval(vStream.r_frame_rate) || 30) : 30;
     const codec = vStream.codec_name || 'h264';
     const bitrate = probeData.format?.bit_rate ? Math.round(parseInt(probeData.format.bit_rate)) : (vStream.bit_rate ? Math.round(parseInt(vStream.bit_rate)) : 0);
-    const resolutionLabel = (srcHeight >= 2160 || srcWidth >= 3840) ? '4K' : (srcHeight >= 1440 || srcWidth >= 2560) ? '2K' : srcHeight >= 1080 ? '1080p' : srcHeight >= 720 ? '720p' : '480p';
+
+    const maxDim = Math.max(srcWidth, srcHeight);
+    const minDim = Math.min(srcWidth, srcHeight) || maxDim;
+    let resolutionLabel = '360p';
+    if (srcWidth >= 3840 || srcHeight >= 2160 || maxDim >= 3840 || minDim >= 2160) {
+      resolutionLabel = '4K';
+    } else if (srcWidth >= 2560 || srcHeight >= 1440 || maxDim >= 2560 || minDim >= 1440) {
+      resolutionLabel = '2K';
+    } else if (srcWidth >= 1920 || srcHeight >= 1080 || maxDim >= 1920 || minDim >= 1080) {
+      resolutionLabel = '1080p';
+    } else if (srcWidth >= 1280 || srcHeight >= 720 || maxDim >= 1280 || minDim >= 720) {
+      resolutionLabel = '720p';
+    } else if (srcWidth >= 854 || srcHeight >= 480 || maxDim >= 854 || minDim >= 480) {
+      resolutionLabel = '480p';
+    }
+
     const gopSize = String(fps > 0 ? Math.round(fps * 2) : 60);
 
     console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, bitrate: ${bitrate}, GOP: ${gopSize}, codec: ${codec}`);

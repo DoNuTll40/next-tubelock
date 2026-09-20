@@ -21,7 +21,7 @@ export default function BottomNav() {
   ];
 
   return (
-    <footer className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#EFECE6] shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
+    <footer className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-t border-[#EFECE6] dark:border-white/10 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
       <nav className="max-w-md mx-auto grid grid-cols-5 items-center h-14 sm:h-16 px-2 relative">
         {navItems.map((item) => {
           const Icon = item.icon;
@@ -36,7 +36,7 @@ export default function BottomNav() {
                   className="absolute -top-3.5 flex flex-col items-center group active:scale-90 transition-transform"
                   title={item.label}
                 >
-                  <div className="w-[52px] h-[52px] rounded-full bg-[#FF7A00] text-white flex items-center justify-center shadow-[0_6px_20px_rgba(255,122,0,0.45)] border-[3px] border-[#FBF9F5] group-hover:bg-[#E06C00] transition-colors">
+                  <div className="w-[52px] h-[52px] rounded-full bg-[#FF7A00] text-white flex items-center justify-center shadow-[0_6px_20px_rgba(255,122,0,0.45)] border-[3px] border-[#FBF9F5] dark:border-[#0F0F0F] group-hover:bg-[#E06C00] transition-colors">
                     <Icon className="w-6 h-6 stroke-[2.5]" />
                   </div>
                   {item.isDev && (
@@ -54,7 +54,7 @@ export default function BottomNav() {
               key={item.path}
               href={item.path}
               className={`flex flex-col items-center justify-center gap-1 h-full transition-colors active:scale-95 ${
-                isActive ? 'text-[#FF7A00]' : 'text-[#8C857B] hover:text-[#212529]'
+                isActive ? 'text-[#FF7A00]' : 'text-[#8C857B] dark:text-[#888888] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
               }`}
             >
               <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.2]' : 'stroke-[1.8]'}`} />

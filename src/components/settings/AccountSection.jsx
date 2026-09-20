@@ -24,9 +24,9 @@ export default function AccountSection({
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
       {/* YouTube Account Header (Screenshot 4) */}
-      <div className="pb-2 border-b border-[#EFECE6]">
-        <h2 className="text-xl font-bold text-[#212529]">บัญชีและโปรไฟล์</h2>
-        <p className="text-xs text-[#8C857B] mt-1">
+      <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
+        <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">บัญชีและโปรไฟล์</h2>
+        <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
           เลือกลักษณะการแสดงตัวและสิ่งที่คุณเห็นใน TubeLock
         </p>
         <span className="inline-block mt-1 text-xs font-medium text-[#FF7A00]">
@@ -35,9 +35,9 @@ export default function AccountSection({
       </div>
 
       {/* Profile Overview Card */}
-      <div className="bg-white rounded-2xl border border-[#EFECE6] p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full overflow-hidden bg-[#FBF9F5] border-2 border-[#EFECE6] shrink-0 shadow-inner">
+          <div className="w-16 h-16 rounded-full overflow-hidden bg-[#FBF9F5] dark:bg-[#202020] border-2 border-[#EFECE6] dark:border-white/15 shrink-0 shadow-inner">
             <img
               src={gravatarHash ? `https://www.gravatar.com/avatar/${gravatarHash}?d=${fallbackAvatar}&s=160` : `https://www.gravatar.com/avatar/?d=${fallbackAvatar}&s=160`}
               alt="Preview"
@@ -45,11 +45,11 @@ export default function AccountSection({
             />
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-bold text-[#212529]">ภาพโปรไฟล์ของคุณ</span>
-            <span className="text-xs text-[#8C857B] font-mono truncate mt-0.5">
+            <span className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1]">ภาพโปรไฟล์ของคุณ</span>
+            <span className="text-xs text-[#8C857B] dark:text-[#888888] font-mono truncate mt-0.5">
               {gravatarHash ? `SHA-256: ${gravatarHash.substring(0, 20)}...` : 'ยังไม่มีอีเมลผูกไว้'}
             </span>
-            <span className="text-[11px] text-emerald-600 font-semibold mt-1 flex items-center gap-1.5">
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               ซิงก์ภาพสากลจาก Gravatar
             </span>
@@ -61,7 +61,7 @@ export default function AccountSection({
       <SettingCard title="การตั้งค่าโปรไฟล์" subtitle="ข้อมูลสำหรับเชื่อมต่อ Gravatar อัตโนมัติ">
         {/* Gravatar Email Row */}
         <div className="p-4 sm:p-5 flex flex-col gap-2">
-          <label className="text-xs font-bold text-[#212529]">Gravatar Email</label>
+          <label className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1]">Gravatar Email</label>
           <input
             type="email"
             value={gravatarEmail}
@@ -71,9 +71,9 @@ export default function AccountSection({
               window.dispatchEvent(new Event('storage'));
             }}
             placeholder="name@example.com"
-            className="w-full px-4 py-2.5 bg-[#FBF9F5] hover:bg-white focus:bg-white border border-[#E5DFD5] hover:border-[#D5CFC5] focus:border-[#FF7A00] focus:ring-3 focus:ring-[#FF7A00]/15 rounded-xl text-xs text-[#212529] transition-all outline-none"
+            className="w-full px-4 py-2.5 bg-[#FBF9F5] dark:bg-[#141414] hover:bg-white dark:hover:bg-[#1a1a1a] focus:bg-white dark:focus:bg-[#1a1a1a] border border-[#E5DFD5] dark:border-white/10 hover:border-[#D5CFC5] dark:hover:border-white/20 focus:border-[#FF7A00] focus:ring-3 focus:ring-[#FF7A00]/15 rounded-xl text-xs text-[#212529] dark:text-[#F1F1F1] transition-all outline-none"
           />
-          <span className="text-[11px] text-[#8C857B]">
+          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
             เมื่อระบุอีเมล ระบบจะแปลงเป็น SHA-256 Hash เพื่อดึงรูปโปรไฟล์มาแสดงบน Navbar และมุมขวาบน
           </span>
         </div>
@@ -114,7 +114,7 @@ export default function AccountSection({
             className="sm:hidden flex items-center gap-1 text-xs font-semibold text-[#FF7A00]"
           >
             <span>{FALLBACK_OPTIONS.find((o) => o.value === fallbackAvatar)?.label || fallbackAvatar}</span>
-            <ChevronRight className="w-4 h-4 text-[#8C857B]" />
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
           </button>
         </SettingRow>
       </SettingCard>

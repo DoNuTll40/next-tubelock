@@ -1,14 +1,21 @@
 'use client';
+/* eslint-disable react-hooks/purity */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Upload, Film, CheckCircle2, AlertCircle, RefreshCw,
-  Play, HardDrive, Folder, Clock, ChevronDown, ChevronUp,
-  Copy, Check, FileVideo, ListOrdered, ArrowRight, RotateCcw,
-  Sliders, Database, Terminal, Trash2, XCircle
+  Play, ChevronDown, ChevronUp,
+  Copy, Check, ArrowRight, RotateCcw,
+  Terminal, X, ListOrdered, Database, Sliders, Trash2
 } from 'lucide-react';
+import Select from '@/components/ui/Select';
 import { extractVideoMetadata } from '@/lib/uploader';
+import {
+  formatAspectRatio,
+  detectResolutionLabel,
+  detectCodecFromHeader
+} from '@/lib/videoUtils';
 
 const STAGES = [
   { id: 'UPLOADING', label: '1. ส่งเข้า OneDrive' },
@@ -17,6 +24,18 @@ const STAGES = [
   { id: 'TRANSCODING', label: '4. หั่น HLS Multi-bitrate' },
   { id: 'READY', label: '5. พร้อมรับชม' },
 ];
+
+const UPLOAD_CATEGORIES = [
+  { value: 'general', label: 'ทั่วไป (General)' },
+  { value: 'shorts', label: 'วิดีโอสั้น (Shorts)' },
+  { value: 'music', label: 'เพลง / ดนตรี (Music)' },
+  { value: 'entertainment', label: 'บันเทิง / วาไรตี้' },
+  { value: 'gaming', label: 'เกม (Gaming)' },
+  { value: 'tech', label: 'เทคโนโลยี / ไอที' },
+  { value: 'education', label: 'การศึกษา / สาระ' },
+];
+
+const SUGGESTED_TAGS = ['Shorts', '4K', '1080p', 'Music', 'Gaming', 'HLS', 'Tech', 'Vlog'];
 
 function formatDuration(sec) {
   if (!sec || isNaN(sec)) return '0:00';
@@ -33,35 +52,72 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 }
 
-function calculateAspectRatio(w, h) {
-  if (!w || !h) return '16:9';
-  const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
-  const divisor = gcd(w, h);
-  const rw = w / divisor;
-  const rh = h / divisor;
-  if (Math.abs(rw / rh - 16 / 9) < 0.05) return '16:9 Widescreen';
-  if (Math.abs(rw / rh - 4 / 3) < 0.05) return '4:3 Standard';
-  if (Math.abs(rw / rh - 9 / 16) < 0.05) return '9:16 Vertical';
-  return `${rw}:${rh}`;
-}
-
 export default function UploadPage() {
   const fileInputRef = useRef(null);
   const fileRef = useRef(null);
   const titleRef = useRef('');
   const descriptionRef = useRef('');
+  const categoryRef = useRef('general');
+  const tagsRef = useRef(['HLS', 'stream']);
   const logEndRef = useRef(null);
   const pollingTimerRef = useRef(null);
 
-  // Tab: 'upload' or 'queue'
-  const [activeTab, setActiveTab] = useState('upload');
+  // Queue Count for top bar indicator
+  const [queueCount, setQueueCount] = useState(0);
 
   // File & Detailed Metadata
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [tagsInput, setTagsInput] = useState('HLS, stream');
+  const [category, setCategory] = useState('general');
+  const [tags, setTags] = useState(['HLS', 'stream']);
+  const [tagInputValue, setTagInputValue] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
+
+  // Form Helpers
+  const handleCleanTitle = () => {
+    if (!title) return;
+    const cleaned = title
+      .replace(/\.(mp4|mkv|mov|avi|webm|flv|m4v|wmv)$/i, '')
+      .replace(/[_\-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    setTitle(cleaned);
+    titleRef.current = cleaned;
+  };
+
+  const handleInsertTimestamp = () => {
+    const sample = `\n\n📌 ไทม์แสตมป์:\n00:00 บทนำ\n00:30 จุดเด่น\n01:00 สรุป`;
+    const nextDesc = (description + sample).trim();
+    setDescription(nextDesc);
+    descriptionRef.current = nextDesc;
+  };
+
+  const handleAddTag = (rawTag) => {
+    const trimmed = rawTag.trim().replace(/^[#,]+/, '');
+    if (!trimmed) return;
+    if (tags.length >= 15) return;
+    if (tags.some((t) => t.toLowerCase() === trimmed.toLowerCase())) return;
+    const newTags = [...tags, trimmed];
+    setTags(newTags);
+    tagsRef.current = newTags;
+    setTagInputValue('');
+  };
+
+  const handleRemoveTag = (indexToRemove) => {
+    const newTags = tags.filter((_, idx) => idx !== indexToRemove);
+    setTags(newTags);
+    tagsRef.current = newTags;
+  };
+
+  const handleTagKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      handleAddTag(tagInputValue);
+    } else if (e.key === 'Backspace' && !tagInputValue && tags.length > 0) {
+      handleRemoveTag(tags.length - 1);
+    }
+  };
   const [fileDetails, setFileDetails] = useState({
     name: '',
     sizeFormatted: '0 MB',
@@ -81,21 +137,18 @@ export default function UploadPage() {
 
   // Chunk Size Configuration (No throttling, maximum speed)
   // 320 KiB multiples: 10MB = 10,485,760 bytes, 20MB = 20,971,520 bytes, 50MB = 52,428,800 bytes
-  const [chunkSizeMB, setChunkSizeMB] = useState(10);
-
-  useEffect(() => {
+  const [chunkSizeMB, setChunkSizeMB] = useState(() => {
     if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem('tubelock_chunk_size');
         if (saved) {
           const num = parseInt(saved, 10);
-          if ([10, 20, 50].includes(num)) {
-            setChunkSizeMB(num);
-          }
+          if ([10, 20, 50].includes(num)) return num;
         }
       } catch (_) {}
     }
-  }, []);
+    return 10;
+  });
 
   const handleSelectChunkSize = (size) => {
     setChunkSizeMB(size);
@@ -127,9 +180,6 @@ export default function UploadPage() {
   const [errorMsg, setErrorMsg] = useState(null);
   const [completedVideo, setCompletedVideo] = useState(null);
 
-  // Queue Data
-  const [queueItems, setQueueItems] = useState([]);
-  const [loadingQueue, setLoadingQueue] = useState(false);
 
   // Logs
   const [logs, setLogs] = useState([]);
@@ -157,7 +207,7 @@ export default function UploadPage() {
     setCurrentStatus(null);
     setTranscodeProgress(0);
 
-    const cleanBaseName = selectedFile.name.replace(/\.[^/.]+$/, '');
+    const cleanBaseName = selectedFile.name.replace(/\.[^/.]+$/, '').trim();
     setTitle(cleanBaseName);
     titleRef.current = cleanBaseName;
     const defaultDesc = `สตรีมมิ่งผ่าน HLS Multi-bitrate (Serverless HLS Engine)`;
@@ -237,13 +287,16 @@ export default function UploadPage() {
     }
 
     try {
+      const headerCodec = await detectCodecFromHeader(selectedFile);
       const meta = await extractVideoMetadata(selectedFile);
       const dur = Math.round(meta.duration || 0);
       const w = meta.width || 0;
       const h = meta.height || 0;
+      const activeCodec = headerCodec ? headerCodec.toUpperCase() : 'H.264';
       const resLabel = (w && h)
-        ? (meta.resolution || (h >= 2160 ? '4K UHD' : h >= 1080 ? '1080p FHD' : h >= 720 ? '720p HD' : '480p SD'))
-        : 'Original / Auto';
+        ? detectResolutionLabel(w, h, { fileSize: selectedFile.size, codec: headerCodec })
+        : (headerCodec ? detectResolutionLabel(0, 0, { fileSize: selectedFile.size, codec: headerCodec }) : 'Original / Auto');
+      const aspectLabel = (w && h) ? formatAspectRatio(w, h) : 'Auto';
       const bitrateNum = dur > 0 ? ((selectedFile.size * 8) / dur / 1000000).toFixed(2) : '0';
 
       setFileDetails({
@@ -252,13 +305,13 @@ export default function UploadPage() {
         sizeBytes: selectedFile.size,
         width: w,
         height: h,
-        resolution: (w && h) ? `${w} x ${h} (${resLabel})` : 'Original / Auto',
-        aspectRatio: (w && h) ? calculateAspectRatio(w, h) : 'Auto',
+        resolution: (w && h) ? `${w} x ${h} (${resLabel})` : resLabel,
+        aspectRatio: aspectLabel,
         durationSec: dur,
         durationFormatted: formatDuration(dur),
         approxBitrate: dur > 0 ? `${bitrateNum} Mbps` : 'คำนวณตอน Transcode',
         fps: meta.fps || 30,
-        codec: 'AVC1 / H.264 / Source',
+        codec: `${activeCodec} / Source`,
         mimeType: detectedMime,
         lastModified: lastModifiedDate,
       });
@@ -267,8 +320,16 @@ export default function UploadPage() {
         setThumbnailUrl(meta.thumbnailDataUrl);
       }
 
+      // Auto-detect Shorts / Vertical video
+      if (w && h && (h > w || aspectLabel.includes('9:16'))) {
+        setCategory('shorts');
+        categoryRef.current = 'shorts';
+        setTags((prev) => (prev.includes('Shorts') ? prev : ['Shorts', ...prev]));
+        tagsRef.current = tagsRef.current.includes('Shorts') ? tagsRef.current : ['Shorts', ...tagsRef.current];
+      }
+
       if (w && h) {
-        addLog(`วิเคราะห์ข้อมูลวิดีโอ: ${w}x${h} [${resLabel}], ความยาว ${formatDuration(dur)}`);
+        addLog(`วิเคราะห์ข้อมูลวิดีโอ: ${w}x${h} [${resLabel}], สัดส่วน: ${aspectLabel}, ความยาว ${formatDuration(dur)}`);
       }
     } catch {
       addLog(`เข้าสู่โหมดอัปโหลดทันที (การวิเคราะห์สเปกวิดีโอจะทำบน Cloud ตอน Transcode)`);
@@ -287,9 +348,14 @@ export default function UploadPage() {
     fileRef.current = null;
     titleRef.current = '';
     descriptionRef.current = '';
+    categoryRef.current = 'general';
+    tagsRef.current = ['HLS', 'stream'];
     setFile(null);
     setTitle('');
     setDescription('');
+    setCategory('general');
+    setTags(['HLS', 'stream']);
+    setTagInputValue('');
     setThumbnailUrl('');
     setIsUploading(false);
     setActiveVideoId(null);
@@ -361,29 +427,27 @@ export default function UploadPage() {
     };
   }, []);
 
-  // Fetch Queue Data
-  const loadQueue = useCallback(async () => {
+  // Fetch Queue Count for Top Link
+  const fetchQueueCount = useCallback(async () => {
     try {
-      setLoadingQueue(true);
       const res = await fetch('/api/videos/queue');
       if (res.ok) {
         const data = await res.json();
-        setQueueItems(data.queue || []);
+        setQueueCount(data.queue ? data.queue.length : 0);
       }
-    } catch (err) {
-      console.warn('Load queue error:', err);
-    } finally {
-      setLoadingQueue(false);
-    }
+    } catch (_) {}
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'queue') {
-      loadQueue();
-      const interval = setInterval(loadQueue, 4000);
-      return () => clearInterval(interval);
-    }
-  }, [activeTab, loadQueue]);
+    const timer = setTimeout(() => {
+      fetchQueueCount();
+    }, 0);
+    const interval = setInterval(fetchQueueCount, 6000);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [fetchQueueCount]);
 
   // Start Pipeline: Direct Full-Speed Upload to OneDrive
   const handleStartPipeline = async (overrideFile = null) => {
@@ -394,7 +458,7 @@ export default function UploadPage() {
     const activeFile = candidateFile || fileRef.current || file;
     if (!activeFile || isUploading) return;
 
-    const resolvedFileName = activeFile.name || fileDetails.name || `video_${Date.now()}.mp4`;
+    const resolvedFileName = activeFile.name || fileDetails.name || (activeFile.lastModified ? `video_${activeFile.lastModified}.mp4` : 'video_upload.mp4');
 
     setIsUploading(true);
     setErrorMsg(null);
@@ -405,7 +469,7 @@ export default function UploadPage() {
     addLog(`เริ่มต้น: ขอ Direct Upload Session เข้า OneDrive Business (/raw/) สำหรับ "${resolvedFileName}"`);
 
     try {
-      const activeTitle = (titleRef.current || title || '').trim() || resolvedFileName.replace(/\.[^/.]+$/, '');
+      const activeTitle = (titleRef.current || title || '').trim() || resolvedFileName.replace(/\.[^/.]+$/, '').trim();
       const activeDesc = (descriptionRef.current || description || '').trim();
 
       // 1. Session Request
@@ -455,7 +519,7 @@ export default function UploadPage() {
       const totalChunks = Math.max(1, Math.ceil(totalSize / CHUNK_SIZE));
       let start = 0;
       let chunkIndex = 0;
-      const uploadStartTime = Date.now();
+      const uploadStartTime = typeof performance !== 'undefined' ? performance.now() : 0;
 
       while (start < totalSize) {
         // ตัด Chunk (Slicing) ตามมาตรฐาน Microsoft Graph API:
@@ -487,7 +551,8 @@ export default function UploadPage() {
             if (e.lengthComputable) {
               const currentTotal = start + e.loaded;
               const pct = Math.min(100, Math.round((currentTotal / totalSize) * 100));
-              const elapsedSec = Math.max(0.1, (Date.now() - uploadStartTime) / 1000);
+              const now = typeof performance !== 'undefined' ? performance.now() : 0;
+              const elapsedSec = Math.max(0.1, (now - uploadStartTime) / 1000);
               const speedBytesPerSec = currentTotal / elapsedSec;
               const speedMBs = (speedBytesPerSec / (1024 * 1024)).toFixed(1);
               const remainingBytes = Math.max(0, totalSize - currentTotal);
@@ -553,8 +618,10 @@ export default function UploadPage() {
       addLog(`เรียก POST /api/upload/complete เพื่อ Trigger GitHub Actions...`);
 
       // 3. Trigger Complete & Dispatch with latest edited title & description
-      const finalTitle = (titleRef.current || title || '').trim() || resolvedFileName.replace(/\.[^/.]+$/, '');
+      const finalTitle = (titleRef.current || title || '').trim() || resolvedFileName.replace(/\.[^/.]+$/, '').trim();
       const finalDesc = (descriptionRef.current || description || '').trim();
+      const finalCategory = categoryRef.current || category || 'general';
+      const finalTags = tagsRef.current || tags || [];
 
       const completeRes = await fetch('/api/upload/complete', {
         method: 'POST',
@@ -564,6 +631,8 @@ export default function UploadPage() {
           rawFileName: serverRawName,
           title: finalTitle,
           description: finalDesc,
+          category: finalCategory,
+          tags: finalTags,
           clientMeta: {
             duration: fileDetails.durationSec,
             resolution: fileDetails.resolution,
@@ -626,6 +695,9 @@ export default function UploadPage() {
           videoId: vidId,
           rawFileName: rFileName,
           title: vidTitle,
+          description: descriptionRef.current || description,
+          category: categoryRef.current || category || 'general',
+          tags: tagsRef.current || tags || [],
           clientMeta: {
             duration: fileDetails.durationSec,
             resolution: fileDetails.resolution,
@@ -640,52 +712,11 @@ export default function UploadPage() {
       if (!res.ok) throw new Error(data.error || 'สั่งรันใหม่ไม่สำเร็จ');
 
       addLog(`ส่งคำสั่งสำเร็จ เริ่มติดตามสถานะแบบ Real-time`);
-      startPollingStatus(vidId);
-      if (activeTab === 'queue') loadQueue();
+      fetchQueueCount();
     } catch (err) {
       setErrorMsg(err.message);
       addLog(`ลองใหม่ไม่สำเร็จ: ${err.message}`);
     }
-  };
-
-  // Delete queue item permanently from DB and OneDrive
-  const handleDeleteQueueItem = async (id, itemTitle) => {
-    if (!confirm(`ต้องการยกเลิกและลบคิว "${itemTitle || '#' + id}" ออกจากระบบถาวรใช่หรือไม่?`)) return;
-
-    // Optimistically remove from state immediately (Zero Cache!)
-    setQueueItems((prev) => prev.filter((item) => item.id !== id));
-    addLog(`ลบคิว #${id} ออกจากระบบ...`);
-
-    try {
-      const res = await fetch(`/api/videos/${id}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        addLog(`ลบคิว #${id} สำเร็จเรียบร้อย`);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'ลบคิวไม่สำเร็จ');
-      }
-    } catch (err) {
-      addLog(`ข้อผิดพลาดในการลบคิว: ${err.message}`);
-    } finally {
-      loadQueue();
-    }
-  };
-
-  // Clear all failed queue items
-  const handleClearAllFailed = async () => {
-    const failedItems = queueItems.filter((i) => i.status === 'FAILED');
-    if (failedItems.length === 0) return;
-    if (!confirm(`ต้องการลบคิวที่ล้มเหลวทั้งหมด (${failedItems.length} รายการ) หรือไม่?`)) return;
-
-    setQueueItems((prev) => prev.filter((item) => item.status !== 'FAILED'));
-    for (const item of failedItems) {
-      try {
-        await fetch(`/api/videos/${item.id}`, { method: 'DELETE' });
-      } catch (_) {}
-    }
-    loadQueue();
   };
 
   const copyLogText = () => {
@@ -716,54 +747,33 @@ export default function UploadPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 select-none pb-36 sm:pb-24">
       {/* Top Bar Navigation */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-[#EFECE6] mb-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-[#EFECE6] dark:border-white/10 mb-6">
         <div>
-          <h1 className="text-xl font-bold text-[#212529] tracking-tight flex items-center gap-2.5">
+          <h1 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1] tracking-tight flex items-center gap-2.5">
             <Upload className="w-5 h-5 text-[#FF7A00]" />
-            จัดการการอัปโหลดและแปลงไฟล์ (Studio Uploader)
+            อัปโหลดวิดีโอ (Upload Video)
           </h1>
-          <p className="text-xs text-[#8C857B] mt-0.5">
-            สถาปัตยกรรม Direct OneDrive Upload + GitHub Actions Progressive Multi-bitrate HLS
+          <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-0.5">
+            ส่งไฟล์ขึ้นคลาวด์และแปลงเป็นสตรีมมิ่งความละเอียดสูงอัตโนมัติ
           </p>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex items-center p-1 bg-[#F5F2EB] rounded-xl border border-[#EFECE6] w-full sm:w-auto">
-          <button
-            type="button"
-            onClick={() => setActiveTab('upload')}
-            className={`flex-1 sm:flex-none py-1.5 px-4 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2 ${
-              activeTab === 'upload'
-                ? 'bg-white text-[#212529] shadow-xs'
-                : 'text-[#8C857B] hover:text-[#212529]'
-            }`}
-          >
-            <Upload className="w-3.5 h-3.5 text-[#FF7A00]" />
-            <span>อัปโหลดคลิปใหม่</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('queue')}
-            className={`flex-1 sm:flex-none py-1.5 px-4 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-2 ${
-              activeTab === 'queue'
-                ? 'bg-white text-[#212529] shadow-xs'
-                : 'text-[#8C857B] hover:text-[#212529]'
-            }`}
-          >
-            <ListOrdered className="w-3.5 h-3.5 text-blue-600" />
-            <span>คิวงานแปลงไฟล์</span>
-            {queueItems.length > 0 && (
-              <span className="w-4 h-4 rounded-full bg-[#FF7A00] text-white text-[10px] font-mono flex items-center justify-center">
-                {queueItems.length}
-              </span>
-            )}
-          </button>
-        </div>
+        {/* Link to Dedicated Queue Page */}
+        <Link
+          href="/upload/queue"
+          className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[#EFECE6] dark:border-white/10 bg-white dark:bg-[#181818] hover:bg-[#FBF9F5] dark:hover:bg-white/5 text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] transition shadow-2xs self-stretch sm:self-auto justify-center cursor-pointer"
+        >
+          <ListOrdered className="w-4 h-4 text-[#FF7A00]" />
+          <span>คิวงานแปลงไฟล์</span>
+          {queueCount > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-[#FF7A00] text-white text-[10px] font-mono font-bold">
+              {queueCount}
+            </span>
+          )}
+        </Link>
       </div>
 
-      {activeTab === 'upload' ? (
-        <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
           {/* File Dropzone when no file selected */}
           {!file && (
             <div
@@ -773,8 +783,8 @@ export default function UploadPage() {
               onClick={() => fileInputRef.current?.click()}
               className={`border-2 border-dashed rounded-2xl p-12 sm:p-16 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
                 isDragOver
-                  ? 'border-[#FF7A00] bg-orange-50/40'
-                  : 'border-[#D1C9BD] hover:border-[#FF7A00] bg-white'
+                  ? 'border-[#FF7A00] bg-orange-50/40 dark:bg-[#FF7A00]/10'
+                  : 'border-[#D1C9BD] dark:border-white/20 hover:border-[#FF7A00] dark:hover:border-[#FF7A00] bg-white dark:bg-[#141414]'
               }`}
             >
               <input
@@ -788,17 +798,17 @@ export default function UploadPage() {
                 className="hidden"
               />
 
-              <div className="w-14 h-14 rounded-2xl bg-orange-50 text-[#FF7A00] flex items-center justify-center mb-3">
+              <div className="w-14 h-14 rounded-2xl bg-orange-50 dark:bg-[#FF7A00]/15 text-[#FF7A00] flex items-center justify-center mb-3">
                 <Upload className="w-7 h-7" />
               </div>
 
-              <h2 className="text-base font-bold text-[#212529]">
+              <h2 className="text-base font-bold text-[#212529] dark:text-[#F1F1F1]">
                 ลากไฟล์วิดีโอมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์ (คอมพิวเตอร์และมือถือ)
               </h2>
-              <p className="text-xs text-[#8C857B] mt-1 max-w-md">
+              <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1 max-w-md">
                 รองรับไฟล์ .mp4, .mov, .mkv และวิดีโอจากมือถือทุกรูปแบบ (iOS / Android) ระบบจะส่งตรงเข้า OneDrive Business ด้วยความเร็วอินเทอร์เน็ตเต็มสปีด
               </p>
-              <div className="mt-3 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200/80 text-[11px] text-amber-900 flex items-center gap-1.5 max-w-md text-left">
+              <div className="mt-3 px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/40 text-[11px] text-amber-900 dark:text-amber-300 flex items-center gap-1.5 max-w-md text-left">
                 <span>💡 <strong>คำแนะนำสำหรับ Android:</strong> แนะนำให้เลือกไฟล์ที่บันทึกอยู่ในเครื่องโดยตรง (เช่น ในโฟลเดอร์ &quot;ดาวน์โหลด&quot; หรือแกลเลอรีในเครื่อง) หากไฟล์อยู่ใน Google Photos หรือ Cloud Drive ให้กดดาวน์โหลดลงเครื่องก่อนครับ</span>
               </div>
             </div>
@@ -811,12 +821,12 @@ export default function UploadPage() {
               <div className="lg:col-span-8 flex flex-col gap-5">
                 {/* Error Banner */}
                 {errorMsg && (
-                  <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-3 shadow-xs">
-                    <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/40 rounded-2xl p-4 flex items-start gap-3 shadow-xs">
+                    <AlertCircle className="w-5 h-5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
                     <div className="flex-1 text-xs">
-                      <h4 className="font-bold text-rose-900">เกิดข้อผิดพลาดในการเข้าถึงไฟล์</h4>
-                      <p className="text-rose-700 mt-1 leading-relaxed">{errorMsg}</p>
-                      <div className="mt-2.5 pt-2.5 border-t border-rose-200 text-[11px] text-rose-800 flex flex-col gap-1">
+                      <h4 className="font-bold text-rose-900 dark:text-rose-200">เกิดข้อผิดพลาดในการเข้าถึงไฟล์</h4>
+                      <p className="text-rose-700 dark:text-rose-300 mt-1 leading-relaxed">{errorMsg}</p>
+                      <div className="mt-2.5 pt-2.5 border-t border-rose-200 dark:border-rose-800/40 text-[11px] text-rose-800 dark:text-rose-300 flex flex-col gap-1">
                         <span className="font-semibold">💡 วิธีแก้ไขสำหรับมือถือ Android:</span>
                         <span>1. เปิดแอป <strong>Google Photos</strong> หรือ <strong>Google Drive</strong></span>
                         <span>2. แตะเปิดคลิปวิดีโอที่ต้องการ &gt; กดเมนู 3 จุด &gt; เลือก <strong>&quot;ดาวน์โหลด (Download)&quot;</strong></span>
@@ -826,17 +836,16 @@ export default function UploadPage() {
                     <button
                       type="button"
                       onClick={() => setErrorMsg(null)}
-                      className="text-rose-400 hover:text-rose-600 p-1 text-sm font-bold"
+                      className="text-rose-400 hover:text-rose-600 p-1 text-sm font-bold cursor-pointer"
                     >
                       ✕
                     </button>
                   </div>
                 )}
                 {/* Form Card */}
-                <div className="bg-white border border-[#EFECE6] rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col gap-4">
-                  <div className="flex items-center justify-between pb-3 border-b border-[#EFECE6]">
-                    <span className="text-xs font-bold text-[#212529] flex items-center gap-2">
-                      <FileVideo className="w-4 h-4 text-[#FF7A00]" />
+                <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col gap-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#EFECE6] dark:border-white/10">
+                    <span className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1]">
                       รายละเอียดวิดีโอ
                     </span>
 
@@ -844,29 +853,101 @@ export default function UploadPage() {
                       type="button"
                       onClick={handleReset}
                       disabled={isUploading}
-                      className="text-xs text-rose-600 hover:text-rose-700 font-semibold px-2 py-1 rounded-lg hover:bg-rose-50 transition disabled:opacity-50"
+                      className="text-xs text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 font-medium px-2 py-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition disabled:opacity-50 cursor-pointer"
                     >
                       เปลี่ยนไฟล์
                     </button>
                   </div>
 
+                  {/* 1. Title */}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-[#212529]">ชื่อวิดีโอ (Title)</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#212529] dark:text-[#F1F1F1]">
+                        ชื่อวิดีโอ (Title) <span className="text-rose-500">*</span>
+                      </label>
+                      <div className="flex items-center gap-3">
+                        {title && (title.includes('.') || title.includes('_') || title.includes('-')) && (
+                          <button
+                            type="button"
+                            onClick={handleCleanTitle}
+                            disabled={currentStatus && currentStatus !== 'UPLOADING'}
+                            className="text-[11px] text-[#FF7A00] hover:underline cursor-pointer"
+                            title="ลบนามสกุลไฟล์และจัดระเบียบชื่อให้อัตโนมัติ"
+                          >
+                            ล้างชื่อไฟล์
+                          </button>
+                        )}
+                        <span className={`text-[11px] font-mono ${
+                          title.length > 100
+                            ? 'text-rose-500 font-bold'
+                            : 'text-[#8C857B] dark:text-[#AAAAAA]'
+                        }`}>
+                          {title.length}/100
+                        </span>
+                      </div>
+                    </div>
                     <input
                       type="text"
                       value={title}
+                      maxLength={120}
                       disabled={currentStatus && currentStatus !== 'UPLOADING'}
                       onChange={(e) => {
                         setTitle(e.target.value);
                         titleRef.current = e.target.value;
                       }}
                       placeholder="ระบุชื่อวิดีโอ"
-                      className="w-full bg-[#FBF9F5] border border-[#EFECE6] rounded-xl px-3.5 py-2.5 text-xs text-[#212529] outline-none focus:border-[#FF7A00] focus:bg-white transition"
+                      className="w-full bg-[#FBF9F5] dark:bg-[#121212] border border-[#EFECE6] dark:border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-[#212529] dark:text-[#F1F1F1] outline-none focus:border-[#FF7A00] focus:bg-white dark:focus:bg-[#181818] transition"
                     />
                   </div>
 
+                  {/* 2. Category */}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-[#212529]">คำอธิบาย (Description)</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#212529] dark:text-[#F1F1F1]">
+                        หมวดหมู่วิดีโอ (Category)
+                      </label>
+                      {category === 'shorts' && (
+                        <span className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA]">
+                          (เลือก Shorts อัตโนมัติ)
+                        </span>
+                      )}
+                    </div>
+                    <Select
+                      options={UPLOAD_CATEGORIES}
+                      value={category}
+                      onChange={(val) => {
+                        setCategory(val);
+                        categoryRef.current = val;
+                      }}
+                      className="w-full"
+                      disabled={currentStatus && currentStatus !== 'UPLOADING'}
+                    />
+                  </div>
+
+                  {/* 3. Description */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#212529] dark:text-[#F1F1F1]">
+                        คำอธิบาย (Description)
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleInsertTimestamp}
+                          disabled={currentStatus && currentStatus !== 'UPLOADING'}
+                          className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#FF7A00] dark:hover:text-[#FF7A00] cursor-pointer"
+                        >
+                          + ใส่ไทม์แสตมป์
+                        </button>
+                        <span className={`text-[11px] font-mono ${
+                          description.length > 5000
+                            ? 'text-rose-500 font-bold'
+                            : 'text-[#8C857B] dark:text-[#AAAAAA]'
+                        }`}>
+                          {description.length.toLocaleString()}/5,000
+                        </span>
+                      </div>
+                    </div>
                     <textarea
                       rows={3}
                       value={description}
@@ -876,56 +957,120 @@ export default function UploadPage() {
                         descriptionRef.current = e.target.value;
                       }}
                       placeholder="ใส่รายละเอียดหรือคำอธิบายวิดีโอ"
-                      className="w-full bg-[#FBF9F5] border border-[#EFECE6] rounded-xl px-3.5 py-2.5 text-xs text-[#212529] outline-none focus:border-[#FF7A00] focus:bg-white transition"
+                      className="w-full bg-[#FBF9F5] dark:bg-[#121212] border border-[#EFECE6] dark:border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-[#212529] dark:text-[#F1F1F1] outline-none focus:border-[#FF7A00] focus:bg-white dark:focus:bg-[#181818] transition resize-y min-h-[75px]"
                     />
                   </div>
 
+                  {/* 4. Tags with Chips */}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-semibold text-[#212529]">แท็ก (Tags)</label>
-                    <input
-                      type="text"
-                      value={tagsInput}
-                      disabled={currentStatus && currentStatus !== 'UPLOADING'}
-                      onChange={(e) => setTagsInput(e.target.value)}
-                      placeholder="คั่นด้วยเครื่องหมายจุลภาค เช่น HLS, 1080p, stream"
-                      className="w-full bg-[#FBF9F5] border border-[#EFECE6] rounded-xl px-3.5 py-2 text-xs text-[#212529] outline-none focus:border-[#FF7A00] focus:bg-white transition"
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#212529] dark:text-[#F1F1F1]">
+                        แท็ก (Tags)
+                      </label>
+                      <span className="text-[11px] font-mono text-[#8C857B] dark:text-[#AAAAAA]">
+                        {tags.length}/15 แท็ก
+                      </span>
+                    </div>
+
+                    {/* Interactive Chips Box */}
+                    <div className="w-full bg-[#FBF9F5] dark:bg-[#121212] border border-[#EFECE6] dark:border-white/10 rounded-xl p-2 focus-within:border-[#FF7A00] focus-within:bg-white dark:focus-within:bg-[#181818] min-h-[44px] flex flex-wrap items-center gap-1.5 transition">
+                      {tags.map((t, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#EFECE6] dark:bg-[#252525] text-xs text-[#212529] dark:text-[#F1F1F1] font-medium"
+                        >
+                          <span className="text-[#8C857B] dark:text-[#AAAAAA]">#</span>
+                          <span>{t}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTag(idx)}
+                            disabled={currentStatus && currentStatus !== 'UPLOADING'}
+                            className="text-[#8C857B] dark:text-[#AAAAAA] hover:text-rose-500 dark:hover:text-rose-400 transition ml-0.5 p-0.5 rounded cursor-pointer"
+                            aria-label={`ลบแท็ก ${t}`}
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+
+                      {tags.length < 15 && (
+                        <input
+                          type="text"
+                          value={tagInputValue}
+                          disabled={currentStatus && currentStatus !== 'UPLOADING'}
+                          onChange={(e) => setTagInputValue(e.target.value)}
+                          onKeyDown={handleTagKeyDown}
+                          onBlur={() => {
+                            if (tagInputValue.trim()) handleAddTag(tagInputValue);
+                          }}
+                          placeholder={
+                            tags.length === 0
+                              ? 'พิมพ์แท็กแล้วกด Enter...'
+                              : 'เพิ่มแท็ก...'
+                          }
+                          className="flex-1 min-w-[120px] bg-transparent text-xs text-[#212529] dark:text-[#F1F1F1] outline-none placeholder:text-[#8C857B]/60 dark:placeholder:text-[#AAAAAA]/50 px-1 py-1"
+                        />
+                      )}
+                    </div>
+
+                    {/* Quick Suggested Tags */}
+                    <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                      <span className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA]">แนะนำ:</span>
+                      {SUGGESTED_TAGS.map((sTag) => {
+                        const already = tags.some((t) => t.toLowerCase() === sTag.toLowerCase());
+                        return (
+                          <button
+                            key={sTag}
+                            type="button"
+                            disabled={already || tags.length >= 15 || (currentStatus && currentStatus !== 'UPLOADING')}
+                            onClick={() => handleAddTag(sTag)}
+                            className={`text-[11px] px-2 py-0.5 rounded-md border transition cursor-pointer ${
+                              already
+                                ? 'opacity-30 border-transparent text-[#8C857B] dark:text-[#AAAAAA] cursor-not-allowed'
+                                : 'bg-white dark:bg-[#1E1E1E] border-[#EFECE6] dark:border-white/10 hover:border-[#FF7A00] text-[#212529] dark:text-[#F1F1F1]'
+                            }`}
+                          >
+                            + {sTag}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
                 {/* Live Upload Stats (No Throttling, True Internet Speed) */}
                 {isUploading && (
-                  <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-5 flex flex-col gap-3.5 shadow-xs">
-                    <div className="flex items-center justify-between text-xs font-bold text-blue-950">
+                  <div className="bg-blue-50/70 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/40 rounded-2xl p-5 flex flex-col gap-3.5 shadow-xs">
+                    <div className="flex items-center justify-between text-xs font-bold text-blue-950 dark:text-blue-200">
                       <span className="flex items-center gap-2">
-                        <Upload className="w-4 h-4 text-blue-600 animate-pulse" />
+                        <Upload className="w-4 h-4 text-blue-600 dark:text-blue-400 animate-pulse" />
                         กำลังส่งไฟล์เข้า OneDrive Business (ก้อนละ {chunkSizeMB} MB)
                       </span>
                       <span className="font-mono text-base">{uploadStats.percent}%</span>
                     </div>
 
-                    <div className="w-full bg-blue-100 h-2 rounded-full overflow-hidden">
+                    <div className="w-full bg-blue-100 dark:bg-blue-950/50 h-2 rounded-full overflow-hidden">
                       <div
                         className="bg-blue-600 h-full transition-all duration-300"
                         style={{ width: `${uploadStats.percent}%` }}
                       />
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono text-blue-900 pt-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono text-blue-900 dark:text-blue-200 pt-1">
                       <div>
-                        <span className="text-[#8C857B] text-[11px] block">ขนาดที่ส่งแล้ว</span>
+                        <span className="text-[#8C857B] dark:text-[#AAAAAA] text-[11px] block">ขนาดที่ส่งแล้ว</span>
                         <span className="font-bold">{formatBytes(uploadStats.uploadedBytes)} / {formatBytes(uploadStats.totalBytes)}</span>
                       </div>
                       <div>
-                        <span className="text-[#8C857B] text-[11px] block">ความเร็วอัปโหลด</span>
-                        <span className="font-bold text-emerald-700">{uploadStats.speedMBs} MB/s</span>
+                        <span className="text-[#8C857B] dark:text-[#AAAAAA] text-[11px] block">ความเร็วอัปโหลด</span>
+                        <span className="font-bold text-emerald-700 dark:text-emerald-400">{uploadStats.speedMBs} MB/s</span>
                       </div>
                       <div>
-                        <span className="text-[#8C857B] text-[11px] block">เวลาที่เหลือ (ETA)</span>
+                        <span className="text-[#8C857B] dark:text-[#AAAAAA] text-[11px] block">เวลาที่เหลือ (ETA)</span>
                         <span className="font-bold">{uploadStats.etaSeconds} วินาที</span>
                       </div>
                       <div>
-                        <span className="text-[#8C857B] text-[11px] block">ชิ้นส่วน</span>
+                        <span className="text-[#8C857B] dark:text-[#AAAAAA] text-[11px] block">ชิ้นส่วน</span>
                         <span className="font-bold">{uploadStats.currentChunk} / {uploadStats.totalChunks}</span>
                       </div>
                     </div>
@@ -934,9 +1079,9 @@ export default function UploadPage() {
 
                 {/* Real-time Lifecycle Stepper & Status */}
                 {currentStatus && (
-                  <div className="bg-white border border-[#EFECE6] rounded-2xl p-5 shadow-xs flex flex-col gap-4">
+                  <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-5 shadow-xs flex flex-col gap-4">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#212529]">
+                      <span className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1]">
                         สถานะการประมวลผลวิดีโอบน Cloud
                       </span>
                       <span className="text-xs font-mono font-bold text-[#FF7A00]">
@@ -944,7 +1089,7 @@ export default function UploadPage() {
                       </span>
                     </div>
 
-                    <div className="w-full bg-[#F5F2EB] h-2 rounded-full overflow-hidden">
+                    <div className="w-full bg-[#F5F2EB] dark:bg-white/10 h-2 rounded-full overflow-hidden">
                       <div
                         className={`h-full transition-all duration-500 ${
                           currentStatus === 'FAILED'
@@ -965,24 +1110,24 @@ export default function UploadPage() {
                             key={s.id}
                             className={`p-2.5 rounded-xl border text-xs flex flex-col gap-1 transition ${
                               state === 'completed'
-                                ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900 font-medium'
+                                ? 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/40 text-emerald-900 dark:text-emerald-300 font-medium'
                                 : state === 'active'
-                                ? 'bg-orange-50 border-orange-300 text-orange-950 font-bold ring-1 ring-orange-200'
+                                ? 'bg-orange-50 dark:bg-orange-950/30 border-orange-300 dark:border-orange-800/40 text-orange-950 dark:text-orange-200 font-bold ring-1 ring-orange-200 dark:ring-orange-800/30'
                                 : state === 'failed'
-                                ? 'bg-rose-50 border-rose-300 text-rose-900 font-bold'
-                                : 'bg-[#FBF9F5] border-[#EFECE6] text-[#8C857B]'
+                                ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-300 dark:border-rose-800/40 text-rose-900 dark:text-rose-200 font-bold'
+                                : 'bg-[#FBF9F5] dark:bg-white/5 border-[#EFECE6] dark:border-white/10 text-[#8C857B] dark:text-[#AAAAAA]'
                             }`}
                           >
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] font-mono opacity-70">0{idx + 1}</span>
                               {state === 'completed' ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                               ) : state === 'active' ? (
                                 <RefreshCw className="w-3 h-3 text-[#FF7A00] animate-spin" />
                               ) : state === 'failed' ? (
-                                <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                                <AlertCircle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
                               ) : (
-                                <div className="w-1.5 h-1.5 rounded-full bg-[#D1C9BD]" />
+                                <div className="w-1.5 h-1.5 rounded-full bg-[#D1C9BD] dark:bg-white/20" />
                               )}
                             </div>
                             <span className="text-[11px] leading-tight">{s.label}</span>
@@ -991,8 +1136,8 @@ export default function UploadPage() {
                       })}
                     </div>
 
-                    <div className="bg-[#FBF9F5] border border-[#EFECE6] rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
-                      <span className="text-[#212529] font-medium">
+                    <div className="bg-[#FBF9F5] dark:bg-[#121212] border border-[#EFECE6] dark:border-white/10 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
+                      <span className="text-[#212529] dark:text-[#F1F1F1] font-medium">
                         {stageDetail || 'กำลังดำเนินการ...'}
                       </span>
                       {currentStatus === 'FAILED' && (
@@ -1017,16 +1162,16 @@ export default function UploadPage() {
 
                 {/* Instant Playback Ready Card */}
                 {completedVideo && (
-                  <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800/50 rounded-2xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
                         <Check className="w-5 h-5" />
                       </div>
                       <div>
-                        <h3 className="text-sm font-bold text-emerald-950">
+                        <h3 className="text-sm font-bold text-emerald-950 dark:text-emerald-100">
                           วิดีโอพร้อมรับชมได้แล้ว!
                         </h3>
-                        <p className="text-xs text-emerald-800 mt-0.5">
+                        <p className="text-xs text-emerald-800 dark:text-emerald-300 mt-0.5">
                           {stageDetail || 'แปลงเป็น HLS สำเร็จ สามารถเปิดดูผ่าน HLS.js ได้ทันที'}
                         </p>
                       </div>
@@ -1044,9 +1189,9 @@ export default function UploadPage() {
                       <button
                         type="button"
                         onClick={() => copyWatchLink(completedVideo.id)}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-emerald-300 text-emerald-900 font-semibold text-xs hover:bg-emerald-100 transition"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white dark:bg-white/10 border border-emerald-300 dark:border-emerald-700/50 text-emerald-900 dark:text-emerald-200 font-semibold text-xs hover:bg-emerald-100 dark:hover:bg-white/15 transition cursor-pointer"
                       >
-                        {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                         <span>{copiedLink ? 'คัดลอกแล้ว' : 'แชร์ลิงก์'}</span>
                       </button>
                     </div>
@@ -1067,35 +1212,35 @@ export default function UploadPage() {
                 )}
 
                 {/* Expandable Console Logs Drawer */}
-                <div className="bg-white border border-[#EFECE6] rounded-2xl shadow-xs overflow-hidden">
+                <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl shadow-xs overflow-hidden">
                   <button
                     type="button"
                     onClick={() => setShowLogs(!showLogs)}
-                    className="w-full px-4 py-3 bg-[#FBF9F5] border-b border-[#EFECE6] flex items-center justify-between text-left"
+                    className="w-full px-4 py-3 bg-[#FBF9F5] dark:bg-[#141414] border-b border-[#EFECE6] dark:border-white/10 flex items-center justify-between text-left cursor-pointer"
                   >
-                    <span className="text-xs font-semibold text-[#212529] flex items-center gap-2">
-                      <Terminal className="w-4 h-4 text-[#8C857B]" />
+                    <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-2">
+                      <Terminal className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
                       บันทึกกิจกรรมระบบ (Logs)
-                      <span className="font-mono text-[11px] text-[#8C857B]">({logs.length})</span>
+                      <span className="font-mono text-[11px] text-[#8C857B] dark:text-[#AAAAAA]">({logs.length})</span>
                     </span>
                     <div className="flex items-center gap-2">
                       {logs.length > 0 && (
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); copyLogText(); }}
-                          className="text-[11px] text-[#8C857B] hover:text-[#212529] px-2 py-0.5 rounded border border-[#EFECE6] bg-white transition"
+                          className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] px-2 py-0.5 rounded border border-[#EFECE6] dark:border-white/10 bg-white dark:bg-[#1f1f1f] transition cursor-pointer"
                         >
                           {copiedLog ? 'คัดลอกแล้ว' : 'คัดลอก'}
                         </button>
                       )}
-                      {showLogs ? <ChevronUp className="w-4 h-4 text-[#8C857B]" /> : <ChevronDown className="w-4 h-4 text-[#8C857B]" />}
+                      {showLogs ? <ChevronUp className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" /> : <ChevronDown className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />}
                     </div>
                   </button>
 
                   {showLogs && (
                     <div className="p-3 bg-[#1E1E1E] text-[#D4D4D4] font-mono text-[11px] h-40 overflow-y-auto space-y-1 select-text">
                       {logs.length === 0 ? (
-                        <span className="text-[#6A9955]">// ยังไม่มีกิจกรรม พร้อมสำหรับการอัปโหลด</span>
+                        <span className="text-[#6A9955]">{`// ยังไม่มีกิจกรรม พร้อมสำหรับการอัปโหลด`}</span>
                       ) : (
                         logs.map((log, index) => (
                           <div key={index} className="leading-relaxed">
@@ -1120,7 +1265,7 @@ export default function UploadPage() {
               {/* RIGHT COLUMN: Video Preview & Complete Metadata (4 Cols) */}
               <div className="lg:col-span-4 flex flex-col gap-5">
                 {/* Poster / Frame Preview Card */}
-                <div className="bg-white border border-[#EFECE6] rounded-2xl p-4 shadow-xs flex flex-col gap-3">
+                <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-4 shadow-xs flex flex-col gap-3">
                   <div className="w-full aspect-video bg-[#1A1A1A] rounded-xl overflow-hidden relative flex items-center justify-center">
                     {thumbnailUrl ? (
                       <img
@@ -1153,82 +1298,82 @@ export default function UploadPage() {
                   </div>
 
                   <div className="text-xs">
-                    <span className="font-bold text-[#212529] line-clamp-1">{fileDetails.name}</span>
-                    <span className="text-[#8C857B] text-[11px] block mt-0.5">
+                    <span className="font-bold text-[#212529] dark:text-[#F1F1F1] line-clamp-1">{fileDetails.name}</span>
+                    <span className="text-[#8C857B] dark:text-[#AAAAAA] text-[11px] block mt-0.5">
                       {fileDetails.sizeFormatted} • {fileDetails.resolution}
                     </span>
                   </div>
                 </div>
 
                 {/* Complete Technical Metadata Card */}
-                <div className="bg-white border border-[#EFECE6] rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-3">
-                  <span className="text-xs font-bold text-[#212529] flex items-center gap-2 pb-2 border-b border-[#EFECE6]">
+                <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col gap-3">
+                  <span className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-2 pb-2 border-b border-[#EFECE6] dark:border-white/10">
                     <Database className="w-4 h-4 text-[#FF7A00]" />
                     ข้อมูลไฟล์ต้นฉบับฉบับเต็ม (Full File Metadata)
                   </span>
 
-                  <div className="divide-y divide-[#F5F2EB] text-xs">
+                  <div className="divide-y divide-[#F5F2EB] dark:divide-white/5 text-xs">
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">ความละเอียด (Resolution)</span>
-                      <span className="font-semibold text-[#212529] font-mono">{fileDetails.resolution}</span>
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">ความละเอียด (Resolution)</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] font-mono">{fileDetails.resolution}</span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">อัตราส่วนภาพ (Aspect Ratio)</span>
-                      <span className="font-semibold text-[#212529]">{fileDetails.aspectRatio}</span>
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">อัตราส่วนภาพ (Aspect Ratio)</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1]">{fileDetails.aspectRatio}</span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">ความยาว (Duration)</span>
-                      <span className="font-semibold text-[#212529] font-mono">
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">ความยาว (Duration)</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] font-mono">
                         {fileDetails.durationFormatted} ({fileDetails.durationSec} วิ)
                       </span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">ขนาดไฟล์ (File Size)</span>
-                      <span className="font-semibold text-[#212529] font-mono">
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">ขนาดไฟล์ (File Size)</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] font-mono">
                         {fileDetails.sizeFormatted} ({fileDetails.sizeBytes.toLocaleString()} bytes)
                       </span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">บิตเรตโดยประมาณ (Bitrate)</span>
-                      <span className="font-semibold text-[#212529] font-mono text-emerald-700">
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">บิตเรตโดยประมาณ (Bitrate)</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] font-mono text-emerald-700 dark:text-emerald-400">
                         {fileDetails.approxBitrate}
                       </span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">อัตราเฟรม (Frame Rate)</span>
-                      <span className="font-semibold text-[#212529] font-mono">{fileDetails.fps} fps</span>
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">อัตราเฟรม (Frame Rate)</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] font-mono">{fileDetails.fps} fps</span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">รูปแบบ / Codec</span>
-                      <span className="font-semibold text-[#212529] font-mono">{fileDetails.codec}</span>
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">รูปแบบ / Codec</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] font-mono">{fileDetails.codec}</span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">MIME Type</span>
-                      <span className="font-semibold text-[#212529] font-mono">{fileDetails.mimeType}</span>
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">MIME Type</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] font-mono">{fileDetails.mimeType}</span>
                     </div>
 
                     <div className="py-2 flex items-center justify-between">
-                      <span className="text-[#8C857B]">วันที่แก้ไขไฟล์</span>
-                      <span className="font-semibold text-[#212529] text-[11px]">{fileDetails.lastModified}</span>
+                      <span className="text-[#8C857B] dark:text-[#AAAAAA]">วันที่แก้ไขไฟล์</span>
+                      <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] text-[11px]">{fileDetails.lastModified}</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Upload Performance Chunk Setting */}
-                <div className="bg-white border border-[#EFECE6] rounded-2xl p-4 shadow-xs flex flex-col gap-2.5">
+                <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-4 shadow-xs flex flex-col gap-2.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#212529] flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-1.5">
                       <Sliders className="w-3.5 h-3.5 text-[#FF7A00]" />
                       ขนาดชิ้นส่วนอัปโหลด (Chunk Size)
                     </span>
-                    <span className="text-[11px] font-mono text-[#8C857B]">
+                    <span className="text-[11px] font-mono text-[#8C857B] dark:text-[#AAAAAA]">
                       {chunkSizeMB} MB ต่อก้อน
                     </span>
                   </div>
@@ -1240,8 +1385,8 @@ export default function UploadPage() {
                       onClick={() => handleSelectChunkSize(10)}
                       className={`py-2 px-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer ${
                         chunkSizeMB === 10
-                          ? 'bg-orange-50 border-orange-300 text-orange-950 ring-1 ring-orange-200'
-                          : 'bg-[#FBF9F5] border-[#EFECE6] text-[#8C857B] hover:text-[#212529]'
+                          ? 'bg-orange-50 dark:bg-orange-950/30 border-orange-300 dark:border-orange-800/40 text-orange-950 dark:text-orange-200 ring-1 ring-orange-200 dark:ring-orange-800/30'
+                          : 'bg-[#FBF9F5] dark:bg-[#121212] border-[#EFECE6] dark:border-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
                       }`}
                     >
                       <span className="font-bold">10 MB</span>
@@ -1254,8 +1399,8 @@ export default function UploadPage() {
                       onClick={() => handleSelectChunkSize(20)}
                       className={`py-2 px-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer ${
                         chunkSizeMB === 20
-                          ? 'bg-orange-50 border-orange-300 text-orange-950 ring-1 ring-orange-200'
-                          : 'bg-[#FBF9F5] border-[#EFECE6] text-[#8C857B] hover:text-[#212529]'
+                          ? 'bg-orange-50 dark:bg-orange-950/30 border-orange-300 dark:border-orange-800/40 text-orange-950 dark:text-orange-200 ring-1 ring-orange-200 dark:ring-orange-800/30'
+                          : 'bg-[#FBF9F5] dark:bg-[#121212] border-[#EFECE6] dark:border-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
                       }`}
                     >
                       <span className="font-bold">20 MB</span>
@@ -1268,15 +1413,15 @@ export default function UploadPage() {
                       onClick={() => handleSelectChunkSize(50)}
                       className={`py-2 px-2 rounded-xl border text-xs font-semibold transition flex flex-col items-center justify-center gap-0.5 text-center cursor-pointer ${
                         chunkSizeMB === 50
-                          ? 'bg-orange-50 border-orange-300 text-orange-950 ring-1 ring-orange-200'
-                          : 'bg-[#FBF9F5] border-[#EFECE6] text-[#8C857B] hover:text-[#212529]'
+                          ? 'bg-orange-50 dark:bg-orange-950/30 border-orange-300 dark:border-orange-800/40 text-orange-950 dark:text-orange-200 ring-1 ring-orange-200 dark:ring-orange-800/30'
+                          : 'bg-[#FBF9F5] dark:bg-[#121212] border-[#EFECE6] dark:border-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
                       }`}
                     >
                       <span className="font-bold">50 MB</span>
                       <span className="text-[10px] opacity-80 font-normal">Fiber แรงพิเศษ</span>
                     </button>
                   </div>
-                  <span className="text-[10px] text-[#8C857B] leading-relaxed">
+                  <span className="text-[10px] text-[#8C857B] dark:text-[#AAAAAA] leading-relaxed">
                     ก้อนขนาดใหญ่ (เช่น 50 MB) ช่วยลด HTTP Overhead สูงสุด เหมาะสำหรับเน็ตบ้าน Fiber ความเร็วสูง
                   </span>
                 </div>
@@ -1284,138 +1429,6 @@ export default function UploadPage() {
             </div>
           )}
         </div>
-      ) : (
-        /* Queue & Status Overview Dashboard */
-        <div className="bg-white border border-[#EFECE6] rounded-2xl p-6 shadow-xs flex flex-col gap-4">
-          <div className="flex items-center justify-between pb-3 border-b border-[#EFECE6]">
-            <div>
-              <h2 className="text-sm font-bold text-[#212529] flex items-center gap-2">
-                <ListOrdered className="w-4 h-4 text-blue-600" />
-                คิวงานแปลงไฟล์ทั้งหมด (Transcode Queue Dashboard)
-              </h2>
-              <p className="text-xs text-[#8C857B] mt-0.5">
-                รายการวิดีโอที่กำลังอยู่ในคิวหรือประมวลผลบน GitHub Actions (สามารถยกเลิกหรือลบออกได้ทันที)
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {queueItems.some((i) => i.status === 'FAILED') && (
-                <button
-                  type="button"
-                  onClick={handleClearAllFailed}
-                  className="flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 px-3 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 transition font-medium"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>ล้างที่ล้มเหลว</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={loadQueue}
-                disabled={loadingQueue}
-                className="flex items-center gap-1.5 text-xs text-[#8C857B] hover:text-[#212529] px-3 py-1.5 rounded-xl border border-[#EFECE6] hover:bg-[#FBF9F5] transition"
-              >
-                <RefreshCw className={`w-3 h-3 ${loadingQueue ? 'animate-spin' : ''}`} />
-                <span>รีเฟรช</span>
-              </button>
-            </div>
-          </div>
-
-          {queueItems.length === 0 ? (
-            <div className="py-16 flex flex-col items-center justify-center text-center text-[#8C857B]">
-              <CheckCircle2 className="w-10 h-10 text-emerald-500 mb-2 stroke-[1.5]" />
-              <span className="text-sm font-bold text-[#212529]">ไม่มีคิวงานค้างในขณะนี้</span>
-              <span className="text-xs mt-0.5">วิดีโอทั้งหมดแปลงเสร็จสมบูรณ์และพร้อมรับชมแล้ว 100%</span>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {queueItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-4 rounded-xl border border-[#EFECE6] bg-[#FBF9F5] flex flex-col gap-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-[#212529] truncate">{item.title}</span>
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${
-                            item.status === 'READY'
-                              ? 'bg-emerald-100 text-emerald-800 font-semibold'
-                              : item.status === 'TRANSCODING'
-                              ? 'bg-orange-100 text-orange-800'
-                              : item.status === 'PROCESSING'
-                              ? 'bg-purple-100 text-purple-800'
-                              : item.status === 'QUEUED'
-                              ? 'bg-amber-100 text-amber-800'
-                              : item.status === 'FAILED'
-                              ? 'bg-rose-100 text-rose-800'
-                              : 'bg-blue-100 text-blue-800'
-                          }`}
-                        >
-                          {item.status === 'READY' ? '⚡ เปิดดูได้แล้ว (กำลังแปลงความละเอียดสูง...)' : item.status}
-                        </span>
-                      </div>
-                      <span className="text-[11px] text-[#8C857B] mt-0.5 block truncate">
-                        ไฟล์ดิบ: {item.rawFileName} • ID: #{item.id}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {item.status === 'READY' && (
-                        <Link
-                          href={`/watch/${item.id}`}
-                          target="_blank"
-                          className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold transition shadow-xs"
-                        >
-                          <Play className="w-3 h-3 fill-white" />
-                          <span>เปิดดูคลิป</span>
-                        </Link>
-                      )}
-
-                      {item.status === 'FAILED' && (
-                        <button
-                          type="button"
-                          onClick={() => handleRetryTrigger(item.id, item.rawFileName, item.title)}
-                          className="flex items-center gap-1 px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold transition"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          <span>ลองใหม่</span>
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteQueueItem(item.id, item.title)}
-                        title="ยกเลิกและลบคิวนี้ถาวร"
-                        className="flex items-center gap-1 px-2 py-1 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-lg font-medium transition"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>ลบคิว</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="w-full bg-[#EFECE6] h-1.5 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${item.status === 'FAILED' ? 'bg-rose-500' : 'bg-[#FF7A00]'}`}
-                      style={{ width: `${item.transcodeProgress || 0}%` }}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs text-[#8C857B]">
-                    <span>{item.stageDetail || 'กำลังดำเนินการ...'}</span>
-                    <span className="font-mono font-bold text-[#212529]">
-                      {item.transcodeProgress || 0}%
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

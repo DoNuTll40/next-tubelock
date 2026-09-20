@@ -12,7 +12,7 @@ export default function Switch({ checked, onChange, disabled = false, id }) {
       onClick={() => !disabled && onChange(!checked)}
       className={`w-11 h-6 flex items-center rounded-full p-0.5 cursor-pointer transition-colors duration-200 select-none ${
         disabled ? 'opacity-40 cursor-not-allowed' : ''
-      } ${checked ? 'bg-[#FF7A00]' : 'bg-[#E5E0D8]'}`}
+      } ${checked ? 'bg-[#FF7A00]' : 'bg-[#E5E0D8] dark:bg-white/20'}`}
     >
       <motion.div
         layout

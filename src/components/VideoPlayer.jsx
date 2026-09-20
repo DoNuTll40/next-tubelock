@@ -18,6 +18,9 @@ export default function VideoPlayer({
   channelName = 'TubeLock',
   onBack = null,
   resolution,
+  width: initialWidth,
+  height: initialHeight,
+  aspectRatio: initialRatioProp,
   fps,
   codec = 'h264',
   videoId,
@@ -30,10 +33,15 @@ export default function VideoPlayer({
   onTimeUpdate,
   onLoadedMetadata,
   onRatioChange = null,
-  videoRef: externalVideoRef
+  videoRef: externalVideoRef,
+  desktopMaxHeight = 'calc(100vh - 100px)',
 }) {
-  const localRef = useRef(null);
-  const video = externalVideoRef || localRef;
+  const video = useRef(null);
+  useEffect(() => {
+    if (externalVideoRef) {
+      externalVideoRef.current = video.current;
+    }
+  });
   const containerRef = useRef(null);
   const seekTrackRef = useRef(null);
   const hlsInstanceRef = useRef(null);
@@ -45,8 +53,12 @@ export default function VideoPlayer({
   const scrubberKnobRef = useRef(null);
   const timeDisplayRef = useRef(null);
 
-  // Video aspect ratio & vertical detection
-  const [videoRatio, setVideoRatio] = useState(() => {
+  // Compute initial aspect ratio from metadata props (prioritizes DB width/height or parsed resolution)
+  const computePropRatio = useCallback(() => {
+    if (initialRatioProp && initialRatioProp > 0) return initialRatioProp;
+    if (initialWidth && initialHeight && initialWidth > 0 && initialHeight > 0) {
+      return initialWidth / initialHeight;
+    }
     if (typeof resolution === 'string' && resolution.includes('x')) {
       const parts = resolution.split('x');
       const w = parseFloat(parts[0]);
@@ -54,24 +66,40 @@ export default function VideoPlayer({
       if (w > 0 && h > 0) return w / h;
     }
     return 16 / 9;
-  });
+  }, [initialRatioProp, initialWidth, initialHeight, resolution]);
+
+  // Video aspect ratio & vertical detection
+  const propRatio = computePropRatio();
+  const [detectedRatio, setDetectedRatio] = useState(null);
+  const videoRatio = detectedRatio || propRatio;
 
   const updateRatio = useCallback((newRatio) => {
     if (newRatio && newRatio > 0 && !isNaN(newRatio)) {
-      setVideoRatio(newRatio);
+      setDetectedRatio((prev) => {
+        if (!prev || Math.abs(prev - newRatio) > 0.005) {
+          return newRatio;
+        }
+        return prev;
+      });
       if (onRatioChange) onRatioChange(newRatio);
     }
   }, [onRatioChange]);
 
-  const [isVerticalVideo, setIsVerticalVideo] = useState(() => {
-    if (typeof resolution === 'string' && resolution.includes('x')) {
-      const parts = resolution.split('x');
-      const w = parseFloat(parts[0]);
-      const h = parseFloat(parts[1]);
-      if (w > 0 && h > 0) return h > w;
+  const checkAndUpdateRatio = useCallback(() => {
+    const v = video?.current;
+    if (v && v.videoWidth > 0 && v.videoHeight > 0) {
+      const trueRatio = v.videoWidth / v.videoHeight;
+      setDetectedRatio((prev) => {
+        if (!prev || Math.abs(prev - trueRatio) > 0.005) {
+          return trueRatio;
+        }
+        return prev;
+      });
+      if (onRatioChange) onRatioChange(trueRatio);
+      return true;
     }
     return false;
-  });
+  }, [video, onRatioChange]);
 
   // Playback states
   const [isPlaying, setIsPlaying] = useState(false);
@@ -201,7 +229,7 @@ export default function VideoPlayer({
   // Realtime FPS & Telemetry Metrics
   const [realtimeFps, setRealtimeFps] = useState('0.0');
   const frameCountRef = useRef(0);
-  const lastFpsTimeRef = useRef(performance.now());
+  const lastFpsTimeRef = useRef(0);
   const rvfcIdRef = useRef(null);
 
   const [nerdStats, setNerdStats] = useState({
@@ -277,6 +305,7 @@ export default function VideoPlayer({
 
   // ZERO-RE-RENDER Playback Progress via Direct DOM Updates!
   const handleNativeTimeUpdate = (e) => {
+    checkAndUpdateRatio();
     const cur = e.target.currentTime;
     const dur = e.target.duration || duration;
 
@@ -410,6 +439,29 @@ export default function VideoPlayer({
     }
   }, [isPlaying, isScrubbing, showSettingsMenu, showStats, isMobileView]);
 
+  // Reliable Autoplay with YouTube-style graceful unmuted -> muted fallback
+  const attemptAutoPlay = useCallback(() => {
+    const v = video.current;
+    if (!v || !defaultAutoplay || isUserPausedRef.current) return;
+    if (!v.paused) return;
+
+    const p = v.play();
+    if (p !== undefined) {
+      p.then(() => {
+        setIsPlaying(true);
+      }).catch((err) => {
+        // Browser Autoplay Policy: if unmuted autoplay is blocked, mute and play immediately!
+        if (v && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
+          v.muted = true;
+          setIsMuted(true);
+          v.play()
+            .then(() => setIsPlaying(true))
+            .catch(() => { });
+        }
+      });
+    }
+  }, [defaultAutoplay]);
+
   // Initialize HLS or Native Player
   useEffect(() => {
     const v = video.current;
@@ -422,6 +474,7 @@ export default function VideoPlayer({
     setActiveLevelLabel(formatResolutionBadge(resolution) || 'Auto');
     hlsRetryCountRef.current = 0;
 
+    isUserPausedRef.current = false;
     if (hlsInstanceRef.current) {
       hlsInstanceRef.current.destroy();
       hlsInstanceRef.current = null;
@@ -470,19 +523,11 @@ export default function VideoPlayer({
               // Auto-detect aspect ratio from highest or initial HLS level
               const bestLevel = data.levels[0];
               if (bestLevel?.width && bestLevel?.height) {
-                const isVertical = bestLevel.height > bestLevel.width;
-                setIsVerticalVideo(isVertical);
                 updateRatio(bestLevel.width / bestLevel.height);
               }
             }
 
-            if (defaultAutoplay && !isUserPausedRef.current) {
-              v.play().then(() => setIsPlaying(true)).catch(() => {
-                v.muted = true;
-                setIsMuted(true);
-                v.play().then(() => setIsPlaying(true)).catch(() => { });
-              });
-            }
+            attemptAutoPlay();
           });
 
           hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
@@ -491,11 +536,23 @@ export default function VideoPlayer({
               const activeLabel = formatResolutionBadge(`${lvl.height}p`);
               setActiveLevelLabel(activeLabel);
               if (lvl.width && lvl.height) {
-                const isVertical = lvl.height > lvl.width;
-                setIsVerticalVideo(isVertical);
                 updateRatio(lvl.width / lvl.height);
               }
             }
+            checkAndUpdateRatio();
+          });
+
+          hls.on(Hls.Events.LEVEL_LOADED, (event, data) => {
+            const lvl = hls.levels[data.level];
+            if (lvl && lvl.width > 0 && lvl.height > 0) {
+              updateRatio(lvl.width / lvl.height);
+            }
+            checkAndUpdateRatio();
+          });
+
+          hls.on(Hls.Events.FRAG_BUFFERED, () => {
+            checkAndUpdateRatio();
+            attemptAutoPlay();
           });
 
           hls.on(Hls.Events.ERROR, (event, data) => {
@@ -626,11 +683,11 @@ export default function VideoPlayer({
     if (!video.current) return;
     const dur = video.current.duration || duration;
     const clamped = Math.min(Math.max(targetTime, 0), dur > 0 ? dur : targetTime);
-    
+
     // Always assign currentTime directly for 100% reliable seeking across all browsers
     try {
       video.current.currentTime = clamped;
-    } catch (_) {}
+    } catch (_) { }
 
     // Immediate DOM updates so timeline and counter update instantly even when video is paused
     if (dur > 0) {
@@ -843,7 +900,7 @@ export default function VideoPlayer({
     const rect = containerRef.current.getBoundingClientRect();
     const xRatio = (e.clientX - rect.left) / rect.width;
     const zone = xRatio < 0.35 ? 'left' : xRatio > 0.65 ? 'right' : 'center';
-    const now = Date.now();
+    const now = e.timeStamp;
 
     const prev = clickStateRef.current;
     const isDouble = (e.detail >= 2) || ((now - prev.time < 340) && (prev.zone === zone || (zone === 'center' && prev.zone === 'center')));
@@ -969,9 +1026,9 @@ export default function VideoPlayer({
               || (videoRatio < 0.95);
 
             if (isVertical) {
-              await window.screen.orientation.lock('portrait').catch(() => {});
+              await window.screen.orientation.lock('portrait').catch(() => { });
             } else {
-              await window.screen.orientation.lock('landscape').catch(() => {});
+              await window.screen.orientation.lock('landscape').catch(() => { });
             }
           } catch (orientErr) {
             console.log('Orientation lock notice:', orientErr);
@@ -1157,23 +1214,14 @@ export default function VideoPlayer({
     (activeLevelLabel && (activeLevelLabel.includes('1080') || activeLevelLabel.includes('720') || activeLevelLabel.includes('1440')));
 
   // Persistent progress and time values (Prevents flicker/reset to 0% and 00:00 on state re-render!)
-  const currentVideoTime = video.current?.currentTime || 0;
+  const currentVideoTime = 0;
   const currentProgressPct = duration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / duration) * 100)) : 0;
   const activeScrubPercent = isScrubbing ? previewPercent : currentProgressPct;
   const activeTimeDisplay = isScrubbing
     ? `${formatTime(previewTime)} / ${formatTime(duration)}`
     : `${formatTime(currentVideoTime)} / ${formatTime(duration)}`;
 
-  let initialBufferPct = 0;
-  if (video.current && duration > 0) {
-    const b = video.current.buffered;
-    for (let i = 0; i < b.length; i++) {
-      if (b.start(i) <= currentVideoTime && currentVideoTime <= b.end(i)) {
-        initialBufferPct = Math.min((b.end(i) / duration) * 100, 100);
-        break;
-      }
-    }
-  }
+  const initialBufferPct = 0;
 
   return (
     <div
@@ -1187,17 +1235,29 @@ export default function VideoPlayer({
       }}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}
-      className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
+      className={`relative bg-transparent select-none overflow-hidden group/player ${isFullscreen
         ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
-        : 'w-full rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-md'
+        : (videoRatio && videoRatio < 0.98)
+          ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-md'
+          : 'w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-md'
         } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
-        width: isFullscreen ? '100vw' : '100%',
-        maxWidth: isFullscreen ? undefined : (isVerticalVideo ? '480px' : undefined),
         aspectRatio: isFullscreen
           ? undefined
-          : `${videoRatio}`,
-        margin: isVerticalVideo ? '0 auto' : undefined,
+          : (videoRatio && videoRatio < 0.98)
+            ? (isMobileView ? undefined : '16/9')
+            : `${videoRatio}`,
+        maxWidth: isFullscreen
+          ? undefined
+          : (videoRatio && videoRatio < 0.98)
+            ? undefined
+            : `calc((${desktopMaxHeight}) * ${videoRatio})`,
+        maxHeight: isFullscreen
+          ? undefined
+          : (videoRatio && videoRatio < 0.98)
+            ? (isMobileView ? 'min(48vh, 380px)' : desktopMaxHeight)
+            : desktopMaxHeight,
+        margin: (videoRatio && videoRatio >= 0.98) ? 0 : '0 auto',
         contain: 'paint layout',
         WebkitTouchCallout: 'none',
       }}
@@ -1206,6 +1266,7 @@ export default function VideoPlayer({
       <video
         ref={video}
         poster={poster}
+        autoPlay={defaultAutoplay}
         playsInline
         webkit-playsinline="true"
         x5-playsinline="true"
@@ -1218,6 +1279,7 @@ export default function VideoPlayer({
           setIsBuffering(false);
           setIsPlaying(true);
           isUserPausedRef.current = false;
+          checkAndUpdateRatio();
         }}
         onPause={() => setIsPlaying(false)}
         onError={(e) => {
@@ -1228,21 +1290,20 @@ export default function VideoPlayer({
         }}
         onProgress={updateBufferProgress}
         onTimeUpdate={handleNativeTimeUpdate}
-        onCanPlay={(e) => {
-          const { videoWidth, videoHeight } = e.target;
-          if (videoWidth && videoHeight) {
-            const isVertical = videoHeight > videoWidth;
-            setIsVerticalVideo(isVertical);
-            updateRatio(videoWidth / videoHeight);
-          }
+        onLoadedData={() => {
+          checkAndUpdateRatio();
+          attemptAutoPlay();
+        }}
+        onCanPlay={() => {
+          checkAndUpdateRatio();
+          attemptAutoPlay();
+        }}
+        onResize={() => {
+          checkAndUpdateRatio();
         }}
         onLoadedMetadata={(e) => {
-          const { videoWidth, videoHeight, duration: dur } = e.target;
-          if (videoWidth && videoHeight) {
-            const isVertical = videoHeight > videoWidth;
-            setIsVerticalVideo(isVertical);
-            updateRatio(videoWidth / videoHeight);
-          }
+          const { duration: dur } = e.target;
+          checkAndUpdateRatio();
           if (dur) setDuration(dur);
           updateBufferProgress();
           if (onLoadedMetadata) onLoadedMetadata(e);
@@ -1341,6 +1402,8 @@ export default function VideoPlayer({
         setShowSettingsMenu={setShowSettingsMenu}
         settingsMenuRef={settingsMenuRef}
         settingsPlacement={settingsPlacement}
+        isMobileView={isMobileView}
+        isFullscreen={isFullscreen}
         activeMenuTab={activeMenuTab}
         setActiveMenuTab={setActiveMenuTab}
         levels={levels}

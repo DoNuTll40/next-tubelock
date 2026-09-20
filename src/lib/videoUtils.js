@@ -1,6 +1,95 @@
 /**
- * Video Utilities: Resolution classification, frame rate, and codec formatting
+ * Video Utilities: Resolution classification, frame rate, aspect ratio, and codec formatting
  */
+
+/**
+ * Format Aspect Ratio according to YouTube & Engineering Spec:
+ * Handles standard aspect ratios (16:9, 4:3, 9:16, 1:1, 21:9)
+ * and custom pixel aspect ratios without ugly joined strings like '1920:1013'.
+ */
+export function formatAspectRatio(width, height) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  if (!w || !h) return 'Auto';
+
+  const ratio = Number((w / h).toFixed(2));
+
+  if (ratio >= 1.70 && ratio <= 1.85) return '16:9 (Widescreen)';
+  if (ratio >= 1.30 && ratio <= 1.37) return '4:3 (Standard)';
+  if (ratio >= 0.54 && ratio <= 0.58) return '9:16 (Vertical / Shorts)';
+  if (ratio >= 0.95 && ratio <= 1.05) return '1:1 (Square)';
+  if (ratio >= 2.30 && ratio <= 2.45) return '21:9 (Cinematic Scope)';
+
+  // Custom aspect ratio: show exact dimensions with computed ratio
+  return `${w} x ${h} (${ratio.toFixed(2)}:1)`;
+}
+
+/**
+ * Detect Resolution Label according to Engineering Spec:
+ * Uses max(width, height) and handles client-side hardware decode downscale limit
+ * (e.g. 4K AV1/HEVC downscaled to 1920 by HTML5 Video Element).
+ */
+export function detectResolutionLabel(width = 0, height = 0, options = {}) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  const { fileSize = 0, codec = '' } = options;
+
+  const isLargeFile = fileSize >= 50 * 1024 * 1024;
+  const codecLower = String(codec).toLowerCase();
+  const isModernCodec = ['av1', 'av01', 'hevc', 'hvc1', 'hev1', 'h.265'].some((c) =>
+    codecLower.includes(c)
+  );
+
+  if (w > 0 || h > 0) {
+    // Client-side decode limit fallback: file is large, modern codec, but browser reported 1920 or lower
+    if (isLargeFile && isModernCodec && w <= 1920 && h <= 1080) {
+      return '4K (Source ตรวจพบ)';
+    }
+
+    if (w >= 3840 || h >= 2160) return '4K (2160p)';
+    if (w >= 2560 || h >= 1440) return '2K (1440p)';
+    if (w >= 1920 || h >= 1080) return '1080p (Full HD)';
+    if (w >= 1280 || h >= 720) return '720p (HD)';
+    if (w >= 854 || h >= 480) return '480p (SD)';
+    return '360p';
+  }
+
+  if (isLargeFile && isModernCodec) {
+    return '4K (Source ตรวจพบ)';
+  }
+
+  return 'รอผลวิเคราะห์จาก Server';
+}
+
+/**
+ * Fast inspection of file header (first 128KB) to detect true video codec
+ * without needing browser HTML5 video decoder.
+ */
+export async function detectCodecFromHeader(file) {
+  if (!file || typeof file.slice !== 'function') return '';
+  try {
+    const slice = file.slice(0, 131072);
+    const buffer = await slice.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let str = '';
+    for (let i = 0; i < bytes.length; i++) {
+      const code = bytes[i];
+      if (code >= 32 && code <= 126) {
+        str += String.fromCharCode(code);
+      } else {
+        str += ' ';
+      }
+    }
+    const lower = str.toLowerCase();
+    if (lower.includes('av01') || lower.includes('av1')) return 'av1';
+    if (lower.includes('hvc1') || lower.includes('hev1') || lower.includes('hevc')) return 'hevc';
+    if (lower.includes('vp09') || lower.includes('vp9')) return 'vp9';
+    if (lower.includes('avc1') || lower.includes('h264')) return 'h264';
+    return '';
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Classify video resolution into standard brackets:
@@ -108,3 +197,4 @@ export function detectCodec(fourCC = '', fallback = 'h264') {
   if (f.includes('vp08') || f.includes('vp8')) return 'vp8';
   return f;
 }
+

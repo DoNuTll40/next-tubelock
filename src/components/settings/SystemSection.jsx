@@ -8,9 +8,9 @@ import { Trash2, AlertTriangle } from 'lucide-react';
 export default function SystemSection({ handleClearHistory, handleFactoryReset }) {
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
-      <div className="pb-2 border-b border-[#EFECE6]">
-        <h2 className="text-xl font-bold text-[#212529]">ข้อมูลและความเป็นส่วนตัว</h2>
-        <p className="text-xs text-[#8C857B] mt-1">
+      <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
+        <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">ข้อมูลและความเป็นส่วนตัว</h2>
+        <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
           จัดการประวัติการรับชม ตำแหน่งเวลาที่ค้างไว้ และแคชของระบบ
         </p>
       </div>
@@ -25,9 +25,9 @@ export default function SystemSection({ handleClearHistory, handleFactoryReset }
           <button
             type="button"
             onClick={handleClearHistory}
-            className="px-3.5 py-1.5 rounded-xl bg-[#F5F2EB] hover:bg-[#EFECE6] text-[#212529] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+            className="px-3.5 py-1.5 rounded-xl bg-[#F5F2EB] dark:bg-white/10 hover:bg-[#EFECE6] dark:hover:bg-white/15 text-[#212529] dark:text-[#F1F1F1] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
           >
-            <Trash2 className="w-3.5 h-3.5 text-[#8C857B]" />
+            <Trash2 className="w-3.5 h-3.5 text-[#8C857B] dark:text-[#AAAAAA]" />
             <span>ล้างประวัติ</span>
           </button>
         </SettingRow>
@@ -41,9 +41,9 @@ export default function SystemSection({ handleClearHistory, handleFactoryReset }
           <button
             type="button"
             onClick={handleFactoryReset}
-            className="px-3.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 border border-rose-200"
+            className="px-3.5 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 border border-rose-200 dark:border-rose-900/50"
           >
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-500" />
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-500 dark:text-rose-400" />
             <span>รีเซ็ตระบบ</span>
           </button>
         </SettingRow>

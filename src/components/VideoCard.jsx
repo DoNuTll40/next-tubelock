@@ -48,7 +48,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
 
   if (compact) {
     return (
-      <div className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] transition-colors cursor-pointer">
+      <div className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer">
         <Link
           href={`/watch/${video.id}`}
           replace={replace}
@@ -77,14 +77,14 @@ export default function VideoCard({ video, replace = false, compact = false, onD
 
         <div className="flex-1 min-w-0 pr-1 flex flex-col justify-start">
           <Link href={`/watch/${video.id}`} replace={replace}>
-            <h4 className="text-[#0F0F0F] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black transition-colors">
+            <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
               {video.title}
             </h4>
           </Link>
-          <span className="text-[#606060] text-[12px] truncate mt-1 hover:text-[#0F0F0F] transition-colors">
+          <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate mt-1 hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors">
             OneDrive Cloud Storage
           </span>
-          <div className="flex items-center gap-1 text-[#606060] text-[12px] mt-0.5 truncate">
+          <div className="flex items-center gap-1 text-[#606060] dark:text-[#888888] text-[12px] mt-0.5 truncate">
             <span>{video.views_count ? `${video.views_count.toLocaleString()} ครั้ง` : '270K views'}</span>
             <span>•</span>
             <span>HLS Direct</span>
@@ -97,7 +97,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
             <button
               type="button"
               onClick={() => setShowMenu(!showMenu)}
-              className="p-1 rounded-full hover:bg-[#EFECE6] text-[#8C857B] hover:text-[#212529] transition cursor-pointer"
+              className="p-1 rounded-full hover:bg-[#EFECE6] dark:hover:bg-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition cursor-pointer"
               title="ตัวเลือกเพิ่มเติม"
             >
               <MoreVertical className="w-3.5 h-3.5" />
@@ -114,7 +114,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                 />
                 {/* Desktop Popover */}
                 <div
-                  className="hidden sm:flex absolute right-0 top-7 z-50 w-36 bg-white rounded-xl border border-[#EFECE6] shadow-xl p-1 flex-col gap-0.5 text-xs"
+                  className="hidden sm:flex absolute right-0 top-7 z-50 w-36 bg-white dark:bg-[#1c1c1c] rounded-xl border border-[#EFECE6] dark:border-white/10 shadow-xl p-1 flex-col gap-0.5 text-xs"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
@@ -123,7 +123,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                       setShowMenu(false);
                       setShowDeleteModal(true);
                     }}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-50 text-rose-600 font-medium flex items-center gap-1.5 transition cursor-pointer"
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-600 font-medium flex items-center gap-1.5 transition cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-rose-500" />
                     <span>ลบวิดีโอ</span>
@@ -138,24 +138,24 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                   }}
                 >
                   <div
-                    className="bg-white rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 max-w-lg mx-auto w-full"
+                    className="bg-white dark:bg-[#181818] rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 dark:border-white/10 max-w-lg mx-auto w-full"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <div className="w-10 h-1 bg-zinc-300 rounded-full mx-auto mb-2" />
-                    <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 mb-1">
+                    <div className="w-10 h-1 bg-zinc-300 dark:bg-white/20 rounded-full mx-auto mb-2" />
+                    <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 dark:border-white/10 mb-1">
                       <div className="w-14 aspect-video rounded-lg bg-zinc-900 overflow-hidden shrink-0 relative">
                         {video.thumbnail_url && (
                           <img src={video.thumbnail_url} alt="" className="w-full h-full object-cover" />
                         )}
                       </div>
                       <div className="flex flex-col min-w-0 flex-1">
-                        <span className="text-xs font-bold text-zinc-900 line-clamp-1">{video.title}</span>
-                        <span className="text-[11px] text-zinc-500 truncate">{fileSizeMB} MB • {resBadge}</span>
+                        <span className="text-xs font-bold text-zinc-900 dark:text-[#F1F1F1] line-clamp-1">{video.title}</span>
+                        <span className="text-[11px] text-zinc-500 dark:text-[#888888] truncate">{fileSizeMB} MB • {resBadge}</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => setShowMenu(false)}
-                        className="p-1.5 rounded-full hover:bg-zinc-100 text-zinc-400 cursor-pointer"
+                        className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-white/10 text-zinc-400 dark:text-[#AAAAAA] cursor-pointer"
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -166,7 +166,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                         setShowMenu(false);
                         setShowDeleteModal(true);
                       }}
-                      className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 active:bg-rose-100 text-rose-600 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
+                      className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 dark:hover:bg-rose-950/30 active:bg-rose-100 dark:active:bg-rose-900/30 text-rose-600 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
                     >
                       <Trash2 className="w-5 h-5 text-rose-500" />
                       <span>ลบวิดีโอ (ถาวร)</span>
@@ -188,29 +188,29 @@ export default function VideoCard({ video, replace = false, compact = false, onD
             }}
           >
             <div
-              className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 flex flex-col gap-4 text-left"
+              className="bg-white dark:bg-[#181818] rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 dark:border-white/10 flex flex-col gap-4 text-left"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-100 dark:border-rose-900/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
                   <Trash2 className="w-5 h-5" />
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <h3 className="text-base font-bold text-[#0F0F0F] leading-tight">
+                  <h3 className="text-base font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-tight">
                     ลบวิดีโอนี้?
                   </h3>
-                  <span className="text-xs text-[#8C857B] truncate">
+                  <span className="text-xs text-[#8C857B] dark:text-[#AAAAAA] truncate">
                     {video.title}
                   </span>
                 </div>
               </div>
 
-              <p className="text-xs text-[#606060] leading-relaxed">
-                วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
+              <p className="text-xs text-[#606060] dark:text-[#AAAAAA] leading-relaxed">
+                วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F] dark:text-[#F1F1F1]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
               </p>
 
               {deleteError && (
-                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
+                <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs text-rose-600 dark:text-rose-400 font-medium">
                   {deleteError}
                 </div>
               )}
@@ -220,7 +220,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                   type="button"
                   disabled={isDeleting}
                   onClick={() => setShowDeleteModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 transition cursor-pointer"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] dark:text-[#F1F1F1] bg-zinc-100 dark:bg-white/10 hover:bg-zinc-200 dark:hover:bg-white/15 disabled:opacity-50 transition cursor-pointer"
                 >
                   ยกเลิก
                 </button>
@@ -228,7 +228,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                   type="button"
                   disabled={isDeleting}
                   onClick={handleDelete}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200 dark:shadow-none"
                 >
                   {isDeleting ? (
                     <>
@@ -252,11 +252,11 @@ export default function VideoCard({ video, replace = false, compact = false, onD
 
   if (half) {
     return (
-      <div className="flex gap-2 group relative select-none items-start p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] transition-colors cursor-pointer">
+      <div className="flex gap-2 group relative select-none items-start p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer">
         <Link
           href={`/watch/${video.id}`}
           replace={replace}
-          className="relative aspect-video w-[256px] h-[144px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
+          className="relative aspect-video w-[204.8px] h-[115.2px] xl:w-[294.4px] xl:h-[165.6px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
         >
           {effectiveThumbnail && !imgError ? (
             <img
@@ -281,14 +281,14 @@ export default function VideoCard({ video, replace = false, compact = false, onD
 
         <div className="flex-1 min-w-0 pr-1 flex flex-col justify-start">
           <Link href={`/watch/${video.id}`} replace={replace}>
-            <h4 className="text-[#0F0F0F] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black transition-colors">
+            <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
               {video.title}
             </h4>
           </Link>
-          <span className="text-[#606060] text-[12px] truncate mt-1 hover:text-[#0F0F0F] transition-colors">
+          <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate mt-1 hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors">
             OneDrive Cloud Storage
           </span>
-          <div className="flex items-center gap-1 text-[#606060] text-[12px] mt-0.5 truncate">
+          <div className="flex items-center gap-1 text-[#606060] dark:text-[#888888] text-[12px] mt-0.5 truncate">
             <span>{video.views_count ? `${video.views_count.toLocaleString()} ครั้ง` : '270K views'}</span>
             <span>•</span>
             <span>HLS Direct</span>
@@ -301,7 +301,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
             <button
               type="button"
               onClick={() => setShowMenu(!showMenu)}
-              className="p-1 rounded-full hover:bg-[#EFECE6] text-[#8C857B] hover:text-[#212529] transition cursor-pointer"
+              className="p-1 rounded-full hover:bg-[#EFECE6] dark:hover:bg-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition cursor-pointer"
               title="ตัวเลือกเพิ่มเติม"
             >
               <MoreVertical className="w-3.5 h-3.5" />
@@ -318,7 +318,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                 />
                 {/* Desktop Popover */}
                 <div
-                  className="hidden sm:flex absolute right-0 top-7 z-50 w-36 bg-white rounded-xl border border-[#EFECE6] shadow-xl p-1 flex-col gap-0.5 text-xs"
+                  className="hidden sm:flex absolute right-0 top-7 z-50 w-36 bg-white dark:bg-[#1c1c1c] rounded-xl border border-[#EFECE6] dark:border-white/10 shadow-xl p-1 flex-col gap-0.5 text-xs"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button
@@ -327,7 +327,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                       setShowMenu(false);
                       setShowDeleteModal(true);
                     }}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-50 text-rose-600 font-medium flex items-center gap-1.5 transition cursor-pointer"
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 text-rose-600 font-medium flex items-center gap-1.5 transition cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-rose-500" />
                     <span>ลบวิดีโอ</span>
@@ -342,24 +342,24 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                   }}
                 >
                   <div
-                    className="bg-white rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 max-w-lg mx-auto w-full"
+                    className="bg-white dark:bg-[#181818] rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 dark:border-white/10 max-w-lg mx-auto w-full"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <div className="w-10 h-1 bg-zinc-300 rounded-full mx-auto mb-2" />
-                    <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 mb-1">
+                    <div className="w-10 h-1 bg-zinc-300 dark:bg-white/20 rounded-full mx-auto mb-2" />
+                    <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 dark:border-white/10 mb-1">
                       <div className="w-14 aspect-video rounded-lg bg-zinc-900 overflow-hidden shrink-0 relative">
                         {video.thumbnail_url && (
                           <img src={video.thumbnail_url} alt="" className="w-full h-full object-cover" />
                         )}
                       </div>
                       <div className="flex flex-col min-w-0 flex-1">
-                        <span className="text-xs font-bold text-zinc-900 line-clamp-1">{video.title}</span>
-                        <span className="text-[11px] text-zinc-500 truncate">{fileSizeMB} MB • {resBadge}</span>
+                        <span className="text-xs font-bold text-zinc-900 dark:text-[#F1F1F1] line-clamp-1">{video.title}</span>
+                        <span className="text-[11px] text-zinc-500 dark:text-[#888888] truncate">{fileSizeMB} MB • {resBadge}</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => setShowMenu(false)}
-                        className="p-1.5 rounded-full hover:bg-zinc-100 text-zinc-400 cursor-pointer"
+                        className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-white/10 text-zinc-400 dark:text-[#AAAAAA] cursor-pointer"
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -370,7 +370,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                         setShowMenu(false);
                         setShowDeleteModal(true);
                       }}
-                      className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 active:bg-rose-100 text-rose-600 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
+                      className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 dark:hover:bg-rose-950/30 active:bg-rose-100 dark:active:bg-rose-900/30 text-rose-600 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
                     >
                       <Trash2 className="w-5 h-5 text-rose-500" />
                       <span>ลบวิดีโอ (ถาวร)</span>
@@ -392,29 +392,29 @@ export default function VideoCard({ video, replace = false, compact = false, onD
             }}
           >
             <div
-              className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 flex flex-col gap-4 text-left"
+              className="bg-white dark:bg-[#181818] rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 dark:border-white/10 flex flex-col gap-4 text-left"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-100 dark:border-rose-900/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
                   <Trash2 className="w-5 h-5" />
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <h3 className="text-base font-bold text-[#0F0F0F] leading-tight">
+                  <h3 className="text-base font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-tight">
                     ลบวิดีโอนี้?
                   </h3>
-                  <span className="text-xs text-[#8C857B] truncate">
+                  <span className="text-xs text-[#8C857B] dark:text-[#AAAAAA] truncate">
                     {video.title}
                   </span>
                 </div>
               </div>
 
-              <p className="text-xs text-[#606060] leading-relaxed">
-                วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
+              <p className="text-xs text-[#606060] dark:text-[#AAAAAA] leading-relaxed">
+                วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F] dark:text-[#F1F1F1]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
               </p>
 
               {deleteError && (
-                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
+                <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs text-rose-600 dark:text-rose-400 font-medium">
                   {deleteError}
                 </div>
               )}
@@ -424,7 +424,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                   type="button"
                   disabled={isDeleting}
                   onClick={() => setShowDeleteModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 transition cursor-pointer"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] dark:text-[#F1F1F1] bg-zinc-100 dark:bg-white/10 hover:bg-zinc-200 dark:hover:bg-white/15 disabled:opacity-50 transition cursor-pointer"
                 >
                   ยกเลิก
                 </button>
@@ -432,7 +432,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                   type="button"
                   disabled={isDeleting}
                   onClick={handleDelete}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200 dark:shadow-none"
                 >
                   {isDeleting ? (
                     <>
@@ -462,7 +462,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
         className="flex flex-col"
       >
         {/* 16:9 Thumbnail Screen */}
-        <div className="relative aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] shadow-xs">
+        <div className="relative aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs">
           {video.thumbnail_url && !imgError ? (
             <>
               <img
@@ -518,24 +518,24 @@ export default function VideoCard({ video, replace = false, compact = false, onD
       {/* Video Details Row (YouTube PC & Mobile Layout) */}
       <div className="flex items-start gap-3 pt-3 px-0.5">
         {/* Author / Channel Avatar */}
-        <div className="w-9 h-9 rounded-full bg-[#FFF4EB] border border-[#FF7A00]/20 flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+        <div className="w-9 h-9 rounded-full bg-[#FFF4EB] dark:bg-[#FF7A00]/15 border border-[#FF7A00]/20 flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
           <Layers className="w-4 h-4 text-[#FF7A00]" />
         </div>
 
         {/* Info Column */}
         <div className="flex-1 min-w-0 pr-1">
           <Link href={`/watch/${video.id}`} replace={replace}>
-            <h3 className="text-sm font-bold text-[#212529] line-clamp-2 leading-snug group-hover:text-[#FF7A00] transition-colors">
+            <h3 className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] line-clamp-2 leading-snug group-hover:text-[#FF7A00] transition-colors">
               {video.title}
             </h3>
           </Link>
 
-          <div className="flex flex-col text-[12px] text-[#8C857B] mt-1 leading-normal">
-            <span className="truncate hover:text-[#212529] transition-colors">
+          <div className="flex flex-col text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-normal">
+            <span className="truncate hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-colors">
               {video.description ? video.description.replace('สแกนจากโฟลเดอร์ ', '') : 'OneDrive Storage'}
             </span>
-            <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B]">
-              <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] px-1.5 py-0.2 rounded text-[10px]">
+            <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
+              <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px]">
                 {video.codec ? video.codec.toUpperCase() : 'H264'}
               </span>
               <span>•</span>
@@ -551,7 +551,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
           <button
             type="button"
             onClick={() => setShowMenu(!showMenu)}
-            className="p-1.5 -mr-1 rounded-full hover:bg-[#EFECE6] text-[#8C857B] hover:text-[#212529] transition cursor-pointer"
+            className="p-1.5 -mr-1 rounded-full hover:bg-[#EFECE6] dark:hover:bg-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition cursor-pointer"
             title="ตัวเลือกเพิ่มเติม"
           >
             <MoreVertical className="w-4 h-4" />
@@ -571,12 +571,12 @@ export default function VideoCard({ video, replace = false, compact = false, onD
 
               {/* Desktop Dropdown Popover */}
               <div
-                className="hidden sm:flex absolute right-0 top-8 z-50 w-44 bg-white rounded-2xl border border-[#EFECE6] shadow-xl p-1.5 flex-col gap-1 text-xs"
+                className="hidden sm:flex absolute right-0 top-8 z-50 w-44 bg-white dark:bg-[#1c1c1c] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xl p-1.5 flex-col gap-1 text-xs"
                 onClick={(e) => e.stopPropagation()}
               >
                 <Link
                   href={`/watch/${video.id}`}
-                  className="px-3 py-2 rounded-xl hover:bg-[#FBF9F5] text-[#212529] font-medium flex items-center gap-2"
+                  className="px-3 py-2 rounded-xl hover:bg-[#FBF9F5] dark:hover:bg-white/5 text-[#212529] dark:text-[#F1F1F1] font-medium flex items-center gap-2"
                 >
                   <Play className="w-3.5 h-3.5 text-[#FF7A00]" />
                   <span>เล่นวิดีโอ</span>
@@ -587,13 +587,13 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                     navigator.clipboard.writeText(`${window.location.origin}/watch/${video.id}`);
                     setShowMenu(false);
                   }}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#FBF9F5] text-[#212529] font-medium flex items-center gap-2 cursor-pointer"
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#FBF9F5] dark:hover:bg-white/5 text-[#212529] dark:text-[#F1F1F1] font-medium flex items-center gap-2 cursor-pointer"
                 >
                   <Copy className="w-3.5 h-3.5 text-zinc-500" />
                   <span>คัดลอกลิงก์</span>
                 </button>
 
-                <div className="h-px bg-zinc-100 my-0.5" />
+                <div className="h-px bg-zinc-100 dark:bg-white/10 my-0.5" />
 
                 <button
                   type="button"
@@ -617,27 +617,27 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                 }}
               >
                 <div
-                  className="bg-white rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 max-w-lg mx-auto w-full"
+                  className="bg-white dark:bg-[#181818] rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 dark:border-white/10 max-w-lg mx-auto w-full"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {/* Top drag handle */}
-                  <div className="w-10 h-1 bg-zinc-300 rounded-full mx-auto mb-2" />
+                  <div className="w-10 h-1 bg-zinc-300 dark:bg-white/20 rounded-full mx-auto mb-2" />
 
                   {/* Video preview row */}
-                  <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 mb-1">
+                  <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 dark:border-white/10 mb-1">
                     <div className="w-14 aspect-video rounded-lg bg-zinc-900 overflow-hidden shrink-0 relative">
                       {video.thumbnail_url && (
                         <img src={video.thumbnail_url} alt="" className="w-full h-full object-cover" />
                       )}
                     </div>
                     <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-xs font-bold text-zinc-900 line-clamp-1">{video.title}</span>
-                      <span className="text-[11px] text-zinc-500 truncate">{fileSizeMB} MB • {resBadge}</span>
+                      <span className="text-xs font-bold text-zinc-900 dark:text-[#F1F1F1] line-clamp-1">{video.title}</span>
+                      <span className="text-[11px] text-zinc-500 dark:text-[#AAAAAA] truncate">{fileSizeMB} MB • {resBadge}</span>
                     </div>
                     <button
                       type="button"
                       onClick={() => setShowMenu(false)}
-                      className="p-1.5 rounded-full hover:bg-zinc-100 text-zinc-400 cursor-pointer"
+                      className="p-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-white/10 text-zinc-400 dark:text-[#AAAAAA] cursor-pointer"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -646,7 +646,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                   {/* Actions */}
                   <Link
                     href={`/watch/${video.id}`}
-                    className="px-3 py-3 rounded-2xl hover:bg-zinc-50 active:bg-zinc-100 text-zinc-800 font-medium flex items-center gap-3 text-sm"
+                    className="px-3 py-3 rounded-2xl hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 text-zinc-800 dark:text-[#F1F1F1] font-medium flex items-center gap-3 text-sm"
                   >
                     <Play className="w-5 h-5 text-[#FF7A00]" />
                     <span>เล่นวิดีโอ</span>
@@ -658,9 +658,9 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                       navigator.clipboard.writeText(`${window.location.origin}/watch/${video.id}`);
                       setShowMenu(false);
                     }}
-                    className="w-full text-left px-3 py-3 rounded-2xl hover:bg-zinc-50 active:bg-zinc-100 text-zinc-800 font-medium flex items-center gap-3 text-sm cursor-pointer"
+                    className="w-full text-left px-3 py-3 rounded-2xl hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 text-zinc-800 dark:text-[#F1F1F1] font-medium flex items-center gap-3 text-sm cursor-pointer"
                   >
-                    <Copy className="w-5 h-5 text-zinc-500" />
+                    <Copy className="w-5 h-5 text-zinc-500 dark:text-[#AAAAAA]" />
                     <span>คัดลอกลิงก์</span>
                   </button>
 
@@ -670,9 +670,9 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                       setShowMenu(false);
                       setShowDeleteModal(true);
                     }}
-                    className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 active:bg-rose-100 text-rose-600 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
+                    className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 dark:hover:bg-rose-950/30 active:bg-rose-100 dark:active:bg-rose-900/40 text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
                   >
-                    <Trash2 className="w-5 h-5 text-rose-500" />
+                    <Trash2 className="w-5 h-5 text-rose-500 dark:text-rose-400" />
                     <span>ลบวิดีโอ (ถาวร)</span>
                   </button>
                 </div>
@@ -692,29 +692,29 @@ export default function VideoCard({ video, replace = false, compact = false, onD
           }}
         >
           <div
-            className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 flex flex-col gap-4 text-left"
+            className="bg-white dark:bg-[#181818] rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 dark:border-white/10 flex flex-col gap-4 text-left"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+              <div className="w-11 h-11 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-100 dark:border-rose-900/30 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
                 <Trash2 className="w-5 h-5" />
               </div>
               <div className="flex flex-col min-w-0">
-                <h3 className="text-base font-bold text-[#0F0F0F] leading-tight">
+                <h3 className="text-base font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-tight">
                   ลบวิดีโอนี้?
                 </h3>
-                <span className="text-xs text-[#8C857B] truncate">
+                <span className="text-xs text-[#8C857B] dark:text-[#AAAAAA] truncate">
                   {video.title}
                 </span>
               </div>
             </div>
 
-            <p className="text-xs text-[#606060] leading-relaxed">
-              วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
+            <p className="text-xs text-[#606060] dark:text-[#AAAAAA] leading-relaxed">
+              วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F] dark:text-[#F1F1F1]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
             </p>
 
             {deleteError && (
-              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
+              <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/50 rounded-xl text-xs text-rose-600 dark:text-rose-400 font-medium">
                 {deleteError}
               </div>
             )}
@@ -724,7 +724,7 @@ export default function VideoCard({ video, replace = false, compact = false, onD
                 type="button"
                 disabled={isDeleting}
                 onClick={() => setShowDeleteModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 transition cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] dark:text-[#F1F1F1] bg-zinc-100 dark:bg-white/10 hover:bg-zinc-200 dark:hover:bg-white/15 disabled:opacity-50 transition cursor-pointer"
               >
                 ยกเลิก
               </button>

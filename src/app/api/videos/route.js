@@ -40,6 +40,7 @@ async function ensureTable(sql) {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS raw_file_name TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS master_playlist_path TEXT DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'general';`;
 
     tableEnsured = true;
   } catch (err) {

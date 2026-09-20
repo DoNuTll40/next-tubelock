@@ -21,6 +21,7 @@ export default function Select({
   const containerRef = useRef(null);
 
   const selectedOption = options.find((opt) => opt.value === value);
+  const isFullWidth = className.includes('w-full');
 
   // Smart flip: check space below vs above when opening
   useEffect(() => {
@@ -76,19 +77,19 @@ export default function Select({
         onClick={() => !disabled && setIsOpen((prev) => !prev)}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        className={`flex items-center justify-between gap-2.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
+        className={`w-full flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer border ${
           disabled
-            ? 'opacity-50 cursor-not-allowed bg-[#EFECE6] border-transparent text-[#8C857B]'
+            ? 'opacity-50 cursor-not-allowed bg-[#EFECE6] dark:bg-white/5 border-transparent text-[#8C857B]'
             : isOpen
-            ? 'bg-white border-[#FF7A00] ring-3 ring-[#FF7A00]/15 text-[#212529] shadow-xs'
-            : 'bg-[#FBF9F5] hover:bg-white border-[#E5DFD5] hover:border-[#D5CFC5] text-[#212529] shadow-2xs'
+            ? 'bg-white dark:bg-[#1f1f1f] border-[#FF7A00] ring-3 ring-[#FF7A00]/15 text-[#212529] dark:text-[#F1F1F1] shadow-xs'
+            : 'bg-[#FBF9F5] dark:bg-[#181818] hover:bg-white dark:hover:bg-[#1f1f1f] border-[#E5DFD5] dark:border-white/10 hover:border-[#D5CFC5] text-[#212529] dark:text-[#F1F1F1] shadow-2xs'
         }`}
       >
         <span className="truncate">
           {selectedOption ? selectedOption.label : placeholder}
         </span>
         <ChevronDown
-          className={`w-4 h-4 text-[#8C857B] transition-transform duration-200 shrink-0 ${
+          className={`w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA] transition-transform duration-200 shrink-0 ${
             isOpen ? 'rotate-180 text-[#FF7A00]' : ''
           }`}
         />
@@ -98,7 +99,7 @@ export default function Select({
       {isOpen && (
         <div
           role="listbox"
-          className={`absolute right-0 min-w-[230px] max-w-[340px] w-max bg-white rounded-2xl border border-[#E5DFD5] shadow-2xl py-1.5 z-50 focus:outline-none animate-fadeIn ${
+          className={`absolute ${isFullWidth ? 'left-0 right-0 w-full' : 'right-0 min-w-[230px] max-w-[340px] w-max'} bg-white dark:bg-[#1c1c1c] rounded-2xl border border-[#E5DFD5] dark:border-white/10 shadow-2xl py-1.5 z-50 focus:outline-none animate-fadeIn ${
             openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1.5'
           }`}
         >
@@ -116,18 +117,18 @@ export default function Select({
                   onClick={() => handleSelect(opt.value)}
                   className={`w-full flex items-center justify-between gap-3 px-3 py-2 rounded-xl text-xs text-left transition-colors cursor-pointer ${
                     isSelected
-                      ? 'bg-[#FFF4EB] text-[#FF7A00] font-bold'
-                      : 'text-[#212529] hover:bg-[#F7F4EE] hover:text-[#FF7A00]'
+                      ? 'bg-[#FFF4EB] dark:bg-[#FF7A00]/15 text-[#FF7A00] font-bold'
+                      : 'text-[#212529] dark:text-[#E1E1E1] hover:bg-[#F7F4EE] dark:hover:bg-white/5 hover:text-[#FF7A00]'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     {Icon && (
-                      <Icon className={`w-4 h-4 shrink-0 ${isSelected ? 'text-[#FF7A00]' : 'text-[#8C857B]'}`} />
+                      <Icon className={`w-4 h-4 shrink-0 ${isSelected ? 'text-[#FF7A00]' : 'text-[#8C857B] dark:text-[#AAAAAA]'}`} />
                     )}
                     <div className="flex flex-col min-w-0">
                       <span className="truncate">{opt.label}</span>
                       {opt.desc && (
-                        <span className="text-[10px] text-[#8C857B] font-normal truncate mt-0.5">
+                        <span className="text-[10px] text-[#8C857B] dark:text-[#AAAAAA] font-normal truncate mt-0.5">
                           {opt.desc}
                         </span>
                       )}

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Layers, User, Menu, Search, Mic, Plus, Bell } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useSidebar } from '@/context/SidebarContext';
@@ -17,40 +17,46 @@ async function sha256(message) {
 
 export default function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { toggleSidebar, toggleDrawer } = useSidebar();
   const { mode, isDesktop } = useViewMode();
   const [avatarUrl, setAvatarUrl] = useState('');
   const [imgError, setImgError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-
-  const updateAvatar = async () => {
-    if (typeof window === 'undefined') return;
-    const email = localStorage.getItem('pt_gravatar_email');
-    const fallback = localStorage.getItem('pt_fallback_avatar') || 'mp';
-    if (email) {
-      try {
-        const hash = await sha256(email);
-        setAvatarUrl(`https://www.gravatar.com/avatar/${hash}?d=${fallback}&s=80`);
-        setImgError(false);
-      } catch {
+  useEffect(() => {
+    let isMounted = true;
+    const updateAvatar = async () => {
+      if (typeof window === 'undefined') return;
+      const email = localStorage.getItem('pt_gravatar_email');
+      const fallback = localStorage.getItem('pt_fallback_avatar') || 'mp';
+      if (email) {
+        try {
+          const hash = await sha256(email);
+          if (isMounted) {
+            setAvatarUrl(`https://www.gravatar.com/avatar/${hash}?d=${fallback}&s=80`);
+            setImgError(false);
+          }
+        } catch {
+          if (isMounted) setAvatarUrl(`https://www.gravatar.com/avatar/?d=${fallback}&s=80`);
+        }
+      } else if (isMounted) {
         setAvatarUrl(`https://www.gravatar.com/avatar/?d=${fallback}&s=80`);
       }
-    } else {
-      setAvatarUrl(`https://www.gravatar.com/avatar/?d=${fallback}&s=80`);
-    }
-  };
+    };
 
-  useEffect(() => {
     updateAvatar();
     window.addEventListener('storage', updateAvatar);
-    return () => window.removeEventListener('storage', updateAvatar);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('storage', updateAvatar);
+    };
   }, []);
 
   const handleSearch = (e) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      window.location.href = `/?q=${encodeURIComponent(searchQuery.trim())}`;
+      router.push(`/?q=${encodeURIComponent(searchQuery.trim())}`);
     }
   };
 
@@ -60,7 +66,7 @@ export default function Navbar() {
   }
 
   return (
-    <header className="sticky top-0 z-40 w-full bg-[#FBF9F5]/95 backdrop-blur-md border-b border-[#EFECE6] px-4 py-2 select-none h-14 flex items-center">
+    <header className="sticky top-0 z-40 w-full bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10 px-4 py-2 select-none h-14 flex items-center">
       <div className="w-full flex items-center justify-between gap-4">
         {/* Left: Hamburger & Logo */}
         <div className="flex items-center gap-3">
@@ -73,7 +79,7 @@ export default function Navbar() {
                 toggleSidebar();
               }
             }}
-            className="p-2 rounded-full hover:bg-[#EFECE6] active:scale-95 transition text-[#212529] cursor-pointer"
+            className="p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] active:scale-95 transition text-[#212529] dark:text-[#F1F1F1] cursor-pointer"
             title="เมนูนำทาง"
           >
             <Menu className="w-5 h-5" />
@@ -84,10 +90,10 @@ export default function Navbar() {
               <Layers className="w-3.5 h-3.5 fill-white stroke-[2]" />
             </div>
             <div className="flex items-start gap-1">
-              <span className="font-bold text-base tracking-tight text-[#212529]">
+              <span className="font-bold text-base tracking-tight text-[#212529] dark:text-[#F1F1F1]">
                 Tube<span className="text-[#FF7A00]">Lock</span>
               </span>
-              <span className="text-[9px] font-semibold text-[#8C857B] -mt-0.5">TH</span>
+              <span className="text-[9px] font-semibold text-[#8C857B] dark:text-[#888888] -mt-0.5">TH</span>
             </div>
           </Link>
         </div>
@@ -96,18 +102,18 @@ export default function Navbar() {
         {isDesktop ? (
           <div className="flex items-center justify-center flex-1 max-w-[620px] mx-auto">
             <form onSubmit={handleSearch} className="flex items-center w-full">
-              <div className="flex items-center flex-1 relative rounded-l-full border border-[#EFECE6] focus-within:border-[#FF7A00] bg-white overflow-hidden shadow-2xs transition-colors">
+              <div className="flex items-center flex-1 relative rounded-l-full border border-[#EFECE6] dark:border-white/15 focus-within:border-[#FF7A00] bg-white dark:bg-[#121212] overflow-hidden shadow-2xs transition-colors">
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="ค้นหาใน TubeLock"
-                  className="w-full py-2 pl-4 pr-3 text-xs text-[#212529] placeholder:text-[#8C857B] focus:outline-none bg-transparent"
+                  className="w-full py-2 pl-4 pr-3 text-xs text-[#212529] dark:text-[#F1F1F1] placeholder:text-[#8C857B] dark:placeholder:text-[#777777] focus:outline-none bg-transparent"
                 />
               </div>
               <button
                 type="submit"
-                className="h-[34px] px-5 rounded-r-full bg-[#F5F2EB] hover:bg-[#EFECE6] border-y border-r border-[#EFECE6] text-[#212529] flex items-center justify-center cursor-pointer transition active:bg-[#E5E0D8]"
+                className="h-[34px] px-5 rounded-r-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] border-y border-r border-[#EFECE6] dark:border-white/15 text-[#212529] dark:text-[#F1F1F1] flex items-center justify-center cursor-pointer transition active:bg-[#E5E0D8]"
                 title="ค้นหา"
               >
                 <Search className="w-4 h-4" />
@@ -117,7 +123,7 @@ export default function Navbar() {
             {/* Voice Search Button */}
             <button
               type="button"
-              className="ml-2.5 w-9 h-9 rounded-full bg-[#F5F2EB] hover:bg-[#EFECE6] flex items-center justify-center text-[#212529] transition cursor-pointer"
+              className="ml-2.5 w-9 h-9 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] flex items-center justify-center text-[#212529] dark:text-[#F1F1F1] transition cursor-pointer"
               title="ค้นหาด้วยเสียง"
             >
               <Mic className="w-4 h-4" />
@@ -133,7 +139,7 @@ export default function Navbar() {
           {!isDesktop && (
             <button
               type="button"
-              className="p-2 rounded-full hover:bg-[#EFECE6] text-[#212529]"
+              className="p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1]"
             >
               <Search className="w-5 h-5" />
             </button>
@@ -143,7 +149,7 @@ export default function Navbar() {
           {isDesktop && (
             <Link
               href="/upload"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F5F2EB] hover:bg-[#EFECE6] text-xs font-semibold text-[#212529] transition active:scale-95"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] transition active:scale-95"
               title="อัปโหลดวิดีโอ"
             >
               <Plus className="w-4 h-4 text-[#FF7A00]" />
@@ -155,7 +161,7 @@ export default function Navbar() {
           {isDesktop && (
             <button
               type="button"
-              className="flex p-2 rounded-full hover:bg-[#EFECE6] text-[#212529] transition"
+              className="flex p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1] transition"
               title="การแจ้งเตือน"
             >
               <Bell className="w-5 h-5" />
@@ -168,7 +174,7 @@ export default function Navbar() {
             className="relative group flex items-center p-0.5 rounded-full transition active:scale-95"
             title="ตั้งค่าระบบ"
           >
-            <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] border border-[#EFECE6] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center">
               {avatarUrl && !imgError ? (
                 <img
                   src={avatarUrl}
@@ -177,10 +183,10 @@ export default function Navbar() {
                   className="w-full h-full object-cover"
                 />
               ) : (
-                <User className="w-4 h-4 text-[#8C857B]" />
+                <User className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
               )}
             </div>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#FBF9F5] rounded-full" />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#FBF9F5] dark:border-[#0F0F0F] rounded-full" />
           </Link>
         </div>
       </div>

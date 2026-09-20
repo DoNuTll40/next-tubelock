@@ -44,9 +44,9 @@ export default function PlayerSection({
 }) {
   return (
     <div className="flex flex-col gap-6 animate-fadeIn">
-      <div className="pb-2 border-b border-[#EFECE6]">
-        <h2 className="text-xl font-bold text-[#212529]">การเล่นและตัวเล่นวิดีโอ</h2>
-        <p className="text-xs text-[#8C857B] mt-1">
+      <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
+        <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">การเล่นและตัวเล่นวิดีโอ</h2>
+        <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
           กำหนดค่าเริ่มต้นสำหรับเครื่องเล่น HLS, การข้ามเวลา, ระดับเสียง และสถิติ
         </p>
       </div>
@@ -77,7 +77,7 @@ export default function PlayerSection({
             className="sm:hidden flex items-center gap-1 text-xs font-semibold text-[#FF7A00] cursor-pointer"
           >
             <span>{defaultSpeed}x</span>
-            <ChevronRight className="w-4 h-4 text-[#8C857B]" />
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
           </button>
         </SettingRow>
 
@@ -106,7 +106,7 @@ export default function PlayerSection({
             className="sm:hidden flex items-center gap-1 text-xs font-semibold text-[#FF7A00] cursor-pointer"
           >
             <span>{defaultFit === 'fit' ? 'Fit' : 'Fill'}</span>
-            <ChevronRight className="w-4 h-4 text-[#8C857B]" />
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
           </button>
         </SettingRow>
 
@@ -135,14 +135,14 @@ export default function PlayerSection({
             className="sm:hidden flex items-center gap-1 text-xs font-semibold text-[#FF7A00] cursor-pointer"
           >
             <span>{seekStep} วินาที</span>
-            <ChevronRight className="w-4 h-4 text-[#8C857B]" />
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
           </button>
         </SettingRow>
 
         {/* Volume Slider */}
         <div className="p-4 sm:p-5 flex flex-col gap-2">
           <div className="flex justify-between items-center text-xs">
-            <span className="font-semibold text-[#212529] flex items-center gap-1.5">
+            <span className="font-semibold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-1.5">
               <Volume2 className="w-4 h-4 text-[#FF7A00]" /> ระดับเสียงเริ่มต้น (Volume)
             </span>
             <span className="font-mono font-bold text-[#FF7A00]">{Math.round(volume * 100)}%</span>

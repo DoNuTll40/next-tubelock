@@ -77,7 +77,7 @@ export default function PlayerBottomBar({
 
   return (
     <div
-      className={`absolute bottom-0 left-0 right-0 px-4 sm:px-6 pb-3 pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-2 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
+      className={`absolute bottom-0 left-0 right-0 px-2.5 sm:px-6 pb-2.5 sm:pb-3 pt-6 sm:pt-8 bg-gradient-to-t from-black/95 via-black/40 to-transparent flex flex-col gap-1.5 sm:gap-2 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
         ? 'opacity-100 pointer-events-auto translate-y-0'
         : 'opacity-0 pointer-events-none translate-y-1'
         }`}

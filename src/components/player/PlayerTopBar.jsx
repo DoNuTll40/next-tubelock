@@ -33,7 +33,7 @@ export default function PlayerTopBar({
 
   return (
     <div
-      className="absolute top-0 left-0 right-0 px-4 sm:px-6 pt-3.5 sm:pt-4 pb-8 bg-gradient-to-b from-black/85 via-black/35 to-transparent flex items-center justify-between z-30 transition-opacity duration-150"
+      className="absolute top-0 left-0 right-0 px-2.5 sm:px-6 pt-2.5 sm:pt-4 pb-6 sm:pb-8 bg-gradient-to-b from-black/85 via-black/35 to-transparent flex items-center justify-between z-30 transition-opacity duration-150"
       onClick={(e) => e.stopPropagation()}
     >
       {/* Top-Left: Title in Fullscreen, or Back Button in Mobile Portrait */}
@@ -71,7 +71,7 @@ export default function PlayerTopBar({
 
       {/* Top-Right: Shown ONLY on Mobile */}
       {isMobileView ? (
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0 text-white">
+        <div className="flex items-center gap-1 sm:gap-3 shrink-0 text-white">
           {/* Autoplay switch */}
           <button
             type="button"

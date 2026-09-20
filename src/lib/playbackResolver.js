@@ -234,6 +234,16 @@ export async function resolveClientPlaybackSource(sourceData) {
       if (!masterRes.ok) throw new Error('ดาวน์โหลด master.m3u8 ไม่สำเร็จ');
       const masterText = await masterRes.text();
 
+      let detectedAspect = null;
+      const resMatch = masterText.match(/RESOLUTION=(\d+)x(\d+)/i);
+      if (resMatch) {
+        const mw = parseInt(resMatch[1], 10);
+        const mh = parseInt(resMatch[2], 10);
+        if (mw > 0 && mh > 0) {
+          detectedAspect = mw / mh;
+        }
+      }
+
       const lines = masterText.split('\n');
       const rewrittenLines = [];
       let pendingStreamInf = null;
@@ -278,6 +288,7 @@ export async function resolveClientPlaybackSource(sourceData) {
           url: createdBlobUrls[0],
           blobUrls: createdBlobUrls,
           storyboardPromise,
+          aspectRatio: detectedAspect,
         };
       }
 
@@ -291,6 +302,7 @@ export async function resolveClientPlaybackSource(sourceData) {
         url: masterBlobUrl,
         blobUrls: createdBlobUrls,
         storyboardPromise,
+        aspectRatio: detectedAspect,
       };
     }
 

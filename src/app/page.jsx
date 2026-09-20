@@ -41,7 +41,10 @@ export default function FeedPage() {
   }, []);
 
   useEffect(() => {
-    loadData(true);
+    const timer = setTimeout(() => {
+      loadData(false);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadData]);
 
   // Touch Handlers for Mobile Pull to Refresh
@@ -85,6 +88,31 @@ export default function FeedPage() {
     return videos.filter((v) => {
       const res = formatResolutionBadge(v.resolution);
       const codec = (v.codec || '').toLowerCase();
+      const vCat = (v.category || '').toLowerCase();
+      const vTags = Array.isArray(v.tags) ? v.tags.map((t) => String(t).toLowerCase()) : [];
+      const titleLower = (v.title || '').toLowerCase();
+
+      // Content categories
+      if (activeCategory === 'shorts') {
+        return vCat === 'shorts' || vTags.includes('shorts') || (v.resolution && v.resolution.includes('Vertical')) || titleLower.includes('#shorts');
+      }
+      if (activeCategory === 'music') {
+        return vCat === 'music' || vTags.includes('music') || vTags.includes('เพลง') || titleLower.includes('mv') || titleLower.includes('เพลง') || titleLower.includes('official');
+      }
+      if (activeCategory === 'entertainment') {
+        return vCat === 'entertainment' || vTags.includes('entertainment') || vTags.includes('บันเทิง');
+      }
+      if (activeCategory === 'gaming') {
+        return vCat === 'gaming' || vTags.includes('gaming') || vTags.includes('เกม');
+      }
+      if (activeCategory === 'tech') {
+        return vCat === 'tech' || vTags.includes('tech') || vTags.includes('ไอที') || vTags.includes('code');
+      }
+      if (activeCategory === 'education') {
+        return vCat === 'education' || vTags.includes('education') || vTags.includes('การศึกษา');
+      }
+
+      // Technical categories
       if (activeCategory === 'hls') return v.source_type === 'hls';
       if (activeCategory === 'direct') return v.source_type === 'file';
       if (activeCategory === '4k') return res === '4K';
@@ -95,7 +123,6 @@ export default function FeedPage() {
       if (activeCategory === 'hevc') return codec.includes('hevc') || codec.includes('h265') || codec.includes('hvc1');
       if (activeCategory === 'h264') return codec.includes('h264') || codec.includes('avc1');
       if (activeCategory === 'large') return Number(v.file_size_bytes || 0) > 100 * 1024 * 1024;
-      if (activeCategory === 'mv') return v.title?.toLowerCase().includes('mv') || v.title?.includes('เพลง') || v.title?.includes('official');
       return true;
     });
   }, [videos, activeCategory]);
@@ -120,7 +147,7 @@ export default function FeedPage() {
           <div className="fixed top-14 left-0 right-0 z-30 flex justify-center pointer-events-none">
             <motion.div
               style={{ y: pullY - 10, scale: Math.min(pullY / PULL_THRESHOLD, 1) }}
-              className="w-10 h-10 rounded-full bg-white border border-[#EFECE6] shadow-lg flex items-center justify-center"
+              className="w-10 h-10 rounded-full bg-white dark:bg-[#1c1c1c] border border-[#EFECE6] dark:border-white/10 shadow-lg flex items-center justify-center"
             >
               <Loader2
                 className={`w-5 h-5 text-[#FF7A00] transition-transform ${pullY >= PULL_THRESHOLD ? 'animate-spin' : ''
@@ -136,29 +163,29 @@ export default function FeedPage() {
       <div className="px-4 sm:px-6 pt-4 flex-1">
         {loading ? (
           /* SKELETON LOADING GRID */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-6 animate-pulse select-none">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-x-4 gap-y-6 animate-pulse select-none">
             {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
               <div key={i} className="flex flex-col gap-2.5">
-                <div className="aspect-video w-full bg-[#EFECE6] rounded-2xl" />
+                <div className="aspect-video w-full bg-[#EFECE6] dark:bg-white/10 rounded-2xl" />
                 <div className="flex gap-3 pt-1">
-                  <div className="w-9 h-9 rounded-full bg-[#EFECE6] shrink-0" />
+                  <div className="w-9 h-9 rounded-full bg-[#EFECE6] dark:bg-white/10 shrink-0" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-3.5 w-4/5 bg-[#EFECE6] rounded" />
-                    <div className="h-3 w-1/2 bg-[#EFECE6] rounded" />
+                    <div className="h-3.5 w-4/5 bg-[#EFECE6] dark:bg-white/10 rounded" />
+                    <div className="h-3 w-1/2 bg-[#EFECE6] dark:bg-white/10 rounded" />
                   </div>
                 </div>
               </div>
             ))}
           </div>
         ) : filteredVideos.length === 0 ? (
-          <div className="bg-white border border-[#EFECE6] rounded-2xl p-12 text-center flex flex-col items-center gap-3 text-[#6C757D] select-none my-8 max-w-lg mx-auto">
-            <Film className="w-10 h-10 text-[#C4BEB4] stroke-[1.5]" />
+          <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-12 text-center flex flex-col items-center gap-3 text-[#6C757D] dark:text-[#AAAAAA] select-none my-8 max-w-lg mx-auto">
+            <Film className="w-10 h-10 text-[#C4BEB4] dark:text-[#666666] stroke-[1.5]" />
             <p className="text-sm">ไม่พบวิดีโอในหมวดหมู่นี้</p>
             {activeCategory !== 'all' && (
               <button
                 type="button"
                 onClick={() => setActiveCategory('all')}
-                className="mt-1 px-4 py-2 rounded-xl bg-[#F5F2EB] text-[#212529] text-xs font-semibold hover:bg-[#EFECE6]"
+                className="mt-1 px-4 py-2 rounded-xl bg-[#F5F2EB] dark:bg-white/10 text-[#212529] dark:text-[#F1F1F1] text-xs font-semibold hover:bg-[#EFECE6] dark:hover:bg-white/15 cursor-pointer"
               >
                 ดูทั้งหมด
               </button>
@@ -168,9 +195,8 @@ export default function FeedPage() {
           /* YOUTUBE PC & MOBILE RESPONSIVE VIDEO GRID */
           <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-y-7 "}>
             {filteredVideos.map((vid) => (
-              <div className='bg-transparent hover:bg-neutral-200 rounded-2xl p-2 transition-all duration-500 cursor-pointer hover:shadow-sm'>
+              <div key={vid.id} className='bg-transparent hover:bg-neutral-200/50 dark:hover:bg-white/5 rounded-2xl p-2 transition-all duration-300 cursor-pointer hover:shadow-xs'>
                 <VideoCard
-                  key={vid.id}
                   video={vid}
                   onDelete={(deletedId) => {
                     setVideos((prev) => prev.filter((v) => v.id !== deletedId));

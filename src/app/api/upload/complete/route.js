@@ -9,7 +9,7 @@ import { getDb } from '@/lib/db';
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { videoId, rawFileName, title, clientMeta = {} } = body;
+    const { videoId, rawFileName, title, description, category, tags, clientMeta = {} } = body;
 
     if (!videoId) {
       return NextResponse.json(
@@ -19,6 +19,11 @@ export async function POST(request) {
     }
 
     const sql = getDb();
+
+    // Ensure category column exists
+    try {
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'general';`;
+    } catch (_) {}
 
     // 1. Verify video exists in DB
     const existing = await sql`
@@ -38,6 +43,9 @@ export async function POST(request) {
     const currentVideo = existing[0];
     const finalRawFileName = rawFileName || currentVideo.raw_file_name;
     const finalTitle = title || currentVideo.title;
+    const finalDescription = typeof description === 'string' ? description : (currentVideo.description || '');
+    const finalCategory = typeof category === 'string' && category.trim() ? category.trim() : 'general';
+    const finalTags = Array.isArray(tags) ? tags : [];
 
     // 2. Mark as QUEUED in Neon DB and save comprehensive client metadata
     await sql`
@@ -47,6 +55,9 @@ export async function POST(request) {
         transcode_progress = 5,
         stage_detail = 'อัปโหลดเข้า OneDrive สำเร็จ กำลังส่งคำสั่งเข้าคิว GitHub Actions',
         title = ${finalTitle},
+        description = ${finalDescription},
+        category = ${finalCategory},
+        tags = ${finalTags},
         raw_file_name = ${finalRawFileName},
         duration = CASE WHEN ${clientMeta.duration || 0} > 0 THEN ${Math.floor(clientMeta.duration || 0)} ELSE duration END,
         resolution = CASE WHEN ${clientMeta.resolution || ''} <> '' THEN ${clientMeta.resolution} ELSE resolution END,

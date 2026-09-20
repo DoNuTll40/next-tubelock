@@ -16,7 +16,7 @@ export default function ActionSheetModal({ sheet, onClose }) {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="absolute inset-0 bg-black/50 backdrop-blur-xs"
+          className="absolute inset-0 bg-black/60 backdrop-blur-xs"
         />
 
         {/* Modal Container */}
@@ -25,13 +25,13 @@ export default function ActionSheetModal({ sheet, onClose }) {
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 50, opacity: 0 }}
           transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-          className="relative z-10 w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl border border-[#EFECE6] p-5 pb-8 sm:pb-6 flex flex-col gap-2 shadow-2xl"
+          className="relative z-10 w-full sm:max-w-md bg-white dark:bg-[#181818] rounded-t-3xl sm:rounded-3xl border border-[#EFECE6] dark:border-white/10 p-5 pb-8 sm:pb-6 flex flex-col gap-2 shadow-2xl"
         >
           {/* Mobile Handle Bar */}
-          <div className="w-10 h-1 bg-[#E0DDD5] rounded-full mx-auto mb-2 sm:hidden" />
+          <div className="w-10 h-1 bg-[#E0DDD5] dark:bg-white/20 rounded-full mx-auto mb-2 sm:hidden" />
 
           {/* Title */}
-          <h3 className="text-sm font-bold text-[#212529] px-2 pb-2 border-b border-[#F5F2EB]">
+          <h3 className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] px-2 pb-2 border-b border-[#F5F2EB] dark:border-white/10">
             {sheet.title}
           </h3>
 
@@ -47,9 +47,9 @@ export default function ActionSheetModal({ sheet, onClose }) {
                     sheet.onSelect(opt.value);
                     onClose();
                   }}
-                  className="flex items-center justify-between p-3.5 hover:bg-[#FBF9F5] active:bg-[#F5F2EB] rounded-xl transition text-left cursor-pointer"
+                  className="flex items-center justify-between p-3.5 hover:bg-[#FBF9F5] dark:hover:bg-white/5 active:bg-[#F5F2EB] dark:active:bg-white/10 rounded-xl transition text-left cursor-pointer"
                 >
-                  <span className={`text-xs ${isSelected ? 'font-bold text-[#FF7A00]' : 'text-[#212529]'}`}>
+                  <span className={`text-xs ${isSelected ? 'font-bold text-[#FF7A00]' : 'text-[#212529] dark:text-[#E1E1E1]'}`}>
                     {opt.label}
                   </span>
                   {isSelected && <Check className="w-4 h-4 text-[#FF7A00] stroke-[2.5]" />}

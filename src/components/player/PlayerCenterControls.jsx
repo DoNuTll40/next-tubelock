@@ -88,7 +88,7 @@ export default function PlayerCenterControls({
             <>
               {/* Mobile View: YouTube Trio (-10s, Play/Pause, +10s) */}
               {isMobileView ? (
-                <div className="flex items-center gap-7 sm:gap-14 pointer-events-auto select-none">
+                <div className="flex items-center gap-4 sm:gap-14 pointer-events-auto select-none">
                   {/* Skip -10s */}
                   <button
                     type="button"
