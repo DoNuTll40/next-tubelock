@@ -66,24 +66,18 @@ export async function DELETE(request, context) {
         const token = await getGraphToken();
         const driveId = await getUserDriveId(token);
 
-        // Delete raw file from /raw/ if present
-        if (vid.raw_file_name) {
-          try {
-            const rawRes = await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(vid.raw_file_name)}`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            if (rawRes.ok) {
-              const rawData = await rawRes.json();
-              await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${rawData.id}`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${token}` },
-              });
+        // 1. Delete HLS stream folder by path: /streams/stream_vid_{id}
+        try {
+          await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/streams/stream_vid_${id}`,
+            {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${token}` },
             }
-          } catch (_) {}
-        }
+          );
+        } catch (_) {}
 
-        // Delete HLS folder if present
+        // 2. Delete HLS folder by ID if present
         const folderId = vid.onedrive_folder_id;
         if (folderId) {
           try {
@@ -91,6 +85,29 @@ export async function DELETE(request, context) {
               method: 'DELETE',
               headers: { Authorization: `Bearer ${token}` },
             });
+          } catch (_) {}
+        }
+
+        // 3. Delete direct video file if present
+        if (vid.onedrive_item_id && vid.onedrive_item_id !== folderId) {
+          try {
+            await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${vid.onedrive_item_id}`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          } catch (_) {}
+        }
+
+        // 4. Delete raw file from /raw/ if present
+        if (vid.raw_file_name) {
+          try {
+            await fetch(
+              `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(vid.raw_file_name)}`,
+              {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
+              }
+            );
           } catch (_) {}
         }
       } catch (graphErr) {

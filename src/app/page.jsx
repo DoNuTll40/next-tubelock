@@ -169,7 +169,13 @@ export default function FeedPage() {
           /* YOUTUBE PC & MOBILE RESPONSIVE VIDEO GRID */
           <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-7"}>
             {filteredVideos.map((vid) => (
-              <VideoCard key={vid.id} video={vid} />
+              <VideoCard 
+                key={vid.id} 
+                video={vid} 
+                onDelete={(deletedId) => {
+                  setVideos((prev) => prev.filter((v) => v.id !== deletedId));
+                }}
+              />
             ))}
           </div>
         )}

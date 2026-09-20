@@ -54,6 +54,8 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
         transcode_progress = ${progress},
         stage_detail = ${stageDetail},
         error_message = ${errorMsg},
+        source_cache = NULL,
+        source_cache_expires_at = 0,
         updated_at = NOW()
       WHERE id = ${vidNum};
     `;

@@ -429,7 +429,7 @@ export default function VideoPlayer({
 
         if (Hls.isSupported()) {
           const hls = new Hls({
-            startLevel: 1, // Start level (360p/480p) for instant fast start without buffering
+            startLevel: -1, // Auto level selection (ensures safety when only 1 level like 144p is available)
             maxBufferLength: 30, // YouTube standard buffer
             maxMaxBufferLength: 60,
             enableWorker: true,

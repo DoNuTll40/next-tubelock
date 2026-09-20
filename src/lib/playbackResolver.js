@@ -222,6 +222,8 @@ export async function resolveClientPlaybackSource(sourceData) {
             const blobUrl = await rewriteSubPlaylistToBlobUrl(item.downloadUrl, segmentUrlMap);
             createdBlobUrls.push(blobUrl);
             subPlaylistBlobUrlMap[fileName] = blobUrl;
+            subPlaylistBlobUrlMap[fileName.toLowerCase()] = blobUrl;
+            subPlaylistBlobUrlMap[fileName.replace(/^\.?\//, '')] = blobUrl;
           } catch (err) {
             console.warn(`[HLS Resolver] ข้าม playlist "${fileName}":`, err);
           }
@@ -232,15 +234,54 @@ export async function resolveClientPlaybackSource(sourceData) {
       if (!masterRes.ok) throw new Error('ดาวน์โหลด master.m3u8 ไม่สำเร็จ');
       const masterText = await masterRes.text();
 
-      const rewrittenMaster = masterText
-        .split('\n')
-        .map((line) => {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) return line;
-          return subPlaylistBlobUrlMap[trimmed] || line;
-        })
-        .join('\n');
+      const lines = masterText.split('\n');
+      const rewrittenLines = [];
+      let pendingStreamInf = null;
 
+      for (let i = 0; i < lines.length; i++) {
+        const rawLine = lines[i];
+        const trimmed = rawLine.trim();
+
+        if (!trimmed) continue;
+
+        if (trimmed.startsWith('#EXT-X-STREAM-INF:')) {
+          pendingStreamInf = rawLine;
+          continue;
+        }
+
+        if (pendingStreamInf) {
+          // This line is the URI for the pending resolution stream
+          const cleanName = trimmed.replace(/^\.?\//, '');
+          const mappedBlobUrl =
+            subPlaylistBlobUrlMap[trimmed] ||
+            subPlaylistBlobUrlMap[cleanName] ||
+            subPlaylistBlobUrlMap[cleanName.toLowerCase()];
+
+          if (mappedBlobUrl) {
+            rewrittenLines.push(pendingStreamInf);
+            rewrittenLines.push(mappedBlobUrl);
+          } else {
+            console.warn(`[HLS Resolver] ข้ามระดับความละเอียดที่ไม่มีไฟล์บน OneDrive: ${trimmed}`);
+          }
+          pendingStreamInf = null;
+          continue;
+        }
+
+        rewrittenLines.push(rawLine);
+      }
+
+      // If all stream lines were filtered out, fallback to first available sub-playlist
+      const validStreamsCount = rewrittenLines.filter((l) => l.startsWith('blob:')).length;
+      if (validStreamsCount === 0 && createdBlobUrls.length > 0) {
+        return {
+          type: 'hls',
+          url: createdBlobUrls[0],
+          blobUrls: createdBlobUrls,
+          storyboardPromise,
+        };
+      }
+
+      const rewrittenMaster = rewrittenLines.join('\n');
       const masterBlob = new Blob([rewrittenMaster], { type: 'application/vnd.apple.mpegurl' });
       const masterBlobUrl = URL.createObjectURL(masterBlob);
       createdBlobUrls.push(masterBlobUrl);

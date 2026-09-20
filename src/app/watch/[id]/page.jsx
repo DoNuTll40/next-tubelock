@@ -5,8 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import VideoPlayer from '@/components/VideoPlayer';
 import VideoCard from '@/components/VideoCard';
-import { 
-  ArrowLeft, Clock, HardDrive, Cpu, 
+import {
+  ArrowLeft, Clock, HardDrive, Cpu,
   AlertCircle, Share2, PlaySquare, ChevronDown, ChevronUp,
   Layers, Loader2, ThumbsUp, ThumbsDown, Download,
   SlidersHorizontal, Sparkles, Check, Bookmark, MoreVertical
@@ -61,7 +61,7 @@ export default function WatchPage() {
 
         // Revoke previous blob URLs
         for (const u of activeBlobUrlsRef.current) {
-          try { URL.revokeObjectURL(u); } catch (_) {}
+          try { URL.revokeObjectURL(u); } catch (_) { }
         }
         activeBlobUrlsRef.current = [];
 
@@ -73,7 +73,7 @@ export default function WatchPage() {
               setVideo(data.video);
             }
           })
-          .catch(() => {});
+          .catch(() => { });
 
         // ⚡ Fast Step 2: Fetch Related Videos in parallel
         fetch('/api/videos')
@@ -83,7 +83,7 @@ export default function WatchPage() {
               setRelatedVideos(listJson.data.filter((v) => String(v.id) !== String(id)));
             }
           })
-          .catch(() => {});
+          .catch(() => { });
 
         // ⚡ Step 3: Fetch Stream Source from OneDrive (Edge CDN cached on server)
         const sourceRes = await fetch(`/api/videos/${id}/source`, { cache: 'no-store' });
@@ -115,7 +115,7 @@ export default function WatchPage() {
             if (!cancelled && sb) {
               setStoryboard(sb);
             }
-          }).catch(() => {});
+          }).catch(() => { });
         } else {
           setStoryboard(null);
         }
@@ -132,7 +132,7 @@ export default function WatchPage() {
     return () => {
       cancelled = true;
       for (const u of activeBlobUrlsRef.current) {
-        try { URL.revokeObjectURL(u); } catch (_) {}
+        try { URL.revokeObjectURL(u); } catch (_) { }
       }
       activeBlobUrlsRef.current = [];
     };
@@ -206,7 +206,7 @@ export default function WatchPage() {
     <div className="w-full max-w-[1720px] mx-auto px-0 sm:px-4 md:px-6 lg:px-8 pt-0 sm:pt-4 pb-16 sm:py-6">
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-0 sm:gap-6 items-start">
         {/* 🎯 Video Player: Sticky on mobile across entire page / Static in Left Col on desktop */}
-        <div className="sticky top-0 z-30 w-full bg-black sm:static sm:z-auto sm:rounded-2xl sm:overflow-hidden sm:border sm:border-black/10 sm:shadow-lg lg:col-start-1 lg:row-start-1">
+        <div className="sticky top-0 z-30 w-full bg-black sm:bg-transparent sm:static sm:z-auto flex justify-center items-center lg:col-start-1 lg:row-start-1">
           {streamUrl ? (
             <VideoPlayer
               src={streamUrl}
@@ -311,11 +311,10 @@ export default function WatchPage() {
               onClick={() => {
                 setIsSubscribed(!isSubscribed);
               }}
-              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
-                isSubscribed 
-                  ? 'bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F]' 
-                  : 'bg-[#0F0F0F] hover:bg-[#272727] text-white'
-              }`}
+              className={`px-4 py-1.5 rounded-full text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${isSubscribed
+                ? 'bg-[#F2F2F2] hover:bg-[#E5E5E5] text-[#0F0F0F]'
+                : 'bg-[#0F0F0F] hover:bg-[#272727] text-white'
+                }`}
             >
               {isSubscribed ? 'ติดตามแล้ว' : 'ติดตาม'}
             </button>
@@ -365,7 +364,7 @@ export default function WatchPage() {
           </div>
 
           {/* 💬 YouTube-Style Comments & Description Preview Card with Technical Badges */}
-          <div 
+          <div
             onClick={() => setIsDescOpen(!isDescOpen)}
             className="bg-[#F2F2F2] hover:bg-[#EBEBEB] rounded-2xl p-3.5 flex flex-col gap-2.5 transition cursor-pointer select-none"
           >
@@ -413,11 +412,10 @@ export default function WatchPage() {
                 key={chip.id}
                 type="button"
                 onClick={() => setActiveFilter(chip.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${
-                  activeFilter === chip.id
-                    ? 'bg-[#0F0F0F] text-white'
-                    : 'bg-[#F2F2F2] text-[#0F0F0F] hover:bg-[#E5E5E5]'
-                }`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${activeFilter === chip.id
+                  ? 'bg-[#0F0F0F] text-white'
+                  : 'bg-[#F2F2F2] text-[#0F0F0F] hover:bg-[#E5E5E5]'
+                  }`}
               >
                 {chip.label}
               </button>

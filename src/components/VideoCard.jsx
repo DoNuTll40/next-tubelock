@@ -1,13 +1,37 @@
 'use client';
 
 import Link from 'next/link';
-import { Play, Clock, HardDrive, MoreVertical, Layers } from 'lucide-react';
+import { Play, Clock, HardDrive, MoreVertical, Layers, Trash2, Loader2, Copy, X } from 'lucide-react';
 import { useState } from 'react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
 
-export default function VideoCard({ video, replace = false, compact = false }) {
+export default function VideoCard({ video, replace = false, compact = false, onDelete = null }) {
   const [showMenu, setShowMenu] = useState(false);
   const [imgError, setImgError] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+
+  const handleDelete = async () => {
+    try {
+      setIsDeleting(true);
+      setDeleteError(null);
+      const res = await fetch(`/api/videos/${video.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'ไม่สามารถลบวิดีโอได้');
+      }
+      setShowDeleteModal(false);
+      onDelete?.(video.id);
+    } catch (err) {
+      console.error('Delete video error:', err);
+      setDeleteError(err.message || 'เกิดข้อผิดพลาดในการลบ');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const formatDuration = (sec) => {
     if (!sec) return '00:00';
@@ -90,6 +114,162 @@ export default function VideoCard({ video, replace = false, compact = false }) {
             <span className="font-mono">{fileSizeMB} MB</span>
           </div>
         </div>
+
+        {/* Compact 3-Dots Menu if onDelete is present */}
+        {onDelete && (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowMenu(!showMenu)}
+              className="p-1 rounded-full hover:bg-[#EFECE6] text-[#8C857B] hover:text-[#212529] transition cursor-pointer"
+              title="ตัวเลือกเพิ่มเติม"
+            >
+              <MoreVertical className="w-3.5 h-3.5" />
+            </button>
+            {showMenu && (
+              <>
+                {/* Desktop click-outside backdrop */}
+                <div
+                  className="hidden sm:block fixed inset-0 z-40"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMenu(false);
+                  }}
+                />
+                {/* Desktop Popover */}
+                <div
+                  className="hidden sm:flex absolute right-0 top-7 z-50 w-36 bg-white rounded-xl border border-[#EFECE6] shadow-xl p-1 flex-col gap-0.5 text-xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      setShowDeleteModal(true);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-50 text-rose-600 font-medium flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                    <span>ลบวิดีโอ</span>
+                  </button>
+                </div>
+                {/* Mobile YouTube Bottom Action Sheet */}
+                <div
+                  className="sm:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMenu(false);
+                  }}
+                >
+                  <div
+                    className="bg-white rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 max-w-lg mx-auto w-full"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="w-10 h-1 bg-zinc-300 rounded-full mx-auto mb-2" />
+                    <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 mb-1">
+                      <div className="w-14 aspect-video rounded-lg bg-zinc-900 overflow-hidden shrink-0 relative">
+                        {video.thumbnail_url && (
+                          <img src={video.thumbnail_url} alt="" className="w-full h-full object-cover" />
+                        )}
+                      </div>
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-xs font-bold text-zinc-900 line-clamp-1">{video.title}</span>
+                        <span className="text-[11px] text-zinc-500 truncate">{fileSizeMB} MB • {resBadge}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowMenu(false)}
+                        className="p-1.5 rounded-full hover:bg-zinc-100 text-zinc-400 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMenu(false);
+                        setShowDeleteModal(true);
+                      }}
+                      className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 active:bg-rose-100 text-rose-600 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
+                    >
+                      <Trash2 className="w-5 h-5 text-rose-500" />
+                      <span>ลบวิดีโอ (ถาวร)</span>
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Delete Confirmation Modal for compact mode */}
+        {showDeleteModal && (
+          <div 
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isDeleting) setShowDeleteModal(false);
+            }}
+          >
+            <div 
+              className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 flex flex-col gap-4 text-left"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <h3 className="text-base font-bold text-[#0F0F0F] leading-tight">
+                    ลบวิดีโอนี้?
+                  </h3>
+                  <span className="text-xs text-[#8C857B] truncate">
+                    {video.title}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-[#606060] leading-relaxed">
+                วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
+              </p>
+
+              {deleteError && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => setShowDeleteModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={handleDelete}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200"
+                >
+                  {isDeleting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>กำลังลบ...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>ยืนยันการลบ</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -198,33 +378,199 @@ export default function VideoCard({ video, replace = false, compact = false }) {
             <MoreVertical className="w-4 h-4" />
           </button>
 
-          {/* Quick Dropdown Menu */}
+          {/* Responsive Menu: Desktop Popover / Mobile Bottom Sheet */}
           {showMenu && (
-            <div
-              className="absolute right-0 top-8 z-30 w-44 bg-white rounded-2xl border border-[#EFECE6] shadow-xl p-1.5 flex flex-col gap-1 text-xs"
-              onMouseLeave={() => setShowMenu(false)}
-            >
-              <Link
-                href={`/watch/${video.id}`}
-                className="px-3 py-2 rounded-xl hover:bg-[#FBF9F5] text-[#212529] font-medium flex items-center gap-2"
-              >
-                <Play className="w-3.5 h-3.5 text-[#FF7A00]" />
-                <span>เล่นวิดีโอ</span>
-              </Link>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/watch/${video.id}`);
+            <>
+              {/* Desktop click-outside backdrop */}
+              <div
+                className="hidden sm:block fixed inset-0 z-40"
+                onClick={(e) => {
+                  e.stopPropagation();
                   setShowMenu(false);
                 }}
-                className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#FBF9F5] text-[#212529] font-medium"
+              />
+
+              {/* Desktop Dropdown Popover */}
+              <div
+                className="hidden sm:flex absolute right-0 top-8 z-50 w-44 bg-white rounded-2xl border border-[#EFECE6] shadow-xl p-1.5 flex-col gap-1 text-xs"
+                onClick={(e) => e.stopPropagation()}
               >
-                คัดลอกลิงก์
-              </button>
-            </div>
+                <Link
+                  href={`/watch/${video.id}`}
+                  className="px-3 py-2 rounded-xl hover:bg-[#FBF9F5] text-[#212529] font-medium flex items-center gap-2"
+                >
+                  <Play className="w-3.5 h-3.5 text-[#FF7A00]" />
+                  <span>เล่นวิดีโอ</span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/watch/${video.id}`);
+                    setShowMenu(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#FBF9F5] text-[#212529] font-medium flex items-center gap-2 cursor-pointer"
+                >
+                  <Copy className="w-3.5 h-3.5 text-zinc-500" />
+                  <span>คัดลอกลิงก์</span>
+                </button>
+
+                <div className="h-px bg-zinc-100 my-0.5" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenu(false);
+                    setShowDeleteModal(true);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-rose-50 text-rose-600 font-medium flex items-center gap-2 transition cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                  <span>ลบวิดีโอ</span>
+                </button>
+              </div>
+
+              {/* Mobile YouTube Bottom Action Sheet */}
+              <div
+                className="sm:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowMenu(false);
+                }}
+              >
+                <div
+                  className="bg-white rounded-t-3xl p-4 pb-10 flex flex-col gap-1.5 shadow-2xl border-t border-zinc-100 max-w-lg mx-auto w-full"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Top drag handle */}
+                  <div className="w-10 h-1 bg-zinc-300 rounded-full mx-auto mb-2" />
+
+                  {/* Video preview row */}
+                  <div className="flex items-center gap-3 px-2 pb-3 border-b border-zinc-100 mb-1">
+                    <div className="w-14 aspect-video rounded-lg bg-zinc-900 overflow-hidden shrink-0 relative">
+                      {video.thumbnail_url && (
+                        <img src={video.thumbnail_url} alt="" className="w-full h-full object-cover" />
+                      )}
+                    </div>
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="text-xs font-bold text-zinc-900 line-clamp-1">{video.title}</span>
+                      <span className="text-[11px] text-zinc-500 truncate">{fileSizeMB} MB • {resBadge}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowMenu(false)}
+                      className="p-1.5 rounded-full hover:bg-zinc-100 text-zinc-400 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Actions */}
+                  <Link
+                    href={`/watch/${video.id}`}
+                    className="px-3 py-3 rounded-2xl hover:bg-zinc-50 active:bg-zinc-100 text-zinc-800 font-medium flex items-center gap-3 text-sm"
+                  >
+                    <Play className="w-5 h-5 text-[#FF7A00]" />
+                    <span>เล่นวิดีโอ</span>
+                  </Link>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/watch/${video.id}`);
+                      setShowMenu(false);
+                    }}
+                    className="w-full text-left px-3 py-3 rounded-2xl hover:bg-zinc-50 active:bg-zinc-100 text-zinc-800 font-medium flex items-center gap-3 text-sm cursor-pointer"
+                  >
+                    <Copy className="w-5 h-5 text-zinc-500" />
+                    <span>คัดลอกลิงก์</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      setShowDeleteModal(true);
+                    }}
+                    className="w-full text-left px-3 py-3 rounded-2xl hover:bg-rose-50 active:bg-rose-100 text-rose-600 font-semibold flex items-center gap-3 text-sm transition cursor-pointer"
+                  >
+                    <Trash2 className="w-5 h-5 text-rose-500" />
+                    <span>ลบวิดีโอ (ถาวร)</span>
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!isDeleting) setShowDeleteModal(false);
+          }}
+        >
+          <div 
+            className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 flex flex-col gap-4 text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <h3 className="text-base font-bold text-[#0F0F0F] leading-tight">
+                  ลบวิดีโอนี้?
+                </h3>
+                <span className="text-xs text-[#8C857B] truncate">
+                  {video.title}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#606060] leading-relaxed">
+              วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน <strong className="text-[#0F0F0F]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
+            </p>
+
+            {deleteError && (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-600 font-medium">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDelete}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังลบ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ยืนยันการลบ</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

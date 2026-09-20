@@ -38,15 +38,21 @@ export async function GET(request, context) {
     }
 
     const cacheKey = String(id);
+    const { searchParams } = new URL(request.url);
+    const forceFresh = searchParams.get('fresh') === '1' || searchParams.get('refresh') === '1';
 
-    // ⚡ 1. Ultra-fast Cache Hit (<1ms)
-    const cached = sourceCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0) {
-      return NextResponse.json(cached.data, { headers: EDGE_CACHE_HEADERS });
+    if (forceFresh) {
+      sourceCache.delete(cacheKey);
+    } else {
+      // ⚡ 1. Ultra-fast Cache Hit (<1ms)
+      const cached = sourceCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0) {
+        return NextResponse.json(cached.data, { headers: EDGE_CACHE_HEADERS });
+      }
     }
 
     // ⚡ 2. In-Flight Request Deduplication (prevents parallel duplicate calls from React StrictMode)
-    if (inFlightRequests.has(cacheKey)) {
+    if (!forceFresh && inFlightRequests.has(cacheKey)) {
       const data = await inFlightRequests.get(cacheKey);
       if (data?.status && data.status !== 'READY' && !data.success) {
         return NextResponse.json(data, { status: 422 });
@@ -85,6 +91,7 @@ export async function GET(request, context) {
       // If cached in Neon DB and download URLs are still valid, return IMMEDIATELY!
       const now = Date.now();
       if (
+        !forceFresh &&
         video.source_cache &&
         video.source_cache_expires_at &&
         Number(video.source_cache_expires_at) > now
@@ -93,7 +100,11 @@ export async function GET(request, context) {
           ? JSON.parse(video.source_cache)
           : video.source_cache;
 
-        if (parsedCache && (parsedCache.items?.length > 0 || parsedCache.url)) {
+        // Verify that HLS cache is not an incomplete early snapshot (e.g. only 144p cached while transcode finished)
+        const cachedM3u8Count = parsedCache?.items?.filter((i) => i.name?.endsWith('.m3u8')).length || 0;
+        const isStaleEarlySnapshot = (video.transcode_progress === 100 || video.status === 'READY') && cachedM3u8Count <= 2 && (parsedCache?.items?.length || 0) < 150;
+
+        if (!isStaleEarlySnapshot && parsedCache && (parsedCache.items?.length > 0 || parsedCache.url)) {
           const resultData = {
             ...parsedCache,
             video,
@@ -147,8 +158,9 @@ export async function GET(request, context) {
           items: validItems,
         };
 
-        // Cache for 90 minutes (OneDrive SAS download URLs are valid for 2-6 hours)
-        const expiresAt = Date.now() + 90 * 60 * 1000;
+        // Cache for 90 minutes if 100% complete; otherwise cache for only 15 seconds so upcoming qualities are picked up
+        const isCompleted = Number(video.transcode_progress || 0) >= 100;
+        const expiresAt = Date.now() + (isCompleted ? 90 * 60 * 1000 : 15 * 1000);
 
         sourceCache.set(cacheKey, {
           data: resultData,
