@@ -1248,7 +1248,7 @@ export default function VideoPlayer({
       }}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}
-      className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
+      className={`relative bg-transparent select-none overflow-hidden group/player ${isFullscreen
         ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
         : (videoRatio && videoRatio < 0.98)
           ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-md'
