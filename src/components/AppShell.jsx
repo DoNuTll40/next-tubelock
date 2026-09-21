@@ -8,7 +8,7 @@ import BottomNav from '@/components/BottomNav';
 import { useViewMode } from '@/context/ViewModeContext';
 import { usePathname } from 'next/navigation';
 
-export default function AppShell({ children }) {
+export default function AppShell({ session, children }) {
   const pathname = usePathname();
   const { isDesktop, isMobile, mounted } = useViewMode();
 
@@ -18,10 +18,16 @@ export default function AppShell({ children }) {
   const showMobileLayout = !mounted ? false : isMobile;
   const isExcludedPage = pathname?.startsWith('/watch') || pathname?.startsWith('/settings');
 
+  const isLoginPage = pathname?.startsWith('/login');
+
+  if (isLoginPage) {
+    return <main className="min-h-screen w-full relative bg-[#0F0F0F]">{children}</main>;
+  }
+
   return (
     <div className="flex flex-col min-h-screen w-full relative bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1] transition-colors duration-200">
       {/* Top Navigation */}
-      <Navbar />
+      <Navbar session={session} />
 
       {/* Main Body */}
       <div className="flex-1 flex w-full">

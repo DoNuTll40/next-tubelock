@@ -15,7 +15,7 @@ async function sha256(message) {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export default function Navbar() {
+export default function Navbar({ session }) {
   const pathname = usePathname();
   const router = useRouter();
   const { toggleSidebar, toggleDrawer } = useSidebar();
@@ -64,6 +64,8 @@ export default function Navbar() {
   if ((pathname?.startsWith('/watch') || pathname?.startsWith('/settings')) && !isDesktop) {
     return null;
   }
+
+  console.log(session?.picture)
 
   return (
     <header className="sticky top-0 z-40 w-full bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10 px-4 py-2 select-none h-14 flex items-center">
@@ -134,7 +136,7 @@ export default function Navbar() {
         )}
 
         {/* Right: Actions & Gravatar Avatar */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-0.5">
           {/* Mobile Search Icon */}
           {!isDesktop && (
             <button
@@ -171,13 +173,19 @@ export default function Navbar() {
           {/* Gravatar Avatar */}
           <Link
             href="/settings"
-            className="relative group flex items-center p-0.5 rounded-full transition active:scale-95"
+            className={`${session && isDesktop && ''} relative group flex justify-center items-end p-0.5 pl-4 bg-transparent ${session && "border"} border-[#EFECE6] dark:border-white/10 rounded-full transition gap-2`}
             title="ตั้งค่าระบบ"
           >
+            {session &&
+              <div className='flex flex-col'>
+                <p className='text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] truncate w-12'>{session?.name}</p>
+                <p className='text-[10px] text-[#8C857B] dark:text-[#AAAAAA] truncate w-12'>{session?.email}</p>
+              </div>
+            }
             <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center">
               {avatarUrl && !imgError ? (
                 <img
-                  src={avatarUrl}
+                  src={session?.picture ? session?.picture : avatarUrl}
                   alt="Profile"
                   onError={() => setImgError(true)}
                   className="w-full h-full object-cover"
@@ -185,8 +193,8 @@ export default function Navbar() {
               ) : (
                 <User className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
               )}
+              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#FBF9F5] dark:border-[#0F0F0F] rounded-full" />
             </div>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#FBF9F5] dark:border-[#0F0F0F] rounded-full" />
           </Link>
         </div>
       </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Sliders, User, PlayCircle, Folder, Database } from 'lucide-react';
+import { Sliders, User, PlayCircle, Folder, Database, LifeBuoy } from 'lucide-react';
 
 export const SETTING_TABS = [
   { id: 'general', label: 'ทั่วไปและธีม', icon: Sliders, desc: 'ธีมมืด/สว่าง และลักษณะทั่วไป' },
@@ -9,6 +9,7 @@ export const SETTING_TABS = [
   { id: 'player', label: 'การเล่นและตัวเล่น', icon: PlayCircle, desc: 'ความเร็ว, สัดส่วน และ HUD' },
   { id: 'onedrive', label: 'พื้นที่จัดเก็บ OneDrive', icon: Folder, desc: 'โฟลเดอร์สื่อ และขนาดคลัง' },
   { id: 'system', label: 'ข้อมูลและความเป็นส่วนตัว', icon: Database, desc: 'ประวัติรับชม และแคชระบบ' },
+  { id: 'support', label: 'ช่วยเหลือและติดต่อ', icon: LifeBuoy, desc: 'FAQ, รายงานปัญหา และเวอร์ชัน' },
 ];
 
 export default function SettingsSidebar({ activeTab, onSelectTab }) {

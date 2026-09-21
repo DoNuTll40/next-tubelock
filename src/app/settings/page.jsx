@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, ChevronRight, PlayCircle, Folder,
   Database, Save, CheckCircle, Loader2,
-  Sliders
+  Sliders, LifeBuoy
 } from 'lucide-react';
 import { useViewMode } from '@/context/ViewModeContext';
 import SettingsSidebar from '@/components/settings/SettingsSidebar';
@@ -14,6 +14,7 @@ import AccountSection from '@/components/settings/AccountSection';
 import PlayerSection from '@/components/settings/PlayerSection';
 import StorageSection from '@/components/settings/StorageSection';
 import SystemSection from '@/components/settings/SystemSection';
+import SupportSection from '@/components/settings/SupportSection';
 import ActionSheetModal from '@/components/settings/ActionSheetModal';
 
 async function sha256(message) {
@@ -23,7 +24,7 @@ async function sha256(message) {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-const VALID_TABS = ['general', 'account', 'player', 'onedrive', 'system'];
+const VALID_TABS = ['general', 'account', 'player', 'onedrive', 'system', 'support'];
 
 function parseTabFromParams(searchParams) {
   if (!searchParams) return null;
@@ -78,11 +79,10 @@ function SaveButton({ saveStatus, isDirty, onSave }) {
       type="button"
       onClick={onSave}
       disabled={!isDirty}
-      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition active:scale-95 select-none ${
-        isDirty
-          ? 'bg-[#FF7A00] hover:bg-[#E06C00] text-white shadow-[0_4px_12px_rgba(255,122,0,0.35)] cursor-pointer'
-          : 'bg-[#EFECE6] dark:bg-white/10 text-[#8C857B] dark:text-[#666666] cursor-not-allowed'
-      }`}
+      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition active:scale-95 select-none ${isDirty
+        ? 'bg-[#FF7A00] hover:bg-[#E06C00] text-white shadow-[0_4px_12px_rgba(255,122,0,0.35)] cursor-pointer'
+        : 'bg-[#EFECE6] dark:bg-white/10 text-[#8C857B] dark:text-[#666666] cursor-not-allowed'
+        }`}
     >
       <Save className="w-4 h-4" />
       <span>บันทึกการตั้งค่า</span>
@@ -102,6 +102,7 @@ function SettingsContent() {
   const subPage = urlTab || null;
 
   const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState(null);
 
   // Settings States
   const [targetFolder, setTargetFolder] = useState('/Videos');
@@ -156,6 +157,14 @@ function SettingsContent() {
       setGravatarHash('');
     }
   };
+
+  // ─── Load session ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((r) => r.json())
+      .then(({ session: s }) => setSession(s))
+      .catch(() => { });
+  }, []);
 
   // ─── Load settings on mount ───────────────────────────────────────────────
   useEffect(() => {
@@ -298,6 +307,7 @@ function SettingsContent() {
       case 'account':
         return (
           <AccountSection
+            session={session}
             gravatarEmail={gravatarEmail}
             setGravatarEmail={handleEmailChange}
             gravatarHash={gravatarHash}
@@ -342,6 +352,8 @@ function SettingsContent() {
             handleFactoryReset={handleFactoryReset}
           />
         );
+      case 'support':
+        return <SupportSection />;
       default:
         return <GeneralSection />;
     }
@@ -367,7 +379,7 @@ function SettingsContent() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 sm:py-8 select-none min-h-[85vh]">
+    <div className="w-full max-w-6xl mx-auto px-0 sm:px-8 sm:py-8 select-none min-h-[85vh]">
       <ActionSheetModal sheet={sheet} onClose={() => setSheet(null)} />
 
       {/* ── DESKTOP ──────────────────────────────────────────────────────────── */}
@@ -400,7 +412,7 @@ function SettingsContent() {
             /* Mobile main menu list */
             <div className="flex flex-col gap-4">
               {/* Header + Save */}
-              <div className="flex items-center justify-between py-2 px-1">
+              <div className="sticky top-0 z-10 h-14 flex items-center justify-between py-2 px-4 bg-white dark:bg-[#181818] border-b border-[#EFECE6] dark:border-white/10">
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -415,119 +427,143 @@ function SettingsContent() {
                 <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
               </div>
 
-              {/* ทั่วไปและธีม */}
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">รูปลักษณ์และระบบ</span>
-                <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
-                  <div
-                    onClick={() => handleMobileSelectSubPage('general')}
-                    className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-[#FF7A00]/10 text-[#FF7A00] flex items-center justify-center shrink-0">
-                        <Sliders className="w-4 h-4" />
+              <div className='flex flex-col gap-4 px-4 pb-20'>
+                {/* ทั่วไปและธีม */}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">รูปลักษณ์และระบบ</span>
+                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('general')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-[#FF7A00]/10 text-[#FF7A00] flex items-center justify-center shrink-0">
+                          <Sliders className="w-4 h-4" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ทั่วไปและธีม</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
+                            ธีมมืด, สว่าง หรือตามระบบ และพารามิเตอร์ URL
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex flex-col">
-                        <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ทั่วไปและธีม</span>
-                        <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
-                          ธีมมืด, สว่าง หรือตามระบบ และพารามิเตอร์ URL
-                        </span>
-                      </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                   </div>
                 </div>
-              </div>
 
-              {/* บัญชีและโปรไฟล์ */}
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">บัญชีและโปรไฟล์</span>
-                <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
-                  <div
-                    onClick={() => handleMobileSelectSubPage('account')}
-                    className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 shrink-0">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={gravatarHash
-                            ? `https://www.gravatar.com/avatar/${gravatarHash}?d=${fallbackAvatar}&s=80`
-                            : `https://www.gravatar.com/avatar/?d=${fallbackAvatar}&s=80`}
-                          alt="User"
-                          className="w-full h-full object-cover"
-                        />
+                {/* บัญชีและโปรไฟล์ */}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">บัญชีและโปรไฟล์</span>
+                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('account')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 shrink-0">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={gravatarHash
+                              ? `https://www.gravatar.com/avatar/${gravatarHash}?d=${fallbackAvatar}&s=80`
+                              : `https://www.gravatar.com/avatar/?d=${fallbackAvatar}&s=80`}
+                            alt="User"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">โปรไฟล์และ Gravatar</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888] truncate max-w-[200px]">
+                            {gravatarEmail || 'ยังไม่ได้ตั้งค่าอีเมล'}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex flex-col">
-                        <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">โปรไฟล์และ Gravatar</span>
-                        <span className="text-[11px] text-[#8C857B] dark:text-[#888888] truncate max-w-[200px]">
-                          {gravatarEmail || 'ยังไม่ได้ตั้งค่าอีเมล'}
-                        </span>
-                      </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                   </div>
                 </div>
-              </div>
 
-              {/* การเล่น */}
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">การเล่น</span>
-                <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
-                  <div
-                    onClick={() => handleMobileSelectSubPage('player')}
-                    className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3">
-                      <PlayCircle className="w-5 h-5 text-[#FF7A00]" />
-                      <div className="flex flex-col">
-                        <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ทั่วไปและพฤติกรรมตัวเล่น</span>
-                        <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">ความเร็ว, สัดส่วนภาพ, ข้ามเวลา และระดับเสียง</span>
+                {/* การเล่น */}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">การเล่น</span>
+                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('player')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <PlayCircle className="w-5 h-5 text-[#FF7A00]" />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ทั่วไปและพฤติกรรมตัวเล่น</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">ความเร็ว, สัดส่วนภาพ, ข้ามเวลา และระดับเสียง</span>
+                        </div>
                       </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                   </div>
                 </div>
-              </div>
 
-              {/* พื้นที่จัดเก็บ */}
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">พื้นที่จัดเก็บและคลาวด์</span>
-                <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
-                  <div
-                    onClick={() => handleMobileSelectSubPage('onedrive')}
-                    className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Folder className="w-5 h-5 text-blue-500" />
-                      <div className="flex flex-col">
-                        <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">OneDrive และโฟลเดอร์สื่อ</span>
-                        <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
-                          {targetFolder} ({videoCount} คลิป, {totalSizeGB} GB)
-                        </span>
+                {/* พื้นที่จัดเก็บ */}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">พื้นที่จัดเก็บและคลาวด์</span>
+                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('onedrive')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Folder className="w-5 h-5 text-blue-500" />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">OneDrive และโฟลเดอร์สื่อ</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
+                            {targetFolder} ({videoCount} คลิป, {totalSizeGB} GB)
+                          </span>
+                        </div>
                       </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                   </div>
                 </div>
-              </div>
 
-              {/* ข้อมูลและความเป็นส่วนตัว */}
-              <div className="flex flex-col">
-                <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">ข้อมูลและความเป็นส่วนตัว</span>
-                <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
-                  <div
-                    onClick={() => handleMobileSelectSubPage('system')}
-                    className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Database className="w-5 h-5 text-emerald-500" />
-                      <div className="flex flex-col">
-                        <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">จัดการประวัติและแคชของระบบ</span>
-                        <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">ล้างประวัติการดู และการรีเซ็ตข้อมูล</span>
+                {/* ข้อมูลและความเป็นส่วนตัว */}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">ข้อมูลและความเป็นส่วนตัว</span>
+                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('system')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Database className="w-5 h-5 text-emerald-500" />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">จัดการประวัติและแคชของระบบ</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">ล้างประวัติการดู และการรีเซ็ตข้อมูล</span>
+                        </div>
                       </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                     </div>
-                    <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
+                  </div>
+                </div>
+
+                {/* ช่วยเหลือและติดต่อ */}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">ช่วยเหลือ</span>
+                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('support')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0">
+                          <LifeBuoy className="w-4 h-4" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ช่วยเหลือและติดต่อ</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">FAQ, รายงานปัญหา และข้อมูลแอป</span>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -535,7 +571,7 @@ function SettingsContent() {
           ) : (
             /* Mobile sub-page */
             <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between py-2 border-b border-[#EFECE6] dark:border-white/10 mb-1">
+              <div className="sticky top-0 z-10 h-14 flex items-center justify-between py-2 px-4 bg-white dark:bg-[#181818] border-b border-[#EFECE6] dark:border-white/10">
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
@@ -550,9 +586,10 @@ function SettingsContent() {
                     {subPage === 'onedrive' && 'OneDrive และโฟลเดอร์'}
                     {subPage === 'account' && 'โปรไฟล์และ Gravatar'}
                     {subPage === 'system' && 'จัดการประวัติและแคช'}
+                    {subPage === 'support' && 'ช่วยเหลือและติดต่อ'}
                   </h2>
                 </div>
-                {subPage !== 'system' && subPage !== 'general' && (
+                {subPage !== 'system' && subPage !== 'general' && subPage !== 'support' && (
                   <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
                 )}
               </div>

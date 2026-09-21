@@ -49,7 +49,7 @@ export default function GeneralSection() {
   const { theme, resolvedTheme, setTheme } = useTheme();
 
   return (
-    <div className="flex flex-col gap-6 animate-fadeIn">
+    <div className="flex flex-col gap-6 animate-fadeIn px-4">
       {/* Header */}
       <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
         <div className="flex items-center gap-2.5">
@@ -79,20 +79,18 @@ export default function GeneralSection() {
                   key={opt.id}
                   type="button"
                   onClick={() => setTheme(opt.id)}
-                  className={`relative flex flex-col rounded-2xl p-4 text-left transition-all duration-200 cursor-pointer border ${
-                    isSelected
-                      ? 'border-[#FF7A00] bg-[#FFF8F2] dark:bg-[#FF7A00]/10 shadow-[0_4px_16px_rgba(255,122,0,0.18)] ring-2 ring-[#FF7A00]/30'
-                      : 'border-[#EFECE6] dark:border-white/10 bg-white dark:bg-[#181818] hover:border-[#D5CFC5] dark:hover:border-white/20 hover:shadow-xs'
-                  }`}
+                  className={`relative flex flex-col rounded-2xl p-4 text-left transition-all duration-200 cursor-pointer border ${isSelected
+                    ? 'border-[#FF7A00] bg-[#FFF8F2] dark:bg-[#FF7A00]/10 shadow-[0_4px_16px_rgba(255,122,0,0.18)] ring-2 ring-[#FF7A00]/30'
+                    : 'border-[#EFECE6] dark:border-white/10 bg-white dark:bg-[#181818] hover:border-[#D5CFC5] dark:hover:border-white/20 hover:shadow-xs'
+                    }`}
                 >
                   {/* Top: Icon & Checkmark */}
                   <div className="flex items-center justify-between mb-3">
                     <div
-                      className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
-                        isSelected
-                          ? 'bg-[#FF7A00] text-white shadow-xs'
-                          : 'bg-[#F5F2EB] dark:bg-white/5 text-[#8C857B] dark:text-[#AAAAAA]'
-                      }`}
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${isSelected
+                        ? 'bg-[#FF7A00] text-white shadow-xs'
+                        : 'bg-[#F5F2EB] dark:bg-white/5 text-[#8C857B] dark:text-[#AAAAAA]'
+                        }`}
                     >
                       <Icon className="w-5 h-5" />
                     </div>
@@ -137,9 +135,9 @@ export default function GeneralSection() {
           {/* Dynamic Active Theme Status Banner */}
           <div className="mt-2 p-3.5 rounded-xl bg-[#FBF9F5] dark:bg-white/5 border border-[#EFECE6] dark:border-white/10 flex items-center justify-between text-xs">
             <div className="flex items-center gap-2.5">
-              <Sparkles className="w-4 h-4 text-[#FF7A00] shrink-0" />
+              {/* <Sparkles className="w-4 h-4 text-[#FF7A00] shrink-0" /> */}
               <span className="text-[#3A352F] dark:text-[#CCCCCC]">
-                สถานะการแสดงผลปัจจุบัน:
+                สถานะการแสดงผลปัจจุบัน
                 <strong className="text-[#FF7A00] ml-1.5">
                   {resolvedTheme === 'dark' ? 'โหมดมืด (Dark Mode)' : 'โหมดสว่าง (Light Mode)'}
                 </strong>
@@ -150,10 +148,10 @@ export default function GeneralSection() {
                 )}
               </span>
             </div>
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+            {/* <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
               <ShieldCheck className="w-4 h-4" />
               <span>ตรวจเช็คก่อน Render (No Flash)</span>
-            </div>
+            </div> */}
           </div>
         </div>
       </SettingCard>

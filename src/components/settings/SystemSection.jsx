@@ -7,7 +7,7 @@ import { Trash2, AlertTriangle } from 'lucide-react';
 
 export default function SystemSection({ handleClearHistory, handleFactoryReset }) {
   return (
-    <div className="flex flex-col gap-6 animate-fadeIn">
+    <div className="flex flex-col gap-6 animate-fadeIn px-4">
       <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
         <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">ข้อมูลและความเป็นส่วนตัว</h2>
         <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
