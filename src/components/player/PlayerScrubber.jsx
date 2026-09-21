@@ -42,13 +42,7 @@ export default function PlayerScrubber({
       onPointerCancel={handlePointerUp}
       onClick={(e) => {
         e.stopPropagation();
-        calculateScrubPosition?.(e.clientX);
-        const target = latestScrubTimeRef?.current !== null ? latestScrubTimeRef.current : previewTime;
-        commitSeek?.(target);
-        if (latestScrubTimeRef) latestScrubTimeRef.current = null;
-        setIsScrubbing?.(false);
-        if (isScrubbingRef) isScrubbingRef.current = false;
-        setIsHoveringSeek?.(false);
+        e.preventDefault();
       }}
       onMouseEnter={(e) => {
         if (!isMobileView && e?.pointerType !== 'touch') {
@@ -56,7 +50,7 @@ export default function PlayerScrubber({
         }
       }}
       onMouseLeave={() => setIsHoveringSeek?.(false)}
-      className="relative flex items-center h-5 cursor-pointer touch-none group/seek"
+      className="relative flex items-center h-6 sm:h-5 cursor-pointer touch-none group/seek py-1"
     >
       {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
       <div
@@ -68,10 +62,14 @@ export default function PlayerScrubber({
         }`}
         style={{ left: `${Math.max(10, Math.min(isScrubbing ? previewPercent : hoverPercent, 90))}%` }}
       >
-        {/* Preview Frame Thumbnail Card */}
+        {/* Preview Frame Thumbnail Card (Clamped for both 16:9 Landscape & 9:16 Vertical) */}
         <div
-          className="w-44 sm:w-52 rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80"
-          style={{ aspectRatio: videoRatio }}
+          className={`${
+            videoRatio && videoRatio < 1
+              ? 'h-36 sm:h-44 w-auto max-w-[120px]'
+              : 'w-44 sm:w-52 h-auto'
+          } rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80 shrink-0`}
+          style={{ aspectRatio: videoRatio || 16 / 9 }}
         >
           {/* Poster fallback layer */}
           {poster && (
@@ -98,7 +96,7 @@ export default function PlayerScrubber({
         {/* Time Badge */}
         <div
           ref={scrubBadgeRef}
-          className="bg-black/90 text-white border border-white/20 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold shadow-xl whitespace-nowrap backdrop-blur-md"
+          className="bg-black/60 text-white border border-white/20 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold shadow-xl whitespace-nowrap backdrop-blur-md"
         >
           {formatTime(isScrubbing ? previewTime : hoverTime)}
         </div>

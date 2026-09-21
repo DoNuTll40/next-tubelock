@@ -4,6 +4,7 @@ import React from 'react';
 import {
   ChevronRight, ArrowLeft, Play, Pause, Cast, Subtitles, Settings
 } from 'lucide-react';
+import { getGearBadge } from '@/lib/videoUtils';
 
 export default function PlayerTopBar({
   showControls,
@@ -28,12 +29,11 @@ export default function PlayerTopBar({
   if (!showControls && isPlaying) return null;
   if (!isFullscreen && !isMobileView) return null;
 
-  const is4K = activeLevelLabel?.includes?.('4K') || false;
-  const isHD = activeLevelLabel?.includes?.('1080') || activeLevelLabel?.includes?.('720') || activeLevelLabel?.includes?.('HD') || false;
+  const gearBadge = getGearBadge(activeLevelLabel);
 
   return (
     <div
-      className="absolute top-0 left-0 right-0 px-2.5 sm:px-6 pt-2.5 sm:pt-4 pb-6 sm:pb-8 bg-gradient-to-b from-black/85 via-black/35 to-transparent flex items-center justify-between z-30 transition-opacity duration-150"
+      className="absolute top-0 left-0 right-0 px-2.5 sm:px-6 pt-2.5 sm:pt-4 pb-6 sm:pb-8 bg-gradient-to-b from-black/75 via-black/25 to-transparent flex items-center justify-between z-30 transition-opacity duration-150"
       onClick={(e) => e.stopPropagation()}
     >
       {/* Top-Left: Title in Fullscreen, or Back Button in Mobile Portrait */}
@@ -60,7 +60,7 @@ export default function PlayerTopBar({
             e.stopPropagation();
             onBack();
           }}
-          className="p-2 -ml-1 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-xs transition active:scale-90 cursor-pointer"
+          className="p-2 -ml-1 rounded-full bg-black/50 hover:bg-black/70 text-white backdrop-blur-md transition active:scale-90 cursor-pointer border border-white/15 shadow-sm"
           title="ย้อนกลับ"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -71,31 +71,18 @@ export default function PlayerTopBar({
 
       {/* Top-Right: Shown ONLY on Mobile */}
       {isMobileView ? (
-        <div className="flex items-center gap-1 sm:gap-3 shrink-0 text-white">
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 text-white">
           {/* Autoplay switch */}
           <button
             type="button"
             onClick={() => {
-              const next = !isAutoplay;
-              setIsAutoplay(next);
-              showToast?.(next ? 'เปิดการเล่นอัตโนมัติ' : 'ปิดการเล่นอัตโนมัติ');
+              showToast?.('เล่นวิดีโอถัดไปอัตโนมัติ (Coming soon)');
               resetControlsTimer?.();
             }}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
-              isAutoplay ? 'bg-white' : 'bg-white/30'
-            }`}
-            title={isAutoplay ? 'การเล่นอัตโนมัติเปิดอยู่' : 'การเล่นอัตโนมัติปิดอยู่'}
+            className="relative inline-flex h-6 w-10.5 items-center rounded-full transition-colors cursor-pointer bg-black/50 hover:bg-black/70 border border-white/15 backdrop-blur-md mr-0.5"
           >
-            <span
-              className={`inline-flex items-center justify-center h-3.5 w-3.5 transform rounded-full transition-transform ${
-                isAutoplay ? 'translate-x-4.5 bg-black' : 'translate-x-1 bg-white'
-              }`}
-            >
-              {isAutoplay ? (
-                <Play className="w-2 h-2 fill-current text-white" />
-              ) : (
-                <Pause className="w-2 h-2 fill-current text-black" />
-              )}
+            <span className="inline-flex items-center justify-center h-4 w-4 transform rounded-full transition-transform translate-x-1 bg-white/90 shadow-xs">
+              <Play className="w-2 h-2 fill-current text-zinc-900 ml-0.5" />
             </span>
           </button>
 
@@ -106,8 +93,7 @@ export default function PlayerTopBar({
               showToast?.('เชื่อมต่ออุปกรณ์ Cast / TV');
               resetControlsTimer?.();
             }}
-            className="p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white"
-            title="เล่นบนทีวี (Cast)"
+            className="p-2 rounded-xl bg-black/50 hover:bg-white/15 border border-white/15 backdrop-blur-md text-zinc-300 hover:text-white active:scale-90 transition cursor-pointer shadow-xs"
           >
             <Cast className="w-4.5 h-4.5" />
           </button>
@@ -120,10 +106,9 @@ export default function PlayerTopBar({
               showToast?.(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
               resetControlsTimer?.();
             }}
-            className={`p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer ${
-              isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-300 hover:text-white'
+            className={`p-2 rounded-xl border backdrop-blur-md active:scale-90 transition cursor-pointer shadow-xs ${
+              isCcActive ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50' : 'bg-black/50 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'
             }`}
-            title="คำบรรยาย (CC)"
           >
             <Subtitles className="w-4.5 h-4.5" />
           </button>
@@ -138,19 +123,14 @@ export default function PlayerTopBar({
               setActiveMenuTab?.('main');
               resetControlsTimer?.();
             }}
-            className="p-1.5 rounded-lg hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white relative"
-            title="การตั้งค่า"
+            className="p-2 rounded-xl bg-black/50 hover:bg-white/15 border border-white/15 backdrop-blur-md active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white relative shadow-xs"
           >
             <Settings className="w-4.5 h-4.5" />
-            {is4K ? (
-              <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-1 py-0.5 rounded shadow pointer-events-none">
-                4K
+            {gearBadge && (
+              <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[8px] leading-tight px-1.5 py-0.5 rounded shadow pointer-events-none tracking-tight border border-white/30">
+                {gearBadge}
               </span>
-            ) : isHD ? (
-              <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white font-extrabold text-[7px] leading-tight px-0.5 py-0.5 rounded shadow pointer-events-none">
-                HD
-              </span>
-            ) : null}
+            )}
           </button>
         </div>
       ) : (

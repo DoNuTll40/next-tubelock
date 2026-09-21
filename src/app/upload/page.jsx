@@ -1213,10 +1213,17 @@ export default function UploadPage() {
 
                 {/* Expandable Console Logs Drawer */}
                 <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl shadow-xs overflow-hidden">
-                  <button
-                    type="button"
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setShowLogs(!showLogs)}
-                    className="w-full px-4 py-3 bg-[#FBF9F5] dark:bg-[#141414] border-b border-[#EFECE6] dark:border-white/10 flex items-center justify-between text-left cursor-pointer"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setShowLogs(!showLogs);
+                      }
+                    }}
+                    className="w-full px-4 py-3 bg-[#FBF9F5] dark:bg-[#141414] border-b border-[#EFECE6] dark:border-white/10 flex items-center justify-between text-left cursor-pointer select-none"
                   >
                     <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-2">
                       <Terminal className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />
@@ -1235,7 +1242,7 @@ export default function UploadPage() {
                       )}
                       {showLogs ? <ChevronUp className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" /> : <ChevronDown className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA]" />}
                     </div>
-                  </button>
+                  </div>
 
                   {showLogs && (
                     <div className="p-3 bg-[#1E1E1E] text-[#D4D4D4] font-mono text-[11px] h-40 overflow-y-auto space-y-1 select-text">

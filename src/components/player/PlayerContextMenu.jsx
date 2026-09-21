@@ -18,7 +18,7 @@ export default function PlayerContextMenu({
 
   return (
     <div
-      className="absolute z-50 bg-[#1f1f1f]/65 border border-white/15 rounded-xl py-1.5 w-56 text-xs text-zinc-200 shadow-2xl backdrop-blur-md"
+      className="absolute z-50 bg-black/50 border border-white/15 rounded-xl py-1.5 w-56 text-xs text-zinc-200 shadow-2xl backdrop-blur-md"
       style={{ top: contextMenu.y, left: contextMenu.x }}
       onClick={(e) => e.stopPropagation()}
       onMouseLeave={() => setContextMenu?.(null)}

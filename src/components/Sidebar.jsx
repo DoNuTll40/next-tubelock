@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/context/SidebarContext';
 import { 
   Home, History, PlusSquare, RefreshCw, 
-  Settings, PlaySquare, ChevronRight, ListOrdered
+  Settings, PlaySquare, ChevronRight, ListOrdered, Gauge
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -32,7 +32,7 @@ export default function Sidebar() {
 
   const systemItems = [
     { label: 'การตั้งค่า', path: '/settings', icon: Settings, exact: false },
-    { label: 'เบนช์มาร์ก', path: '/benchmark', icon: GaugeIcon, exact: false },
+    { label: 'เบนช์มาร์ก', path: '/benchmark', icon: Gauge, exact: false },
   ];
 
   // Match helper: exact for '/', startsWith for everything else
@@ -51,6 +51,7 @@ export default function Sidebar() {
           { label: 'คิวงาน', path: '/upload/queue', icon: ListOrdered, exact: true },
           { label: 'ประวัติ', path: '/history', icon: History, exact: false },
           { label: 'ซิงก์', path: '/sync', icon: RefreshCw, exact: false },
+          { label: 'เบนช์มาร์ก', path: '/benchmark', icon: Gauge, exact: false },
           { label: 'ตั้งค่า', path: '/settings', icon: Settings, exact: false },
         ].map((item) => {
           const Icon = item.icon;

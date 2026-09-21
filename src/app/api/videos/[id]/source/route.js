@@ -113,12 +113,7 @@ export async function GET(request, context) {
       // ⚡⚡⚡ ULTRA-SPEED PERSISTENT DB CACHE HIT (<30ms) ⚡⚡⚡
       // If cached in Neon DB and download URLs are still valid, return IMMEDIATELY!
       const now = Date.now();
-      if (
-        !forceFresh &&
-        video.source_cache &&
-        video.source_cache_expires_at &&
-        Number(video.source_cache_expires_at) > now
-      ) {
+      if (!forceFresh && video.source_cache) {
         const parsedCache = typeof video.source_cache === 'string'
           ? JSON.parse(video.source_cache)
           : video.source_cache;
@@ -135,10 +130,51 @@ export async function GET(request, context) {
             ...parsedCache,
             video,
           };
+          const expTime = Number(video.source_cache_expires_at || 0);
           sourceCache.set(cacheKey, {
             data: resultData,
-            expiresAt: Number(video.source_cache_expires_at),
+            expiresAt: expTime > now ? expTime : now + 5 * 60 * 1000,
           });
+
+          // ⚡ Background SWR: If cache expired but token still valid, return IMMEDIATELY to user (<30ms)
+          // and quietly revalidate with Microsoft Graph in the background so NO user ever waits 10s!
+          if (expTime <= now) {
+            console.log(`[SWR Background] Revalidating OneDrive URLs in background for video ${id}...`);
+            Promise.resolve().then(async () => {
+              try {
+                const token = await getGraphToken();
+                const driveId = await getUserDriveId(token);
+                if (video.source_type === 'hls' || video.onedrive_folder_id) {
+                  const folderId = video.onedrive_folder_id || video.onedrive_item_id;
+                  let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$top=1000`;
+                  const allItems = [];
+                  while (nextUrl) {
+                    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
+                    if (!res.ok) break;
+                    const data = await res.json();
+                    if (Array.isArray(data.value)) allItems.push(...data.value);
+                    nextUrl = data['@odata.nextLink'] || null;
+                  }
+                  const freshValid = allItems
+                    .filter(i => i.name && i['@microsoft.graph.downloadUrl'])
+                    .map(i => ({ name: i.name, downloadUrl: i['@microsoft.graph.downloadUrl'] }));
+                  if (freshValid.length > 0) {
+                    const newExp = Date.now() + 40 * 60 * 1000;
+                    await sql`
+                      UPDATE videos 
+                      SET source_cache = ${JSON.stringify({ success: true, type: 'hls', items: freshValid })}::jsonb,
+                          source_cache_expires_at = ${newExp}
+                      WHERE id = ${id};
+                    `;
+                    console.log(`[SWR Background] Updated source_cache in DB for video ${id}`);
+                  }
+                }
+              } catch (bgErr) {
+                console.warn('[SWR Background Warning]:', bgErr.message);
+              }
+            });
+          }
+
           return resultData;
         }
       }

@@ -184,6 +184,84 @@ export function formatResolutionBadge(resStr = '') {
 }
 
 /**
+ * Format HLS quality level with resolution and optional FPS suffix (YouTube style)
+ * e.g. (2160, 60) -> { label: '2160p60', badge: '4K', height: 2160 }
+ *      (1440, 60) -> { label: '1440p60', badge: 'HD', height: 1440 }
+ *      (1080, 60) -> { label: '1080p60', badge: 'HD', height: 1080 }
+ *      (720, 60)  -> { label: '720p60', badge: null, height: 720 }
+ *      (480, 60)  -> { label: '480p', badge: null, height: 480 }
+ *      (360, 30)  -> { label: '360p', badge: null, height: 360 }
+ *      (240, 30)  -> { label: '240p', badge: null, height: 240 }
+ *      (144, 30)  -> { label: '144p', badge: null, height: 144 }
+ */
+export function formatQualityLevel(height, fps = null) {
+  const h = parseInt(height, 10) || 0;
+  const numFps = parseFloat(fps) || 0;
+  // YouTube standard: High frame rate (50 or 60) applies to 720p and above
+  const isHighFps = numFps >= 48 && h >= 720;
+  const fpsSuffix = isHighFps ? `${Math.round(numFps)}` : '';
+
+  let baseRes = `${h}p`;
+  let badge = null;
+
+  if (h >= 2000) {
+    baseRes = '2160p';
+    badge = '4K';
+  } else if (h >= 1350) {
+    baseRes = '1440p';
+    badge = '2K';
+  } else if (h >= 950) {
+    baseRes = '1080p';
+    badge = 'FHD';
+  } else if (h >= 650) {
+    baseRes = '720p';
+    badge = 'HD';
+  } else if (h >= 440) {
+    baseRes = '480p';
+  } else if (h >= 320) {
+    baseRes = '360p';
+  } else if (h >= 200) {
+    baseRes = '240p';
+  } else if (h > 0) {
+    baseRes = '144p';
+  }
+
+  const label = `${baseRes}${fpsSuffix}`;
+
+  return {
+    label,
+    badge,
+    height: h,
+    fps: numFps,
+    gearBadge: badge,
+    fullLabel: badge ? `${label} ${badge}` : label,
+  };
+}
+
+/**
+ * Get gear button badge (4K, 2K, FHD, HD) without FPS
+ * e.g. '2160p50' -> '4K', '1440p60' -> '2K', '1080p50' -> 'FHD', '720p60' -> 'HD'
+ */
+export function getGearBadge(resOrLabel = '') {
+  if (!resOrLabel) return null;
+  const str = String(resOrLabel).toUpperCase();
+  if (str.includes('2160') || str.includes('4K')) return '4K';
+  if (str.includes('1440') || str.includes('2K')) return '2K';
+  if (str.includes('1080') || str.includes('FHD')) return 'FHD';
+  if (str.includes('720') || str.includes('HD')) return 'HD';
+
+  const match = str.match(/(\d+)/);
+  if (match) {
+    const val = parseInt(match[1], 10);
+    if (val >= 2000) return '4K';
+    if (val >= 1350) return '2K';
+    if (val >= 950) return 'FHD';
+    if (val >= 650) return 'HD';
+  }
+  return null;
+}
+
+/**
  * Detect codec name from fourCC or codec string
  */
 export function detectCodec(fourCC = '', fallback = 'h264') {

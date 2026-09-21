@@ -17,7 +17,16 @@ export async function GET(request, context) {
     }
 
     const sql = getDb();
-    const rows = await sql`SELECT * FROM videos WHERE id = ${id} LIMIT 1;`;
+    const rows = await sql`
+      SELECT 
+        id, title, description, duration, file_size_bytes, resolution, fps, codec,
+        thumbnail_url, tags, category, views_count, created_at, status, 
+        transcode_progress, stage_detail, error_message, source_type,
+        onedrive_item_id, onedrive_folder_id, raw_file_name, master_playlist_path
+      FROM videos 
+      WHERE id = ${id} 
+      LIMIT 1;
+    `;
     if (!rows || rows.length === 0) {
       return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404 });
     }

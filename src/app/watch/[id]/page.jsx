@@ -293,19 +293,14 @@ export default function WatchPage() {
   const viewsDisplay = video?.views_count ? `${video.views_count.toLocaleString()} ครั้ง` : '270K views';
 
   return (
-    <div className="w-full max-w-[1720px] mx-auto px-0 sm:px-4 md:px-6 lg:px-3 pt-0 lg:pt-3 pb-16 sm:py-5">
+    <div className="w-full max-w-[1720px] mx-auto px-0 sm:px-4 md:px-6 lg:px-3 pt-0 lg:pt-3 sm:py-5">
       <div className="block lg:flex lg:flex-row lg:items-start lg:justify-center lg:gap-3 w-full">
         {/* Left Column: Player + Details (YouTube Standard Full-Width Layout) */}
         {/* On mobile (< lg): 'contents' unwraps the column so sticky player & chips track full-page scrolling */}
         {/* On desktop (lg+): standard flex column alongside the related videos sidebar */}
         <div
-          className="contents lg:flex lg:flex-col lg:min-w-0 shrink"
+          className="contents lg:flex lg:flex-col lg:flex-1 lg:min-w-0"
           style={{
-            width: (videoRatio && videoRatio >= 0.98)
-              ? `min(100%, calc((${DESKTOP_PLAYER_MAX_HEIGHT}) * ${videoRatio}))`
-              : (videoRatio && videoRatio < 0.98)
-                ? `min(100%, calc((${DESKTOP_PLAYER_MAX_HEIGHT}) * (16 / 9)))`
-                : '100%',
             maxWidth: (videoRatio && videoRatio >= 0.98)
               ? `min(100%, calc((${DESKTOP_PLAYER_MAX_HEIGHT}) * ${videoRatio}))`
               : (videoRatio && videoRatio < 0.98)
@@ -487,7 +482,7 @@ export default function WatchPage() {
         </div>
 
         {/* Right / Sidebar: Related Videos Column (YouTube Desktop Standard ~400px) */}
-        <div className="w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pb-16">
+        <div className="w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pb-10">
           {/* 🏷️ YouTube Recommendation Filter Chips: Sticky directly under video player on mobile! */}
           <div
             style={{

@@ -101,7 +101,7 @@ export default function PlayerSettingsModal({
                   setShowSettingsMenu?.(false);
                 }
               }}
-              className="relative z-10 w-full max-w-lg mx-auto bg-[#212121] text-[#F1F1F1] rounded-t-2xl pb-7 pt-2 shadow-2xl border-t border-white/10 select-none overflow-hidden will-change-transform"
+              className="relative z-10 w-full max-w-lg mx-auto bg-black/60 backdrop-blur-xl text-[#F1F1F1] rounded-t-2xl pb-7 pt-2 shadow-2xl border-t border-white/15 select-none overflow-hidden will-change-transform"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drag Pill Handle */}
@@ -166,7 +166,7 @@ export default function PlayerSettingsModal({
                       </div>
                       <div className="flex items-center gap-1.5 text-zinc-400">
                         <span className="text-[13px] text-[#FF7A00] font-semibold font-mono">
-                          {currentLevelIndex === -1 ? `Auto (${activeLevelLabel})` : activeLevelLabel}
+                          {currentLevelIndex === -1 ? `อัตโนมัติ (${activeLevelLabel})` : activeLevelLabel}
                         </span>
                         {levels.length > 1 && <ChevronRight className="w-4 h-4 text-zinc-400" />}
                       </div>
@@ -220,25 +220,6 @@ export default function PlayerSettingsModal({
                     transition={{ duration: 0.12 }}
                     className="flex flex-col max-h-[55vh] overflow-y-auto py-1"
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleSelectQuality?.(-1);
-                        setShowSettingsMenu?.(false);
-                      }}
-                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer"
-                    >
-                      <div className="flex flex-col">
-                        <span className={`text-[14px] ${currentLevelIndex === -1 ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
-                          อัตโนมัติ (แนะนำ)
-                        </span>
-                        <span className="text-[11.5px] text-zinc-400 mt-0.5">
-                          ปรับความละเอียดตามความเร็วเน็ตเวิร์ก {currentLevelIndex === -1 && `• ปัจจุบัน (${activeLevelLabel})`}
-                        </span>
-                      </div>
-                      {currentLevelIndex === -1 && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
-                    </button>
-
                     {[...levels]
                       .sort((a, b) => (b.height || 0) - (a.height || 0))
                       .map((lvl) => {
@@ -251,15 +232,40 @@ export default function PlayerSettingsModal({
                               handleSelectQuality?.(lvl.index);
                               setShowSettingsMenu?.(false);
                             }}
-                            className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition font-mono cursor-pointer border-t border-white/5"
+                            className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition font-mono cursor-pointer border-t border-white/5 first:border-t-0"
                           >
-                            <span className={`text-[14px] ${isSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
-                              {lvl.label}
+                            <span className={`text-[14px] flex items-center gap-1.5 ${isSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
+                              <span>{lvl.label}</span>
+                              {lvl.badge && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider bg-white/10 dark:bg-white/15 text-zinc-300 font-sans leading-none">
+                                  {lvl.badge}
+                                </span>
+                              )}
                             </span>
                             {isSelected && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
                           </button>
                         );
                       })}
+
+                    {/* อัตโนมัติ (อยู่ล่างสุด) */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleSelectQuality?.(-1);
+                        setShowSettingsMenu?.(false);
+                      }}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer border-t border-white/5"
+                    >
+                      <div className="flex flex-col">
+                        <span className={`text-[14px] ${currentLevelIndex === -1 ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
+                          อัตโนมัติ
+                        </span>
+                        <span className="text-[11.5px] text-zinc-400 mt-0.5">
+                          ปรับความละเอียดตามความเร็วเน็ตเวิร์ก {currentLevelIndex === -1 && `• ปัจจุบัน (${activeLevelLabel})`}
+                        </span>
+                      </div>
+                      {currentLevelIndex === -1 && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
+                    </button>
                   </motion.div>
                 )}
 
@@ -342,7 +348,7 @@ export default function PlayerSettingsModal({
   }
 
   // ==========================================
-  // 💻 DESKTOP FLOATING POPUP (SMOOTH SCALE FADE, NO BLUR)
+  // 💻 DESKTOP FLOATING POPUP (MATCHING CONTEXT MENU GLASS AESTHETICS)
   // ==========================================
   return (
     <AnimatePresence>
@@ -357,172 +363,218 @@ export default function PlayerSettingsModal({
             settingsPlacement === 'top'
               ? 'top-14 right-3 sm:right-6'
               : 'bottom-18 right-3 sm:right-6'
-          } bg-[#18181B] border border-white/15 rounded-2xl py-1.5 w-60 text-xs text-zinc-200 z-40 shadow-2xl overflow-hidden select-none will-change-transform`}
+          } bg-black/50 border border-white/15 rounded-2xl py-1.5 w-70 text-zinc-200 z-40 shadow-[0_16px_40px_rgba(0,0,0,0.6)] backdrop-blur-md overflow-hidden select-none will-change-transform`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Tab: Main Menu */}
           {activeMenuTab === 'main' && (
             <div className="flex flex-col">
+              {/* Quality Item */}
               <button
                 type="button"
                 disabled={levels.length <= 1}
                 onClick={() => setActiveMenuTab?.('quality')}
-                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer"
+                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer group"
               >
-                <span className="text-zinc-300">คุณภาพ</span>
-                <span className="text-[#FF7A00] font-semibold flex items-center gap-1 font-mono">
-                  {currentLevelIndex === -1 ? `Auto (${activeLevelLabel})` : activeLevelLabel}
-                  {levels.length > 1 && <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />}
-                </span>
+                <div className="flex items-center gap-3">
+                  <Sliders className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition" />
+                  <span className="text-[13.5px] text-zinc-200 font-medium">คุณภาพ</span>
+                </div>
+                <div className="flex items-center gap-1.5 font-mono">
+                  <span className="text-[13px] text-[#FF7A00] font-semibold">
+                    {currentLevelIndex === -1 ? `อัตโนมัติ (${activeLevelLabel})` : activeLevelLabel}
+                  </span>
+                  {levels.length > 1 && <ChevronRight className="w-4 h-4 text-zinc-400" />}
+                </div>
               </button>
 
+              {/* Speed Item */}
               <button
                 type="button"
                 onClick={() => setActiveMenuTab?.('speed')}
-                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer"
+                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
               >
-                <span className="text-zinc-300">ความเร็ว</span>
-                <span className="text-[#FF7A00] flex items-center gap-1 font-mono font-semibold">
-                  {playbackRate === 1 ? 'ปกติ' : `${playbackRate}x`}
-                  <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
-                </span>
+                <div className="flex items-center gap-3">
+                  <Gauge className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition" />
+                  <span className="text-[13.5px] text-zinc-200 font-medium">ความเร็ว</span>
+                </div>
+                <div className="flex items-center gap-1.5 font-mono">
+                  <span className="text-[13px] text-[#FF7A00] font-semibold">
+                    {playbackRate === 1 ? 'ปกติ' : `${playbackRate}x`}
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-zinc-400" />
+                </div>
               </button>
 
+              {/* Aspect Ratio Item */}
               <button
                 type="button"
                 onClick={() => setActiveMenuTab?.('aspect')}
-                className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer"
+                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
               >
-                <span className="text-zinc-300">สัดส่วนวิดีโอ</span>
-                <span className="text-amber-400 flex items-center gap-1 uppercase font-semibold">
-                  {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
-                  <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
-                </span>
+                <div className="flex items-center gap-3">
+                  <Maximize2 className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition" />
+                  <span className="text-[13.5px] text-zinc-200 font-medium">สัดส่วนวิดีโอ</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[13px] text-amber-400 font-semibold">
+                    {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-zinc-400" />
+                </div>
               </button>
             </div>
           )}
 
           {/* Tab: Quality Submenu */}
           {activeMenuTab === 'quality' && (
-            <div className="flex flex-col max-h-56 overflow-y-auto">
-              <div className="px-4 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
-                <span>เลือกระดับความละเอียด</span>
+            <div className="flex flex-col">
+              {/* Header with Back button */}
+              <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
                   onClick={() => setActiveMenuTab?.('main')}
-                  className="text-[#FF7A00] font-semibold cursor-pointer"
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-zinc-300 hover:text-white hover:bg-white/10 transition cursor-pointer group text-left"
                 >
-                  กลับ
+                  <ArrowLeft className="w-4 h-4 text-zinc-400 group-hover:text-white transition shrink-0" />
+                  <span className="text-[13px] font-semibold text-zinc-200 group-hover:text-white">
+                    เลือกระดับความละเอียด
+                  </span>
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => handleSelectQuality?.(-1)}
-                className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/10 text-left transition cursor-pointer"
-              >
-                <span className={currentLevelIndex === -1 ? 'text-[#FF7A00] font-semibold' : ''}>
-                  Auto {currentLevelIndex === -1 && `(${activeLevelLabel})`}
-                </span>
-                {currentLevelIndex === -1 && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-              </button>
+              {/* Quality Options List */}
+              <div className="max-h-72 overflow-y-auto py-1">
+                {/* Specific resolutions */}
+                {[...levels]
+                  .sort((a, b) => (b.height || 0) - (a.height || 0))
+                  .map((lvl) => {
+                    const isSelected = currentLevelIndex === lvl.index;
+                    return (
+                      <button
+                        key={lvl.index}
+                        type="button"
+                        onClick={() => handleSelectQuality?.(lvl.index)}
+                        className="w-full flex items-center justify-between px-4.5 py-2.5 hover:bg-white/10 text-left transition font-mono cursor-pointer border-t border-white/5 first:border-t-0"
+                      >
+                        <span className={`flex items-center gap-2 text-[13.5px] ${isSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
+                          <span>{lvl.label}</span>
+                          {lvl.badge && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider bg-white/15 text-zinc-200 font-sans leading-none border border-white/10 shadow-xs">
+                              {lvl.badge}
+                            </span>
+                          )}
+                        </span>
+                        {isSelected && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                      </button>
+                    );
+                  })}
 
-              {[...levels]
-                .sort((a, b) => (b.height || 0) - (a.height || 0))
-                .map((lvl) => {
-                  const isSelected = currentLevelIndex === lvl.index;
-                  return (
-                    <button
-                      key={lvl.index}
-                      type="button"
-                      onClick={() => handleSelectQuality?.(lvl.index)}
-                      className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/10 text-left transition font-mono cursor-pointer"
-                    >
-                      <span className={isSelected ? 'text-[#FF7A00] font-semibold' : ''}>
-                        {lvl.label}
+                {/* อัตโนมัติ (Auto) option at the very bottom */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectQuality?.(-1)}
+                  className="w-full flex items-center justify-between px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5"
+                >
+                  <div className="flex flex-col">
+                    <span className={`text-[13.5px] ${currentLevelIndex === -1 ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                      อัตโนมัติ
+                    </span>
+                    {currentLevelIndex === -1 && activeLevelLabel && (
+                      <span className="text-[11px] text-zinc-400 font-mono mt-0.5">
+                        ปัจจุบัน: {activeLevelLabel}
                       </span>
-                      {isSelected && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-                    </button>
-                  );
-                })}
+                    )}
+                  </div>
+                  {currentLevelIndex === -1 && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                </button>
+              </div>
             </div>
           )}
 
           {/* Tab: Playback Speed Submenu */}
           {activeMenuTab === 'speed' && (
-            <div>
-              <div className="px-4 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
-                <span>เลือกความเร็วการเล่น</span>
+            <div className="flex flex-col">
+              <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
                   onClick={() => setActiveMenuTab?.('main')}
-                  className="text-[#FF7A00] font-semibold cursor-pointer"
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-zinc-300 hover:text-white hover:bg-white/10 transition cursor-pointer group text-left"
                 >
-                  กลับ
+                  <ArrowLeft className="w-4 h-4 text-zinc-400 group-hover:text-white transition shrink-0" />
+                  <span className="text-[13px] font-semibold text-zinc-200 group-hover:text-white">
+                    เลือกความเร็วการเล่น
+                  </span>
                 </button>
               </div>
-              {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
-                <button
-                  key={rate}
-                  type="button"
-                  onClick={() => {
-                    if (video?.current) {
-                      video.current.playbackRate = rate;
-                    }
-                    setPlaybackRate?.(rate);
-                    showToast?.(`ความเร็ว: ${rate}x`);
-                    setShowSettingsMenu?.(false);
-                    resetControlsTimer?.();
-                  }}
-                  className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/10 text-left transition font-mono cursor-pointer"
-                >
-                  <span className={playbackRate === rate ? 'text-[#FF7A00] font-semibold' : ''}>
-                    {rate === 1 ? 'ปกติ (1x)' : `${rate}x`}
-                  </span>
-                  {playbackRate === rate && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-                </button>
-              ))}
+              <div className="py-1">
+                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                  <button
+                    key={rate}
+                    type="button"
+                    onClick={() => {
+                      if (video?.current) {
+                        video.current.playbackRate = rate;
+                      }
+                      setPlaybackRate?.(rate);
+                      showToast?.(`ความเร็ว: ${rate}x`);
+                      setShowSettingsMenu?.(false);
+                      resetControlsTimer?.();
+                    }}
+                    className="w-full flex items-center justify-between px-4.5 py-2.5 hover:bg-white/10 text-left transition font-mono cursor-pointer border-t border-white/5 first:border-t-0"
+                  >
+                    <span className={`text-[13.5px] ${playbackRate === rate ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
+                      {rate === 1 ? 'ปกติ (1x)' : `${rate}x`}
+                    </span>
+                    {playbackRate === rate && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
           {/* Tab: Aspect Ratio Submenu */}
           {activeMenuTab === 'aspect' && (
-            <div>
-              <div className="px-4 py-2 text-[10px] text-zinc-400 border-b border-white/10 flex justify-between items-center">
-                <span>เลือกสัดส่วนภาพ</span>
+            <div className="flex flex-col">
+              <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
                   onClick={() => setActiveMenuTab?.('main')}
-                  className="text-[#FF7A00] font-semibold cursor-pointer"
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-zinc-300 hover:text-white hover:bg-white/10 transition cursor-pointer group text-left"
                 >
-                  กลับ
+                  <ArrowLeft className="w-4 h-4 text-zinc-400 group-hover:text-white transition shrink-0" />
+                  <span className="text-[13px] font-semibold text-zinc-200 group-hover:text-white">
+                    เลือกสัดส่วนภาพ
+                  </span>
                 </button>
               </div>
-              {[
-                { key: 'fit', label: 'พอดีเฟรม (Fit)', desc: 'แสดงตามสัดส่วนจริง ไม่ครอป' },
-                { key: 'crop', label: 'ตัดขอบดำ (Crop)', desc: 'ซูมตัดแถบดำบน-ล่างออก' },
-                { key: 'fill', label: 'ขยายเต็มจอ (Fill)', desc: 'ขยายให้เต็มกล่องเครื่องเล่น' },
-              ].map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => {
-                    setAspectMode?.(item.key);
-                    showToast?.(`สัดส่วน: ${item.label}`);
-                    setShowSettingsMenu?.(false);
-                    resetControlsTimer?.();
-                  }}
-                  className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-white/10 text-left transition cursor-pointer"
-                >
-                  <div className="flex flex-col">
-                    <span className={aspectMode === item.key ? 'text-[#FF7A00] font-semibold' : ''}>
-                      {item.label}
-                    </span>
-                    <span className="text-[9px] text-zinc-400">{item.desc}</span>
-                  </div>
-                  {aspectMode === item.key && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-                </button>
-              ))}
+              <div className="py-1">
+                {[
+                  { key: 'fit', label: 'พอดีเฟรม (Fit)', desc: 'แสดงตามสัดส่วนจริง ไม่ครอป' },
+                  { key: 'crop', label: 'ตัดขอบดำ (Crop)', desc: 'ซูมตัดแถบดำบน-ล่างออก' },
+                  { key: 'fill', label: 'ขยายเต็มจอ (Fill)', desc: 'ขยายให้เต็มกล่องเครื่องเล่น' },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      setAspectMode?.(item.key);
+                      showToast?.(`สัดส่วน: ${item.label}`);
+                      setShowSettingsMenu?.(false);
+                      resetControlsTimer?.();
+                    }}
+                    className="w-full flex items-center justify-between px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5 first:border-t-0"
+                  >
+                    <div className="flex flex-col">
+                      <span className={`text-[13.5px] ${aspectMode === item.key ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                        {item.label}
+                      </span>
+                      <span className="text-[11px] text-zinc-400 mt-0.5">{item.desc}</span>
+                    </div>
+                    {aspectMode === item.key && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </motion.div>

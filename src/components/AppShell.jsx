@@ -28,7 +28,7 @@ export default function AppShell({ children }) {
         {/* Desktop Sidebar (automatically hides on /settings and /watch) */}
         {showDesktopLayout && <Sidebar />}
 
-        <main className={`flex-1 w-full min-w-0 transition-all duration-0 ${showMobileLayout && !isExcludedPage ? 'pb-20' : 'pb-12'}`}>
+        <main className={`flex-1 w-full min-w-0 transition-all duration-0 ${showMobileLayout && !isExcludedPage ? 'pb-20' : 'pb-0'}`}>
           {children}
         </main>
       </div>
