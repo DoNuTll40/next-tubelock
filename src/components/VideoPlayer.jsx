@@ -73,6 +73,9 @@ export default function VideoPlayer({
   const [detectedRatio, setDetectedRatio] = useState(null);
   const videoRatio = detectedRatio || propRatio;
 
+  // Cinematic: wider than 16:9 (ratio > ~1.78)
+  const isCinematic = videoRatio > (16 / 9 + 0.05);
+
   const lastReportedRatioRef = useRef(null);
   const checkAndUpdateRatio = useCallback((forceRatio = null) => {
     const v = video?.current;
@@ -1295,12 +1298,15 @@ export default function VideoPlayer({
           ? undefined
           : (videoRatio && videoRatio < 0.98)
             ? (isMobileView ? undefined : '16/9')
-            : `${videoRatio}`,
+            // Mobile + cinematic → clamp to 16/9; desktop → keep true ratio
+            : (isMobileView && isCinematic) ? '16/9' : `${videoRatio}`,
         maxWidth: isFullscreen
           ? undefined
           : (videoRatio && videoRatio < 0.98)
             ? undefined
-            : `calc((${desktopMaxHeight}) * ${videoRatio})`,
+            : (isMobileView && isCinematic)
+              ? undefined
+              : `calc((${desktopMaxHeight}) * ${videoRatio})`,
         maxHeight: isFullscreen
           ? undefined
           : (videoRatio && videoRatio < 0.98)

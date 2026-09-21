@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 import {
   ChevronRight, ArrowLeft, Play, Pause, Cast, Subtitles, Settings
 } from 'lucide-react';
@@ -60,7 +59,7 @@ export default function PlayerTopBar({
             e.stopPropagation();
             onBack();
           }}
-          className="p-2 -ml-1 rounded-full bg-black/25 hover:bg-black/70 text-white backdrop-blur-md transition active:scale-90 cursor-pointer border border-white/15 shadow-sm"
+          className="p-2 -ml-1 rounded-full bg-black/40 active:bg-black/70 text-white backdrop-blur-sm transition-[background-color] duration-100 active:scale-90 cursor-pointer border border-white/15 shadow-sm"
           title="ย้อนกลับ"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -93,7 +92,7 @@ export default function PlayerTopBar({
               showToast?.('เชื่อมต่ออุปกรณ์ Cast / TV');
               resetControlsTimer?.();
             }}
-            className="p-2 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-zinc-300 hover:text-white active:scale-90 transition cursor-pointer shadow-xs"
+            className="p-2 rounded-xl bg-black/40 hover:bg-white/15 border border-white/15 backdrop-blur-sm text-zinc-300 hover:text-white active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs"
           >
             <Cast className="w-4.5 h-4.5" />
           </button>
@@ -106,8 +105,7 @@ export default function PlayerTopBar({
               showToast?.(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
               resetControlsTimer?.();
             }}
-            className={`p-2 rounded-xl border backdrop-blur-md active:scale-90 transition cursor-pointer shadow-xs ${isCcActive ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50' : 'bg-black/25 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'
-              }`}
+            className={`p-2 rounded-xl border backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs ${isCcActive ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50' : 'bg-black/40 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'}`}
           >
             <Subtitles className="w-4.5 h-4.5" />
           </button>
@@ -122,7 +120,7 @@ export default function PlayerTopBar({
               setActiveMenuTab?.('main');
               resetControlsTimer?.();
             }}
-            className="p-2 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white relative shadow-xs"
+            className="p-2 rounded-xl bg-black/40 hover:bg-white/15 border border-white/15 backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer text-zinc-300 hover:text-white relative shadow-xs"
           >
             <Settings className="w-4.5 h-4.5" />
             {gearBadge && (

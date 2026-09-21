@@ -82,3 +82,14 @@ html.dark body {
   color: #FFFFFF;
 }
 
+/* Player: Chevron wave (double-tap seek) — GPU compositor only (opacity + transform) */
+@keyframes chevwave {
+  0%, 100% { opacity: 0.25; transform: translateX(0); }
+  50%       { opacity: 1;    transform: translateX(0); }
+}
+
+/* Player: Controls fade-in — replaces Framer Motion initial/animate scale on mobile */
+@keyframes fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
