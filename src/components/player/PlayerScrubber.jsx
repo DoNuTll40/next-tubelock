@@ -18,6 +18,8 @@ export default function PlayerScrubber({
   hoverPercent,
   previewTime,
   hoverTime,
+  lastHoverTimeRef,
+  lastHoverPercentRef,
   videoRatio = 16 / 9,
   poster,
   initialBufferPct = 0,
@@ -27,12 +29,17 @@ export default function PlayerScrubber({
   handlePointerUp,
   isMobileView,
 }) {
-  // ตำแหน่งและเวลาของ preview: scrubbing > hovering > ค้างที่ตำแหน่ง seek ล่าสุด
+  // ตำแหน่งและเวลาของ preview:
+  // - scrubbing  → ใช้ค่า scrub จริง
+  // - hovering   → ใช้ค่า hover จริง
+  // - fade-out   → ใช้ lastHoverRef (ค้างไว้ไม่ให้วิ่งไป 0:00)
+  const lastPct  = lastHoverPercentRef?.current ?? previewPercent;
+  const lastTime = lastHoverTimeRef?.current    ?? previewTime;
   const previewLeft = Math.max(10, Math.min(
-    isScrubbing ? previewPercent : isHoveringSeek ? hoverPercent : previewPercent,
+    isScrubbing ? previewPercent : isHoveringSeek ? hoverPercent : lastPct,
     90
   ));
-  const previewDisplayTime = isScrubbing ? previewTime : isHoveringSeek ? hoverTime : previewTime;
+  const previewDisplayTime = isScrubbing ? previewTime : isHoveringSeek ? hoverTime : lastTime;
   const isVertical = videoRatio && videoRatio < 1;
 
   return (

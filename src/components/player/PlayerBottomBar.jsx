@@ -62,6 +62,8 @@ export default function PlayerBottomBar({
   hoverPercent,
   previewTime,
   hoverTime,
+  lastHoverTimeRef,
+  lastHoverPercentRef,
   videoRatio,
   poster,
   initialBufferPct,
@@ -102,6 +104,8 @@ export default function PlayerBottomBar({
         hoverPercent={hoverPercent}
         previewTime={previewTime}
         hoverTime={hoverTime}
+        lastHoverTimeRef={lastHoverTimeRef}
+        lastHoverPercentRef={lastHoverPercentRef}
         videoRatio={videoRatio}
         poster={poster}
         initialBufferPct={initialBufferPct}

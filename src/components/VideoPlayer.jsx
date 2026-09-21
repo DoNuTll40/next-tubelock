@@ -235,6 +235,8 @@ export default function VideoPlayer({
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
   const [hoverTime, setHoverTime] = useState(0);
   const [hoverPercent, setHoverPercent] = useState(0);
+  const lastHoverTimeRef = useRef(0);    // ค้าง hover time ล่าสุด — ใช้ fallback ไม่ให้ preview วิ่งไป 0:00 ตอน mouse leave
+  const lastHoverPercentRef = useRef(0); // ค้าง hover position ล่าสุด
   const scrubPreviewRef = useRef(null);
   const scrubBadgeRef = useRef(null);
   const scrubThumbSdRef = useRef(null);
@@ -859,6 +861,8 @@ export default function VideoPlayer({
 
     setHoverPercent(pct);
     setHoverTime(time);
+    lastHoverTimeRef.current = time;       // เก็บค้างไว้ใน ref เพื่อ fallback ตอน fade-out
+    lastHoverPercentRef.current = pct;
     updateStoryboardThumbnail(time);
     if (isScrubbingRef.current) {
       calculateScrubPosition(e.clientX);
@@ -1571,6 +1575,8 @@ export default function VideoPlayer({
         hoverPercent={hoverPercent}
         previewTime={previewTime}
         hoverTime={hoverTime}
+        lastHoverTimeRef={lastHoverTimeRef}
+        lastHoverPercentRef={lastHoverPercentRef}
         videoRatio={videoRatio}
         poster={poster}
         initialBufferPct={initialBufferPct}
