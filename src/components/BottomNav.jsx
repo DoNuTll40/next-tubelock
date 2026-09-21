@@ -36,7 +36,7 @@ export default function BottomNav() {
                   className="absolute -top-3.5 flex flex-col items-center group active:scale-90 transition-transform"
                   title={item.label}
                 >
-                  <div className="w-[52px] h-[52px] rounded-full bg-[#FF7A00] text-white flex items-center justify-center shadow-[0_6px_20px_rgba(255,122,0,0.45)] border-[3px] border-[#FBF9F5] dark:border-[#0F0F0F] group-hover:bg-[#E06C00] transition-colors">
+                  <div className="w-[52px] h-[52px] rounded-full bg-[#FF7A00] text-white flex items-center justify-center shadow-[0_6px_20px_rgba(255,122,0,0.45)] dark:border-0 border-[3px] border-[#FBF9F5] dark:border-[#0F0F0F] group-hover:bg-[#E06C00] transition-colors">
                     <Icon className="w-6 h-6 stroke-[2.5]" />
                   </div>
                   {item.isDev && (
@@ -53,9 +53,8 @@ export default function BottomNav() {
             <Link
               key={item.path}
               href={item.path}
-              className={`flex flex-col items-center justify-center gap-1 h-full transition-colors active:scale-95 ${
-                isActive ? 'text-[#FF7A00]' : 'text-[#8C857B] dark:text-[#888888] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
-              }`}
+              className={`flex flex-col items-center justify-center gap-1 h-full transition-colors active:scale-95 ${isActive ? 'text-[#FF7A00]' : 'text-[#8C857B] dark:text-[#888888] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
+                }`}
             >
               <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.2]' : 'stroke-[1.8]'}`} />
               <span className="text-[10px] font-medium leading-none tracking-tight">

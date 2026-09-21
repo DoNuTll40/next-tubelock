@@ -79,7 +79,7 @@ export default function Navbar() {
                 toggleSidebar();
               }
             }}
-            className="p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] active:scale-95 transition text-[#212529] dark:text-[#F1F1F1] cursor-pointer"
+            className="hidden md:block p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] active:scale-95 transition text-[#212529] dark:text-[#F1F1F1] cursor-pointer"
             title="เมนูนำทาง"
           >
             <Menu className="w-5 h-5" />

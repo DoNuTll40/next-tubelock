@@ -130,6 +130,9 @@ export default function VideoPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekTime, setSeekTime] = useState(0);
   const [volume, setVolume] = useState(defaultVolume);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -250,6 +253,7 @@ export default function VideoPlayer({
   const isUserPausedRef = useRef(!defaultAutoplay);
   const wakeLockSentinelRef = useRef(null);
   const isSeekingRef = useRef(false);
+  const seekTimeRef = useRef(0);
   const seekCooldownTimerRef = useRef(null);
 
   const [hlsError, setHlsError] = useState(null);
@@ -325,9 +329,15 @@ export default function VideoPlayer({
     const cur = e.target.currentTime;
     const dur = e.target.duration || duration;
 
+    // ถ้า isSeeking หรือ isScrubbing เป็นจริง ห้ามอัปเดต currentTime จากตัว <video> เด็ดขาด (กันค่า 0 ชั่วคราวมาทับ UI)
+    if (isSeeking || isSeekingRef.current || isScrubbing || isScrubbingRef.current) {
+      return;
+    }
+
+    setCurrentTime(cur);
+
     // Direct DOM manipulation - doesn't re-render the 1400 lines of React components!
-    // Block updates while user is actively scrubbing OR while seeking is in progress to prevent flicker
-    if (dur > 0 && !isScrubbing && !isScrubbingRef.current && !isSeekingRef.current) {
+    if (dur > 0) {
       const pct = (cur / dur) * 100;
       if (progressBarRef.current) {
         progressBarRef.current.style.width = `${pct}%`;
@@ -632,41 +642,7 @@ export default function VideoPlayer({
     showToast(nextMuted ? 'ปิดเสียง' : `ระดับเสียง: ${Math.round((nextMuted ? 0 : volume) * 100)}%`);
   };
 
-  // Fast Seek Commit (Direct currentTime assignment with instant DOM sync)
-  const commitSeek = useCallback((targetTime) => {
-    if (!video.current) return;
-    const dur = video.current.duration || duration;
-    const clamped = Math.min(Math.max(targetTime, 0), dur > 0 ? dur : targetTime);
-
-    // Lock seeking so stale timeupdate events from native video cannot snap progress back to 0
-    isSeekingRef.current = true;
-    if (seekCooldownTimerRef.current) {
-      clearTimeout(seekCooldownTimerRef.current);
-    }
-    seekCooldownTimerRef.current = setTimeout(() => {
-      isSeekingRef.current = false;
-      seekCooldownTimerRef.current = null;
-    }, 600);
-
-    // Always assign currentTime directly for 100% reliable seeking across all browsers
-    try {
-      video.current.currentTime = clamped;
-    } catch (_) { }
-
-    // Immediate DOM updates so timeline and counter update instantly even when video is paused
-    if (dur > 0) {
-      const pct = (clamped / dur) * 100;
-      if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
-      if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
-      if (timeDisplayRef.current) {
-        timeDisplayRef.current.textContent = `${formatTime(clamped)} / ${formatTime(dur)}`;
-      }
-    }
-    setPreviewTime(clamped);
-    setPreviewPercent(dur > 0 ? (clamped / dur) * 100 : 0);
-    pendingTargetTimeRef.current = null;
-  }, [duration, video]);
-
+  // 1. วาง updateStoryboardThumbnail ไว้ก่อน (ข้างบน)
   // Two-Tier YouTube-Style Sprite Sheet Thumbnail Lookup (Direct DOM)
   const updateStoryboardThumbnail = useCallback((targetSec) => {
     const elSd = scrubThumbSdRef.current;
@@ -716,14 +692,12 @@ export default function VideoPlayer({
       const sheetKeySD = `sprite_sd_${sheetPadded}.jpg`;
       const sheetKeyHD = `sprite_hd_${sheetPadded}.jpg`;
 
-      // Lookup authenticated OneDrive downloadUrl from spriteMap
       resolvedUrl = spriteMap[sheetKeySD] || spriteMap[sheetKeyStd] || spriteMap[sheetKeyHD]
         || spriteMap[sheetPadded] || spriteMap[String(sheetIndex)]
         || `/streams/${videoId}/thumbnails/sprite_${sheetPadded}.jpg`;
     }
 
     if (resolvedUrl) {
-      // CSS Percentage positioning: aligns exact column and row within dynamic aspect-ratio container
       const posX = cols > 1 ? (col / (cols - 1)) * 100 : 0;
       const posY = rows > 1 ? (row / (rows - 1)) * 100 : 0;
 
@@ -767,15 +741,57 @@ export default function VideoPlayer({
     }
   }, [storyboard, videoId]);
 
+  // 2. แล้วค่อยตามด้วย commitSeek (อยู่ข้างล่าง)
+  // Fast Seek Commit (Direct currentTime assignment with instant DOM sync)
+  const commitSeek = useCallback((targetTime) => {
+    if (!video.current) return;
+    const dur = video.current.duration || duration;
+    if (dur <= 0 || targetTime === null || targetTime === undefined || isNaN(targetTime)) return;
+    const clamped = Math.min(Math.max(Number(targetTime), 0), dur);
+
+    // Optimistic UI: ล็อคค่าเวลาที่ผู้ใช้กดไว้ทันที
+    isSeekingRef.current = true;
+    setIsSeeking(true);
+    seekTimeRef.current = clamped;
+    setSeekTime(clamped);
+    setCurrentTime(clamped);
+
+    if (seekCooldownTimerRef.current) {
+      clearTimeout(seekCooldownTimerRef.current);
+    }
+    seekCooldownTimerRef.current = setTimeout(() => {
+      isSeekingRef.current = false;
+      setIsSeeking(false);
+      seekCooldownTimerRef.current = null;
+    }, 1500);
+
+    try {
+      video.current.currentTime = clamped;
+    } catch (_) { }
+
+    const pct = (clamped / dur) * 100;
+    if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
+    if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
+    if (timeDisplayRef.current) {
+      timeDisplayRef.current.textContent = `${formatTime(clamped)} / ${formatTime(dur)}`;
+    }
+    setPreviewTime(clamped);
+    setPreviewPercent(pct);
+    updateStoryboardThumbnail(clamped); // เรียกใช้ได้แล้ว เพราะประกาศไว้ด้านบนแล้ว
+    pendingTargetTimeRef.current = null;
+  }, [duration, video, updateStoryboardThumbnail]);
+
+  // Scrubbing calculation
   // Scrubbing calculation
   const calculateScrubPosition = (clientX) => {
     if (typeof clientX !== 'number' || isNaN(clientX)) return;
-    if (!seekTrackRef.current || duration <= 0) return;
+    const realDur = video.current?.duration || duration;
+    if (!seekTrackRef.current || realDur <= 0) return;
     const rect = seekTrackRef.current.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
     const offsetX = Math.max(0, Math.min(clientX - rect.left, rect.width));
     const percent = (offsetX / rect.width) * 100;
-    const calculatedSec = (offsetX / rect.width) * duration;
+    const calculatedSec = (offsetX / rect.width) * realDur;
     const clampedPercent = Math.max(10, Math.min(percent, 90));
 
     latestScrubTimeRef.current = calculatedSec;
@@ -789,7 +805,7 @@ export default function VideoPlayer({
     }
     if (progressBarRef.current) progressBarRef.current.style.width = `${percent}%`;
     if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${percent}%`;
-    if (timeDisplayRef.current) timeDisplayRef.current.textContent = `${formatTime(calculatedSec)} / ${formatTime(duration)}`;
+    if (timeDisplayRef.current) timeDisplayRef.current.textContent = `${formatTime(calculatedSec)} / ${formatTime(realDur)}`;
 
     setPreviewPercent(percent);
     setPreviewTime(calculatedSec);
@@ -797,13 +813,14 @@ export default function VideoPlayer({
   };
 
   const handleSeekMouseMove = (e) => {
-    if (!seekTrackRef.current || duration <= 0) return;
-    if (!isScrubbing && !isScrubbingRef.current && !isHoveringSeek) return;
+    const realDur = video.current?.duration || duration;
+    if (!seekTrackRef.current || realDur <= 0) return;
+    if (!isScrubbingRef.current && !isHoveringSeek) return;
     const rect = seekTrackRef.current.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
     const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
     const pct = (offsetX / rect.width) * 100;
-    const time = (offsetX / rect.width) * duration;
+    const time = (offsetX / rect.width) * realDur;
     const clampedPct = Math.max(10, Math.min(pct, 90));
 
     // Zero-lag direct DOM update on hover as well!
@@ -817,46 +834,66 @@ export default function VideoPlayer({
     setHoverPercent(pct);
     setHoverTime(time);
     updateStoryboardThumbnail(time);
-    if (isScrubbing || isScrubbingRef.current) {
+    if (isScrubbingRef.current) {
       calculateScrubPosition(e.clientX);
     }
   };
 
   const handlePointerDown = (e) => {
     if (e.button !== undefined && e.button !== 0) return;
+    e.stopPropagation();
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch (_) { }
+
+    if (hdDwellTimerRef.current) {
+      clearTimeout(hdDwellTimerRef.current);
+      hdDwellTimerRef.current = null;
+    }
+    if (scrubThumbHdRef.current) {
+      scrubThumbHdRef.current.style.opacity = '0';
+    }
+
     isScrubbingRef.current = true;
     setIsScrubbing(true);
     calculateScrubPosition(e.clientX);
   };
 
   const handlePointerUp = (e) => {
+    e.stopPropagation?.();
     try {
       if (e?.currentTarget?.hasPointerCapture?.(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
       }
     } catch (_) { }
-    if (isScrubbing || isScrubbingRef.current) {
-      let targetSec = latestScrubTimeRef.current;
-      if (targetSec === null && typeof e?.clientX === 'number' && !isNaN(e.clientX) && seekTrackRef.current && duration > 0) {
-        const rect = seekTrackRef.current.getBoundingClientRect();
-        if (rect && rect.width > 0) {
-          const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-          targetSec = (offsetX / rect.width) * duration;
-        }
+    if (!isScrubbingRef.current) return;
+    isScrubbingRef.current = false;
+    setIsScrubbing(false);
+    // setIsHoveringSeek(false);
+
+    // const isTouch = e.pointerType === 'touch' || isMobileView;
+    // if (isTouch) {
+    //   setIsHoveringSeek(false);
+    //   if (scrubPreviewRef.current) {
+    //     scrubPreviewRef.current.style.opacity = '0';
+    //   }
+    // }
+
+    let targetSec = latestScrubTimeRef.current;
+    if (targetSec === null && typeof e?.clientX === 'number' && !isNaN(e.clientX) && seekTrackRef.current) {
+      const realDur = video.current?.duration || duration;
+      const rect = seekTrackRef.current.getBoundingClientRect();
+      if (rect && rect.width > 0 && realDur > 0) {
+        const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+        targetSec = (offsetX / rect.width) * realDur;
       }
-      if (targetSec === null) {
-        targetSec = previewTime;
-      }
-      commitSeek(targetSec);
-      latestScrubTimeRef.current = null;
-      isScrubbingRef.current = false;
-      setIsScrubbing(false);
-      setIsHoveringSeek(false);
-      resetControlsTimer();
     }
+    latestScrubTimeRef.current = null;
+
+    if (targetSec !== null && targetSec !== undefined && !isNaN(targetSec)) {
+      commitSeek(targetSec);
+    }
+    resetControlsTimer();
   };
 
   // YouTube Standard Click / Double-Click Interaction:
@@ -1226,8 +1263,9 @@ export default function VideoPlayer({
   const isHD = is4K || (resolution && (resolution.toString().includes('1080') || resolution.toString().includes('720') || resolution.toString().includes('1440'))) ||
     (activeLevelLabel && (activeLevelLabel.includes('1080') || activeLevelLabel.includes('720') || activeLevelLabel.includes('1440')));
 
-  // Persistent progress and time values (Prevents flicker/reset to 0% and 00:00 on state re-render!)
-  const currentVideoTime = 0;
+  // Persistent progress and time values with Optimistic UI:
+  // ให้แถบ Seekbar และตัวเลขเวลาใน UI ใช้ค่าเวลาตามเงื่อนไข: isSeeking ? seekTime : currentTime
+  const currentVideoTime = isSeeking ? seekTime : currentTime;
   const currentProgressPct = duration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / duration) * 100)) : 0;
   const activeScrubPercent = isScrubbing ? previewPercent : currentProgressPct;
   const activeTimeDisplay = isScrubbing
@@ -1246,8 +1284,6 @@ export default function VideoPlayer({
         if (e?.nativeEvent?.pointerType === 'touch') return;
         resetControlsTimer();
       }}
-      onPointerMove={handleSeekMouseMove}
-      onPointerUp={handlePointerUp}
       className={`relative bg-transparent select-none overflow-hidden group/player ${isFullscreen
         ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
         : (videoRatio && videoRatio < 0.98)
@@ -1311,8 +1347,15 @@ export default function VideoPlayer({
             clearTimeout(seekCooldownTimerRef.current);
             seekCooldownTimerRef.current = null;
           }
+
+          const v = video.current;
+          if (v) {
+            setCurrentTime(v.currentTime);
+          }
+
           setTimeout(() => {
             isSeekingRef.current = false;
+            setIsSeeking(false);
           }, 60);
         }}
         onLoadedData={() => {
@@ -1349,7 +1392,7 @@ export default function VideoPlayer({
       {/* Unified 3-Zone Click / Double-Click Overlay (Left -10s, Center Play/Pause/Fullscreen, Right +10s) */}
       <div
         onClick={handlePlayerOverlayClick}
-        className="absolute inset-0 z-10 cursor-pointer touch-manipulation"
+        className="absolute inset-0 z-10 touch-manipulation"
       />
 
       {/* Top Bar: Fullscreen / Mobile */}

@@ -79,7 +79,7 @@ export default function PlayerBottomBar({
 
   return (
     <div
-      className={`absolute bottom-0 left-0 right-0 px-2.5 sm:px-6 pb-2 sm:pb-3 pt-6 sm:pt-8 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex flex-col gap-0 sm:gap-0.5 sm:gap-0 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
+      className={`absolute bottom-0 left-0 right-0 px-2.5 sm:px-6 pb-2 sm:pb-3 pt-0 sm:pt-8 bg-gradient-to-t from-black/80 via-black/30 to-transparent flex flex-col gap-0 sm:gap-0.5 sm:gap-0 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
         ? 'opacity-100 pointer-events-auto translate-y-0'
         : 'opacity-0 pointer-events-none translate-y-1'
         }`}
@@ -356,8 +356,7 @@ export default function PlayerBottomBar({
               {activeTimeDisplay}
             </span>
 
-            {/* Like */}
-            <button
+            {/* <button
               type="button"
               onClick={() => {
                 const next = !isLiked;
@@ -372,7 +371,6 @@ export default function PlayerBottomBar({
               <ThumbsUp className="w-5 h-5" />
             </button>
 
-            {/* Dislike */}
             <button
               type="button"
               onClick={() => {
@@ -387,7 +385,6 @@ export default function PlayerBottomBar({
               <ThumbsDown className="w-5 h-5" />
             </button>
 
-            {/* Comments */}
             <button
               type="button"
               onClick={() => showToast?.('ส่วนความคิดเห็น')}
@@ -396,7 +393,6 @@ export default function PlayerBottomBar({
               <MessageSquare className="w-5 h-5" />
             </button>
 
-            {/* Save */}
             <button
               type="button"
               onClick={() => {
@@ -410,7 +406,6 @@ export default function PlayerBottomBar({
               <Plus className="w-5 h-5" />
             </button>
 
-            {/* Share */}
             <button
               type="button"
               onClick={() => {
@@ -424,7 +419,6 @@ export default function PlayerBottomBar({
               <Share2 className="w-5 h-5" />
             </button>
 
-            {/* More */}
             <button
               type="button"
               onClick={(e) => {
@@ -434,7 +428,8 @@ export default function PlayerBottomBar({
               className="p-2 rounded-full hover:bg-white/15 active:scale-90 transition cursor-pointer text-zinc-200 hover:text-white"
             >
               <MoreHorizontal className="w-5 h-5" />
-            </button>
+            </button> */}
+
           </div>
 
           {/* Right: Rotate + Exit Fullscreen */}
@@ -443,7 +438,7 @@ export default function PlayerBottomBar({
               <button
                 type="button"
                 onClick={toggleOrientation}
-                className="p-2 rounded-xl bg-black/40 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+                className="p-2 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
               >
                 <RotateCw className="w-5 h-5" />
               </button>
@@ -452,7 +447,7 @@ export default function PlayerBottomBar({
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="p-2 rounded-xl bg-black/40 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+              className="p-2 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
             >
               <Minimize className="w-5.5 h-5.5" />
             </button>
@@ -465,7 +460,7 @@ export default function PlayerBottomBar({
         <div className="flex items-center justify-between text-white text-xs pt-1">
           <span
             ref={timeDisplayRef}
-            className="px-2.5 py-1 rounded-full bg-black/50 border border-white/15 backdrop-blur-md text-[11.5px] sm:text-xs font-mono font-semibold text-white/95 shadow-sm select-none"
+            className="px-2.5 py-1 rounded-full bg-black/25 border border-white/15 backdrop-blur-md text-[11.5px] sm:text-xs font-mono font-semibold text-white/95 shadow-sm select-none"
           >
             {activeTimeDisplay}
           </span>
@@ -475,20 +470,20 @@ export default function PlayerBottomBar({
               <button
                 type="button"
                 onClick={toggleOrientation}
-                className="p-1.5 rounded-xl bg-black/50 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+                className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
                 title="หมุนหน้าจอ"
               >
-                <RotateCw className="w-4 h-4" />
+                <RotateCw size={20} />
               </button>
             )}
 
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="p-1.5 rounded-xl bg-black/50 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+              className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
               title="เต็มจอ"
             >
-              <Maximize className="w-4.5 h-4.5" />
+              <Maximize size={20} />
             </button>
           </div>
         </div>

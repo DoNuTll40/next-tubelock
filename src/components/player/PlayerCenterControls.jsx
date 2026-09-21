@@ -34,7 +34,7 @@ export default function PlayerCenterControls({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.95 }}
             transition={{ duration: 0.15 }}
-            className="absolute top-10 left-1/2 -translate-x-1/2 z-40 bg-black/50 backdrop-blur-md text-white px-4 py-1.5 rounded-full border border-white/15 text-xs font-semibold shadow-2xl flex items-center gap-2 pointer-events-none"
+            className="absolute top-10 left-1/2 -translate-x-1/2 z-40 bg-black/25 backdrop-blur-md text-white px-4 py-1.5 rounded-full border border-white/15 text-xs font-semibold shadow-2xl flex items-center gap-2 pointer-events-none"
           >
             <span>{toastMessage}</span>
           </motion.div>
@@ -173,8 +173,7 @@ export default function PlayerCenterControls({
                 >
                   {/* Skip -10s */}
                   <motion.button
-                    whileTap={{ scale: 0.88 }}
-                    whileHover={{ scale: 1.06 }}
+
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -183,7 +182,7 @@ export default function PlayerCenterControls({
                       showToast?.(`-${seekStep} วินาที`);
                       resetControlsTimer?.();
                     }}
-                    className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/50 hover:bg-black/70 active:bg-black/80 border border-white/15 text-white flex flex-col items-center justify-center transition shadow-2xl backdrop-blur-md cursor-pointer group"
+                    className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/25 hover:bg-black/30 active:bg-black/80 border border-white/15 text-white flex flex-col items-center justify-center transition shadow-2xl backdrop-blur-md cursor-pointer group"
                   >
                     <RotateCcw className="w-5.5 h-5.5 group-hover:-rotate-12 transition-transform duration-150" />
                     <span className="text-[9px] font-mono font-black leading-none mt-0.5 text-zinc-300">10s</span>
@@ -198,7 +197,7 @@ export default function PlayerCenterControls({
                       e.stopPropagation();
                       togglePlay();
                     }}
-                    className="w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-black/50 hover:bg-[#FF7A00] border border-white/20 text-white flex items-center justify-center transition shadow-[0_8px_32px_rgba(0,0,0,0.7)] backdrop-blur-md cursor-pointer"
+                    className="w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-black/25 hover:bg-[#FF7A00] border border-white/20 text-white flex items-center justify-center transition shadow-[0_8px_32px_rgba(0,0,0,0.7)] backdrop-blur-md cursor-pointer"
                   >
                     {isPlaying ? (
                       <Pause className="w-7 h-7 sm:w-8 sm:h-8 fill-white" />
@@ -209,8 +208,7 @@ export default function PlayerCenterControls({
 
                   {/* Skip +10s */}
                   <motion.button
-                    whileTap={{ scale: 0.88 }}
-                    whileHover={{ scale: 1.06 }}
+
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -219,7 +217,7 @@ export default function PlayerCenterControls({
                       showToast?.(`+${seekStep} วินาที`);
                       resetControlsTimer?.();
                     }}
-                    className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/50 hover:bg-black/70 active:bg-black/80 border border-white/15 text-white flex flex-col items-center justify-center transition shadow-2xl backdrop-blur-md cursor-pointer group"
+                    className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/25 hover:bg-black/30 active:bg-black/80 border border-white/15 text-white flex flex-col items-center justify-center transition shadow-2xl backdrop-blur-md cursor-pointer group"
                   >
                     <RotateCw className="w-5.5 h-5.5 group-hover:rotate-12 transition-transform duration-150" />
                     <span className="text-[9px] font-mono font-black leading-none mt-0.5 text-zinc-300">10s</span>
@@ -229,14 +227,12 @@ export default function PlayerCenterControls({
                 /* Desktop View: Clean center while playing; Play button when paused */
                 !isPlaying && (
                   <motion.button
-                    whileTap={{ scale: 0.92 }}
-                    whileHover={{ scale: 1.08 }}
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       togglePlay();
                     }}
-                    className="pointer-events-auto w-16 h-16 rounded-full bg-black/50 hover:bg-[#FF7A00] border border-white/20 text-white flex items-center justify-center transition-all duration-200 shadow-2xl backdrop-blur-md cursor-pointer group"
+                    className="pointer-events-auto w-16 h-16 rounded-full bg-black/25 hover:bg-[#FF7A00] border border-white/20 text-white flex items-center justify-center transition-all duration-200 shadow-2xl backdrop-blur-md cursor-pointer group"
                   >
                     <Play className="w-7 h-7 fill-white ml-0.5 group-hover:scale-105 transition-transform" />
                   </motion.button>

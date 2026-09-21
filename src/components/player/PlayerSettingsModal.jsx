@@ -101,7 +101,7 @@ export default function PlayerSettingsModal({
                   setShowSettingsMenu?.(false);
                 }
               }}
-              className="relative z-10 w-full max-w-lg mx-auto bg-black/60 backdrop-blur-xl text-[#F1F1F1] rounded-t-2xl pb-7 pt-2 shadow-2xl border-t border-white/15 select-none overflow-hidden will-change-transform"
+              className="relative z-10 w-full max-w-lg mx-auto bg-black/25 backdrop-blur-xl text-[#F1F1F1] rounded-t-2xl pb-7 pt-2 shadow-2xl border-t border-white/15 select-none overflow-hidden will-change-transform"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Drag Pill Handle */}
@@ -124,10 +124,10 @@ export default function PlayerSettingsModal({
                     {activeMenuTab === 'quality'
                       ? 'คุณภาพของวิดีโอ'
                       : activeMenuTab === 'speed'
-                      ? 'ความเร็วในการเล่น'
-                      : activeMenuTab === 'aspect'
-                      ? 'สัดส่วนภาพ'
-                      : 'การตั้งค่า'}
+                        ? 'ความเร็วในการเล่น'
+                        : activeMenuTab === 'aspect'
+                          ? 'สัดส่วนภาพ'
+                          : 'การตั้งค่า'}
                   </span>
                 </div>
 
@@ -359,11 +359,10 @@ export default function PlayerSettingsModal({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: settingsPlacement === 'top' ? -6 : 6 }}
           transition={{ duration: 0.14, ease: 'easeOut' }}
-          className={`absolute ${
-            settingsPlacement === 'top'
+          className={`absolute ${settingsPlacement === 'top'
               ? 'top-14 right-3 sm:right-6'
               : 'bottom-18 right-3 sm:right-6'
-          } bg-black/50 border border-white/15 rounded-2xl py-1.5 w-70 text-zinc-200 z-40 shadow-[0_16px_40px_rgba(0,0,0,0.6)] backdrop-blur-md overflow-hidden select-none will-change-transform`}
+            } bg-black/50 border border-white/15 rounded-2xl py-1.5 w-70 text-zinc-200 z-40 shadow-[0_16px_40px_rgba(0,0,0,0.6)] backdrop-blur-md overflow-hidden select-none will-change-transform`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Tab: Main Menu */}

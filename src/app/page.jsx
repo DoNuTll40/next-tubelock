@@ -160,7 +160,7 @@ export default function FeedPage() {
       </AnimatePresence>
 
       {/* Main Grid View */}
-      <div className="px-4 sm:px-6 pt-4 flex-1">
+      <div className="px-1 sm:px-6 pt-2 flex-1">
         {loading ? (
           /* SKELETON LOADING GRID */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-x-4 gap-y-6 animate-pulse select-none">

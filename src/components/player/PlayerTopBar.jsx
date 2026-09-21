@@ -60,7 +60,7 @@ export default function PlayerTopBar({
             e.stopPropagation();
             onBack();
           }}
-          className="p-2 -ml-1 rounded-full bg-black/50 hover:bg-black/70 text-white backdrop-blur-md transition active:scale-90 cursor-pointer border border-white/15 shadow-sm"
+          className="p-2 -ml-1 rounded-full bg-black/25 hover:bg-black/70 text-white backdrop-blur-md transition active:scale-90 cursor-pointer border border-white/15 shadow-sm"
           title="ย้อนกลับ"
         >
           <ArrowLeft className="w-5 h-5" />
@@ -79,7 +79,7 @@ export default function PlayerTopBar({
               showToast?.('เล่นวิดีโอถัดไปอัตโนมัติ (Coming soon)');
               resetControlsTimer?.();
             }}
-            className="relative inline-flex h-6 w-10.5 items-center rounded-full transition-colors cursor-pointer bg-black/50 hover:bg-black/70 border border-white/15 backdrop-blur-md mr-0.5"
+            className="relative inline-flex h-6 w-10.5 items-center rounded-full transition-colors cursor-pointer bg-black/25 hover:bg-black/70 border border-white/15 backdrop-blur-md mr-0.5"
           >
             <span className="inline-flex items-center justify-center h-4 w-4 transform rounded-full transition-transform translate-x-1 bg-white/90 shadow-xs">
               <Play className="w-2 h-2 fill-current text-zinc-900 ml-0.5" />
@@ -93,7 +93,7 @@ export default function PlayerTopBar({
               showToast?.('เชื่อมต่ออุปกรณ์ Cast / TV');
               resetControlsTimer?.();
             }}
-            className="p-2 rounded-xl bg-black/50 hover:bg-white/15 border border-white/15 backdrop-blur-md text-zinc-300 hover:text-white active:scale-90 transition cursor-pointer shadow-xs"
+            className="p-2 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-zinc-300 hover:text-white active:scale-90 transition cursor-pointer shadow-xs"
           >
             <Cast className="w-4.5 h-4.5" />
           </button>
@@ -106,9 +106,8 @@ export default function PlayerTopBar({
               showToast?.(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
               resetControlsTimer?.();
             }}
-            className={`p-2 rounded-xl border backdrop-blur-md active:scale-90 transition cursor-pointer shadow-xs ${
-              isCcActive ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50' : 'bg-black/50 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'
-            }`}
+            className={`p-2 rounded-xl border backdrop-blur-md active:scale-90 transition cursor-pointer shadow-xs ${isCcActive ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50' : 'bg-black/25 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'
+              }`}
           >
             <Subtitles className="w-4.5 h-4.5" />
           </button>
@@ -123,7 +122,7 @@ export default function PlayerTopBar({
               setActiveMenuTab?.('main');
               resetControlsTimer?.();
             }}
-            className="p-2 rounded-xl bg-black/50 hover:bg-white/15 border border-white/15 backdrop-blur-md active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white relative shadow-xs"
+            className="p-2 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md active:scale-90 transition cursor-pointer text-zinc-300 hover:text-white relative shadow-xs"
           >
             <Settings className="w-4.5 h-4.5" />
             {gearBadge && (
