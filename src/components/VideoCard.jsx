@@ -13,8 +13,11 @@ import {
   Bookmark,
   Share2
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
+
+// Module-level Set: track which video IDs are already pre-warmed this session
+const preWarmedIds = new Set();
 
 export default function VideoCard({
   video,
@@ -28,6 +31,29 @@ export default function VideoCard({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const hoverTimerRef = useRef(null);
+
+  // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ เมื่อ user hover card
+  // ทำให้ server cache warm → พอกด play จะโหลดแค่ ~30ms แทน ~11s
+  const handlePreWarm = () => {
+    if (!video?.id || preWarmedIds.has(video.id)) return;
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => {
+      preWarmedIds.add(video.id);
+      fetch(`/api/videos/${video.id}/source`, {
+        method: 'GET',
+        priority: 'low',
+        cache: 'no-store',
+      }).catch(() => {
+        // Silent fail — pre-warm เป็นแค่ optimization ไม่ใช่ critical path
+        preWarmedIds.delete(video.id);
+      });
+    }, 120); // debounce 120ms กันยิง hover แวบเดียว
+  };
+
+  const handlePreWarmCancel = () => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+  };
 
   const handleDelete = async () => {
     try {
@@ -66,7 +92,12 @@ export default function VideoCard({
   // ==========================================
   if (half) {
     return (
-      <div className="flex gap-3 group relative select-none items-stretch p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer">
+      <div
+        className="flex gap-3 group relative select-none items-stretch p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer"
+        onMouseEnter={handlePreWarm}
+        onMouseLeave={handlePreWarmCancel}
+        onFocus={handlePreWarm}
+      >
         {/* Thumbnail ฝั่งซ้าย */}
         <Link
           href={`/watch/${video.id}`}
@@ -145,7 +176,12 @@ export default function VideoCard({
   // ==========================================
   if (compact) {
     return (
-      <div className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer">
+      <div
+        className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer"
+        onMouseEnter={handlePreWarm}
+        onMouseLeave={handlePreWarmCancel}
+        onFocus={handlePreWarm}
+      >
         <Link
           href={`/watch/${video.id}`}
           replace={replace}
@@ -215,7 +251,12 @@ export default function VideoCard({
   // 3. โหมดปกติ (Card Grid)
   // ==========================================
   return (
-    <div className="flex flex-col group relative select-none">
+    <div
+      className="flex flex-col group relative select-none"
+      onMouseEnter={handlePreWarm}
+      onMouseLeave={handlePreWarmCancel}
+      onFocus={handlePreWarm}
+    >
       <Link href={`/watch/${video.id}`} replace={replace} className="flex flex-col">
         <div className="relative aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs">
           {video.thumbnail_url && !imgError ? (

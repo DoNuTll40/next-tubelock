@@ -434,12 +434,22 @@ export default function VideoPlayer({
         if (!isMounted) return;
 
         if (Hls.isSupported()) {
+          // ✨ Quality Persistence: อ่าน height ที่ผู้ใช้เคยเลือกไว้ → match กับ level index
+          let savedStartLevel = -1; // default: Auto
+          try {
+            const savedHeight = localStorage.getItem('tubelock_quality_height');
+            if (savedHeight) {
+              // จะถูก resolve หลัง MANIFEST_PARSED เมื่อรู้จำนวน levels แล้ว
+              savedStartLevel = parseInt(savedHeight, 10) || -1;
+            }
+          } catch (_) {}
+
           const hls = new Hls({
-            startLevel: -1, // Auto level selection
-            maxBufferLength: 30, // Optimized buffer to eliminate GC pauses and dropframes
+            startLevel: -1, // Always start at -1, then override via MANIFEST_PARSED
+            maxBufferLength: 30,
             maxMaxBufferLength: 60,
-            maxBufferSize: 60 * 1000 * 1000, // 60MB limit (prevents memory bloat on mobile)
-            backBufferLength: 15,
+            maxBufferSize: 120 * 1000 * 1000, // 120MB (เพิ่มจาก 60MB สำหรับ 4K)
+            backBufferLength: 5,              // ลดจาก 15s → เซฟ RAM
             enableWorker: true,
             lowLatencyMode: false,
             fragLoadingTimeOut: 20000,
@@ -449,7 +459,7 @@ export default function VideoPlayer({
             levelLoadingTimeOut: 15000,
             levelLoadingMaxRetry: 3,
             testBandwidth: true,
-            abrEwmaDefaultEstimate: 8000000,
+            abrEwmaDefaultEstimate: 20000000, // 20 Mbps default estimate (เหมาะกับ 4K)
             fpsDroppedMonitoring: true,
             fpsDroppedMonitoringPeriod: 4000,
             fpsDroppedMonitoringThreshold: 0.2,
@@ -479,7 +489,17 @@ export default function VideoPlayer({
               setLevels(parsed);
               setCurrentLevelIndex(hls.currentLevel);
 
-              // Auto-detect aspect ratio from highest or initial HLS level
+              // ✨ Quality Persistence: จับคู่ saved height กับ level index จริง
+              if (savedStartLevel > 0) {
+                const matchIdx = parsed.findIndex((l) => l.height === savedStartLevel);
+                if (matchIdx !== -1) {
+                  hls.nextLevel = matchIdx;
+                  setCurrentLevelIndex(matchIdx);
+                  setActiveLevelLabel(parsed[matchIdx].label);
+                }
+              }
+
+              // Auto-detect aspect ratio from highest HLS level
               const bestLevel = data.levels[0];
               if (bestLevel?.width && bestLevel?.height) {
                 updateRatio(bestLevel.width / bestLevel.height);
@@ -583,18 +603,21 @@ export default function VideoPlayer({
     };
   }, [src, defaultAutoplay, resolution, video, showToast]);
 
-  // Quality selector (100% Smooth switch: updates nextLevel only, so existing buffer plays continuously without reloading stream, pausing, or showing spinner)
+  // Quality selector (100% Smooth switch: nextLevel only, no stream reload)
   const handleSelectQuality = (levelIdx) => {
     setCurrentLevelIndex(levelIdx);
     if (hlsInstanceRef.current) {
       hlsInstanceRef.current.nextLevel = levelIdx;
       if (levelIdx === -1) {
         showToast('ความละเอียด : Auto (ปรับตามเน็ต)');
+        try { localStorage.removeItem('tubelock_quality_height'); } catch (_) {}
       } else {
         const selected = levels.find((l) => l.index === levelIdx);
         if (selected) {
           setActiveLevelLabel(selected.label);
           showToast(`ความละเอียด : ${selected.label}`);
+          // ✨ Persist: เก็บ height ไว้ใน localStorage → คลิปต่อไปจะเริ่มที่ quality นี้เลย
+          try { localStorage.setItem('tubelock_quality_height', String(selected.height)); } catch (_) {}
         }
       }
     }
