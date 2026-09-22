@@ -33,8 +33,8 @@ export default function PlayerScrubber({
   // - scrubbing  → ใช้ค่า scrub จริง
   // - hovering   → ใช้ค่า hover จริง
   // - fade-out   → ใช้ lastHoverRef (ค้างไว้ไม่ให้วิ่งไป 0:00)
-  const lastPct  = lastHoverPercentRef?.current ?? previewPercent;
-  const lastTime = lastHoverTimeRef?.current    ?? previewTime;
+  const lastPct = lastHoverPercentRef?.current ?? previewPercent;
+  const lastTime = lastHoverTimeRef?.current ?? previewTime;
   const previewLeft = Math.max(10, Math.min(
     isScrubbing ? previewPercent : isHoveringSeek ? hoverPercent : lastPct,
     90
@@ -59,22 +59,21 @@ export default function PlayerScrubber({
       {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
       <div
         ref={scrubPreviewRef}
-        className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${
-          isScrubbing || isHoveringSeek
-            ? 'opacity-100 scale-100 translate-y-0'
-            : 'opacity-0 scale-90 translate-y-2'
-        }`}
+        className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${isScrubbing || isHoveringSeek
+          ? 'opacity-100 scale-100 translate-y-10 sm:translate-y-2'
+          : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5'
+          }`}
         style={{ left: `${previewLeft}%` }}
       >
         {/* Preview Frame Thumbnail Card */}
         <div
-          className={`${
-            isVertical ? 'h-36 sm:h-44 w-auto max-w-[120px]' : 'w-28 sm:w-44 md:w-52 h-auto'
-          } rounded-xl overflow-hidden border-2 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-1 ring-black/80 shrink-0`}
+          className={`${isVertical ? 'h-48 sm:h-56 w-auto max-w-[120px]' : 'w-48 sm:w-64 md:w-84 h-auto'
+            } rounded-lg overflow-hidden border-0 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-2 ring-white/70 shrink-0`}
           style={{ aspectRatio: videoRatio || 16 / 9 }}
         >
           {poster && (
             <img
+              ref={scrubThumbSdRef}
               src={poster}
               alt="Thumbnail Preview"
               className="absolute inset-0 w-full h-full object-cover opacity-75"
@@ -91,7 +90,7 @@ export default function PlayerScrubber({
         {/* Time Badge */}
         <div
           ref={scrubBadgeRef}
-          className="bg-black/60 text-white border border-white/20 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold shadow-xl whitespace-nowrap backdrop-blur-md"
+          className="bg-black/25 shadow-lg backdrop-blur-sm text-white border-1 border-white/25 px-2.5 py-0.5 rounded-full text-[14px] font-mono font-bold whitespace-nowrap "
         >
           {formatTime(previewDisplayTime)}
         </div>
@@ -112,9 +111,8 @@ export default function PlayerScrubber({
       {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
       <div
         ref={scrubberKnobRef}
-        className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
-          isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
-        }`}
+        className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
+          }`}
         style={{ left: `${activeScrubPercent}%` }}
       />
     </div>
