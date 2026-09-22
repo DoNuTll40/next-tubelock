@@ -97,7 +97,7 @@ function uploadChunkNativeXHR(uploadUrl, chunkBlob, rangeHeader, onChunkProgress
   });
 }
 
-export async function uploadFileToFolderId(accessToken, folderId, fileObject, customFileName = null, onProgress = () => {}) {
+export async function uploadFileToFolderId(accessToken, folderId, fileObject, customFileName = null, onProgress = () => { }) {
   const fileName = customFileName || fileObject.name;
 
   onProgress(2, 'กำลังขอเปิด Upload Session กับ Microsoft...');
@@ -185,7 +185,7 @@ export async function uploadFileToFolderId(accessToken, folderId, fileObject, cu
   return lastResult;
 }
 
-export async function uploadDirectToFolderPath(accessToken, parentFolder, fileObject, customFileName = null, onProgress = () => {}) {
+export async function uploadDirectToFolderPath(accessToken, parentFolder, fileObject, customFileName = null, onProgress = () => { }) {
   const cleanParent = parentFolder.replace(/^\/+|\/+$/g, '');
 
   onProgress(1, `กำลังตรวจสอบโฟลเดอร์ "${cleanParent}" บน OneDrive...`);
@@ -219,7 +219,7 @@ export async function uploadDirectToFolderPath(accessToken, parentFolder, fileOb
 
 export async function resolvePlaybackSource(accessToken, video) {
   const folderId = video.onedrive_folder_id || (video.source_type === 'hls' ? video.onedrive_item_id : null);
-  
+
   if (video.source_type === 'hls' || folderId) {
     return await resolveHlsSource(accessToken, folderId || video.onedrive_item_id);
   }

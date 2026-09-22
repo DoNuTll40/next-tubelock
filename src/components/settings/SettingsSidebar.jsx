@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import { useEffect, useState } from 'react';
 import { Sliders, User, PlayCircle, Folder, Database, LifeBuoy } from 'lucide-react';
 
 export const SETTING_TABS = [
@@ -13,6 +13,17 @@ export const SETTING_TABS = [
 ];
 
 export default function SettingsSidebar({ activeTab, onSelectTab }) {
+  const [quota, setQuota] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/onedrive/storage')
+      .then(res => res.json())
+      .then(data => setQuota(data))
+      .catch(err => console.error(err));
+  }, [])
+
+  console.log(quota);
+
   return (
     <nav className="w-64 shrink-0 flex flex-col gap-1 select-none">
       <div className="px-3 pb-3 mb-1 border-b border-[#EFECE6] dark:border-white/10">
@@ -29,11 +40,10 @@ export default function SettingsSidebar({ activeTab, onSelectTab }) {
               key={tab.id}
               type="button"
               onClick={() => onSelectTab(tab.id)}
-              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-semibold transition-all text-left cursor-pointer ${
-                isActive
-                  ? 'bg-[#FFF2E5] dark:bg-[#FF7A00]/15 text-[#FF7A00] font-bold shadow-2xs border-l-3 border-[#FF7A00]'
-                  : 'text-[#3A352F] dark:text-[#CCCCCC] hover:bg-[#EFECE6] dark:hover:bg-white/5'
-              }`}
+              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-xs font-semibold transition-all text-left cursor-pointer ${isActive
+                ? 'bg-[#FFF2E5] dark:bg-[#FF7A00]/15 text-[#FF7A00] font-bold shadow-2xs'
+                : 'text-[#3A352F] dark:text-[#CCCCCC] hover:bg-[#EFECE6] dark:hover:bg-white/5'
+                }`}
             >
               <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#FF7A00]' : 'text-[#8C857B] dark:text-[#888888]'}`} />
               <div className="flex flex-col min-w-0">

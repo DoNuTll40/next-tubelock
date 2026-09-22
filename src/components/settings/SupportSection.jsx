@@ -52,7 +52,7 @@ function FaqItem({ item }) {
           : <ChevronDown className="w-4 h-4 text-[#8C857B] dark:text-[#888888] shrink-0" />}
       </button>
       {open && (
-        <div className="px-4 pb-4 -mt-1">
+        <div className="px-4 pb-4 mt-1">
           <p className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] leading-relaxed">{item.a}</p>
         </div>
       )}

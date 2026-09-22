@@ -379,14 +379,14 @@ function SettingsContent() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="w-full max-w-6xl mx-auto px-0 sm:px-8 sm:py-8 select-none min-h-[85vh]">
+    <div className="w-full max-w-7xl mx-auto px-0 sm:px-8 sm:py-8 select-none min-h-[80]">
       <ActionSheetModal sheet={sheet} onClose={() => setSheet(null)} />
 
       {/* ── DESKTOP ──────────────────────────────────────────────────────────── */}
       {isDesktop && (
         <div className="flex gap-10 items-start">
           {/* Left Sidebar + Save */}
-          <div className="w-64 shrink-0 flex flex-col gap-3">
+          <div className="sticky top-22 w-64 shrink-0 flex flex-col gap-3">
             <SettingsSidebar activeTab={desktopTab} onSelectTab={handleDesktopTabChange} />
             <div className="px-3 mt-1">
               <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
@@ -399,7 +399,7 @@ function SettingsContent() {
           </div>
 
           {/* Content */}
-          <div className="flex-1 min-w-0 max-w-3xl">
+          <div className="flex-1 min-w-0">
             {renderCurrentSection(desktopTab)}
           </div>
         </div>
