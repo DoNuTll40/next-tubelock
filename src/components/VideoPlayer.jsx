@@ -454,11 +454,11 @@ export default function VideoPlayer({
             startLevel: isMobile ? 0 : -1,
 
             // คุมระยะเวลาโหลดล่วงหน้า (บนมือถือเอาแค่ 10-15 วิ พอ ไม่ต้องตุนถึง 60 วิ)
-            maxBufferLength: isMobile ? 10 : 20,
-            maxMaxBufferLength: isMobile ? 15 : 30,
+            maxBufferLength: 60,
+            maxMaxBufferLength: 120,
 
             // ลดขนาดแคชสูงสุด (มือถือไม่เกิน 30MB, คอมไม่เกิน 60MB)
-            maxBufferSize: (isMobile ? 30 : 60) * 1000 * 1000,
+            maxBufferSize: (isMobile ? 120 : 240) * 1000 * 1000,
 
             backBufferLength: 5,
             enableWorker: true,
