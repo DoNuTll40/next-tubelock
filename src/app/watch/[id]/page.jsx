@@ -396,22 +396,23 @@ export default function WatchPage() {
             {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) in Single Line on Desktop */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-1">
               {/* Channel Info & Subscribe Button */}
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white shadow-xs shrink-0">
-                  <Layers className="w-5 h-5 text-white" />
-                </div>
-                <div className="flex flex-col min-w-0 pr-1 sm:pr-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-[14px] sm:text-[15px] text-[#0F0F0F] dark:text-[#F1F1F1] truncate leading-tight">
-                      OneDrive Cloud Storage
-                    </span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="เชื่อมต่อแล้ว" />
+              <div className="flex justify-between items-center">
+                <div className='flex gap-2 items-center'>
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white shadow-xs shrink-0">
+                    <Layers className="w-5 h-5 text-white" />
                   </div>
-                  <span className="text-[11.5px] text-[#606060] dark:text-[#AAAAAA] truncate">
-                    TubeLock Private Streaming • 62.4K
-                  </span>
+                  <div className="flex flex-col min-w-0 pr-1 sm:pr-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-[14px] sm:text-[15px] text-[#0F0F0F] dark:text-[#F1F1F1] truncate leading-tight">
+                        OneDrive Cloud Storage
+                      </span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="เชื่อมต่อแล้ว" />
+                    </div>
+                    <span className="text-[11.5px] text-[#606060] dark:text-[#AAAAAA] truncate">
+                      TubeLock Private Streaming • 62.4K
+                    </span>
+                  </div>
                 </div>
-
                 {/* YouTube Subscribe Capsule Button */}
                 <button
                   type="button"

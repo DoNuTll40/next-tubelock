@@ -444,24 +444,39 @@ export default function VideoPlayer({
               // จะถูก resolve หลัง MANIFEST_PARSED เมื่อรู้จำนวน levels แล้ว
               savedStartLevel = parseInt(savedHeight, 10) || -1;
             }
-          } catch (_) {}
+          } catch (_) { }
+
+          const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
           const hls = new Hls({
-            startLevel: -1, // Always start at -1, then override via MANIFEST_PARSED
-            maxBufferLength: 30,
-            maxMaxBufferLength: 60,
-            maxBufferSize: 120 * 1000 * 1000, // 120MB (เพิ่มจาก 60MB สำหรับ 4K)
-            backBufferLength: 5,              // ลดจาก 15s → เซฟ RAM
+            // mobile: บังคับเริ่มที่ level 0 (ต่ำสุด = 144p) แล้วค่อย ramp-up
+            // desktop: ปล่อย ABR เลือกเอง (-1)
+            startLevel: isMobile ? 0 : -1,
+
+            // คุมระยะเวลาโหลดล่วงหน้า (บนมือถือเอาแค่ 10-15 วิ พอ ไม่ต้องตุนถึง 60 วิ)
+            maxBufferLength: isMobile ? 10 : 20,
+            maxMaxBufferLength: isMobile ? 15 : 30,
+
+            // ลดขนาดแคชสูงสุด (มือถือไม่เกิน 30MB, คอมไม่เกิน 60MB)
+            maxBufferSize: (isMobile ? 30 : 60) * 1000 * 1000,
+
+            backBufferLength: 5,
             enableWorker: true,
             lowLatencyMode: false,
+
             fragLoadingTimeOut: 20000,
             fragLoadingMaxRetry: 4,
             manifestLoadingTimeOut: 15000,
             manifestLoadingMaxRetry: 3,
             levelLoadingTimeOut: 15000,
             levelLoadingMaxRetry: 3,
+
             testBandwidth: true,
-            abrEwmaDefaultEstimate: 20000000, // 20 Mbps default estimate (เหมาะกับ 4K)
+
+            // ปรับลดค่าประเมินเริ่มต้นเหลือ 1.5 - 3 Mbps (แทนที่จะยัดไป 20 Mbps)
+            // เพื่อให้ตัวเล่นเริ่มที่ 720p/480p ก่อน แล้วค่อยสลับขึ้น 1080p/4K ถ้ารับไหวจริง
+            abrEwmaDefaultEstimate: isMobile ? 1500000 : 3500000,
+
             fpsDroppedMonitoring: true,
             fpsDroppedMonitoringPeriod: 4000,
             fpsDroppedMonitoringThreshold: 0.2,
@@ -612,14 +627,14 @@ export default function VideoPlayer({
       hlsInstanceRef.current.nextLevel = levelIdx;
       if (levelIdx === -1) {
         showToast('ความละเอียด : Auto (ปรับตามเน็ต)');
-        try { localStorage.removeItem('tubelock_quality_height'); } catch (_) {}
+        try { localStorage.removeItem('tubelock_quality_height'); } catch (_) { }
       } else {
         const selected = levels.find((l) => l.index === levelIdx);
         if (selected) {
           setActiveLevelLabel(selected.label);
           showToast(`ความละเอียด : ${selected.label}`);
           // ✨ Persist: เก็บ height ไว้ใน localStorage → คลิปต่อไปจะเริ่มที่ quality นี้เลย
-          try { localStorage.setItem('tubelock_quality_height', String(selected.height)); } catch (_) {}
+          try { localStorage.setItem('tubelock_quality_height', String(selected.height)); } catch (_) { }
         }
       }
     }

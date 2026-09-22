@@ -328,8 +328,10 @@ function runFFmpeg(args, onProgress) {
 }
 
 function buildMasterM3U8(qualities) {
-  // Sort descending by bitrate so highest resolution is at top
-  const sorted = [...qualities].sort((a, b) => b.bitrate - a.bitrate);
+  // Sort ASCENDING by bitrate (lowest quality first) so Hls.js ABR starts
+  // at the cheapest variant and ramps up — prevents mobile from immediately
+  // pulling 4K/1080p on the very first segment.
+  const sorted = [...qualities].sort((a, b) => a.bitrate - b.bitrate);
   let lines = ['#EXTM3U', '#EXT-X-VERSION:3'];
   for (const q of sorted) {
     lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height}`);
@@ -674,7 +676,7 @@ async function main() {
         }
       });
 
-      readyQualities.unshift({ name: '360p', width: 640, height: 360, bitrate: 600000 });
+      readyQualities.push({ name: '360p', width: 640, height: 360, bitrate: 600000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
       const pass2Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('360p') || f === 'master.m3u8');
@@ -718,7 +720,7 @@ async function main() {
         }
       });
 
-      readyQualities.unshift({ name: '480p', width: 854, height: 480, bitrate: 1000000 });
+      readyQualities.push({ name: '480p', width: 854, height: 480, bitrate: 1000000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
       const pass3Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('480p') || f === 'master.m3u8');
@@ -739,8 +741,9 @@ async function main() {
         '-i', rawFilePath,
         '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
+        '-profile:v', 'high', '-level', '3.1',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-        '-b:v', '2500k', '-maxrate', '2800k', '-bufsize', '4000k',
+        '-b:v', '3500k', '-maxrate', '4500k', '-bufsize', '6000k',
         '-c:a', 'aac', '-b:a', '128k',
         '-f', 'hls',
         '-hls_time', '4',
@@ -762,7 +765,7 @@ async function main() {
         }
       });
 
-      readyQualities.unshift({ name: '720p', width: 1280, height: 720, bitrate: 2500000 });
+      readyQualities.push({ name: '720p', width: 1280, height: 720, bitrate: 3500000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
       const pass4Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('720p') || f === 'master.m3u8');
@@ -783,9 +786,10 @@ async function main() {
         '-i', rawFilePath,
         '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
+        '-profile:v', 'high', '-level', '4.2',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-        '-b:v', '4500k', '-maxrate', '5000k', '-bufsize', '7500k',
-        '-c:a', 'aac', '-b:a', '128k',
+        '-b:v', '8500k', '-maxrate', '11000k', '-bufsize', '16000k',
+        '-c:a', 'aac', '-b:a', '192k',
         '-f', 'hls',
         '-hls_time', '4',
         '-hls_playlist_type', 'vod',
@@ -801,12 +805,12 @@ async function main() {
           updateDbStatus({
             status: 'READY',
             progress: overall,
-            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 1080p Full HD: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+            stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 1080p Full HD (Premium): ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
           });
         }
       });
 
-      readyQualities.unshift({ name: '1080p', width: 1920, height: 1080, bitrate: 4500000 });
+      readyQualities.push({ name: '1080p', width: 1920, height: 1080, bitrate: 8500000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
       const pass5Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1080p') || f === 'master.m3u8');
@@ -827,8 +831,9 @@ async function main() {
         '-i', rawFilePath,
         '-vf', 'scale=w=2560:h=1440:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
+        '-profile:v', 'high', '-level', '5.1',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-        '-b:v', '8500k', '-maxrate', '9500k', '-bufsize', '14000k',
+        '-b:v', '12000k', '-maxrate', '16000k', '-bufsize', '24000k',
         '-c:a', 'aac', '-b:a', '192k',
         '-f', 'hls',
         '-hls_time', '4',
@@ -850,7 +855,7 @@ async function main() {
         }
       });
 
-      readyQualities.unshift({ name: '1440p', width: 2560, height: 1440, bitrate: 8500000 });
+      readyQualities.push({ name: '1440p', width: 2560, height: 1440, bitrate: 12000000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
       const pass6Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1440p') || f === 'master.m3u8');
@@ -871,8 +876,9 @@ async function main() {
         '-i', rawFilePath,
         '-vf', 'scale=w=3840:h=2160:force_original_aspect_ratio=decrease:force_divisible_by=2',
         '-c:v', 'libx264', '-preset', 'veryfast',
+        '-profile:v', 'high', '-level', '5.2',
         '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-        '-b:v', '14000k', '-maxrate', '16000k', '-bufsize', '24000k',
+        '-b:v', '20000k', '-maxrate', '24000k', '-bufsize', '36000k',
         '-c:a', 'aac', '-b:a', '192k',
         '-f', 'hls',
         '-hls_time', '4',
@@ -894,7 +900,7 @@ async function main() {
         }
       });
 
-      readyQualities.unshift({ name: '2160p', width: 3840, height: 2160, bitrate: 14000000 });
+      readyQualities.push({ name: '2160p', width: 3840, height: 2160, bitrate: 20000000 });
       fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
       const pass7Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('2160p') || f === 'master.m3u8');
