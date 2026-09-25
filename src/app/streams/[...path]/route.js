@@ -4,6 +4,9 @@ import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 
 export const dynamic = 'force-dynamic';
 
+// URL ของ Cloudflare Worker ที่สร้างไว้
+const CF_WORKER_URL = 'https://tubelock-cache.iinter731.workers.dev'; //[span_1](start_span)[span_1](end_span)
+
 const assetCache = globalThis.__tubelock_asset_cache || (globalThis.__tubelock_asset_cache = new Map());
 
 function isTempauthValid(url) {
@@ -23,6 +26,14 @@ function isTempauthValid(url) {
   }
 }
 
+// ฟังก์ชันช่วยสลับ URL: ถ้าเป็นไฟล์ .ts ให้ส่งผ่าน Cloudflare Worker
+function resolveTargetUrl(originalUrl, fileName) {
+  if (fileName.toLowerCase().endsWith('.ts')) {
+    return `${CF_WORKER_URL}/?url=${encodeURIComponent(originalUrl)}`;
+  }
+  return originalUrl;
+}
+
 /**
  * GET /streams/[...path]
  * Proxies/redirects relative stream asset paths (e.g. /streams/stream_vid_823/poster.jpg)
@@ -36,13 +47,13 @@ export async function GET(request, context) {
     }
 
     const folderName = path[0]; // e.g. 'stream_vid_823'
-    const fileName = path.slice(1).join('/'); // e.g. 'poster.jpg'
+    const fileName = path.slice(1).join('/'); // e.g. 'poster.jpg' หรือ '1080p/001.ts'
     const cacheKey = `${folderName}/${fileName}`.toLowerCase();
 
     // ⚡ 1. Ultra-fast In-Memory Hit (<1ms) with Token Expiration Check
     const cached = assetCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now() && isTempauthValid(cached.url)) {
-      return NextResponse.redirect(cached.url, 307);
+      return NextResponse.redirect(resolveTargetUrl(cached.url, fileName), 307);
     } else {
       assetCache.delete(cacheKey);
     }
@@ -81,6 +92,7 @@ export async function GET(request, context) {
     if (!folderId) {
       return new NextResponse('OneDrive folder ID not found for video', { status: 404 });
     }
+
     // ⚡ 3. Check if downloadUrl is already in source_cache and still valid
     if (video.source_cache) {
       const cacheData = typeof video.source_cache === 'string'
@@ -94,7 +106,7 @@ export async function GET(request, context) {
           url: foundItem.downloadUrl,
           expiresAt: Date.now() + 40 * 60 * 1000,
         });
-        return NextResponse.redirect(foundItem.downloadUrl, 307);
+        return NextResponse.redirect(resolveTargetUrl(foundItem.downloadUrl, fileName), 307);
       }
     }
 
@@ -122,7 +134,7 @@ export async function GET(request, context) {
       expiresAt: Date.now() + 60 * 60 * 1000,
     });
 
-    return NextResponse.redirect(downloadUrl, 307);
+    return NextResponse.redirect(resolveTargetUrl(downloadUrl, fileName), 307);
   } catch (err) {
     console.error('[Stream Asset Proxy Error]:', err);
     return new NextResponse(err.message, { status: 500 });
