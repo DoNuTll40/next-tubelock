@@ -75,7 +75,7 @@ export default async function RootLayout({ children }) {
             </SidebarProvider>
           </ViewModeProvider>
         </ThemeProvider>
-        {/* <DevTools /> */}
+        <DevTools />
       </body>
     </html>
   );
