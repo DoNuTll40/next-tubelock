@@ -5,6 +5,17 @@ import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+// 🔥 1. URL ของ Cloudflare Worker ที่สร้างไว้
+const CF_WORKER_URL = 'https://tubelock-cache.iinter731.workers.dev'; //[span_1](start_span)[span_1](end_span)
+
+// 🔥 ฟังก์ชันแปลงให้ไฟล์ .ts วิ่งผ่าน Cloudflare Worker Cache
+function wrapWithWorkerCache(name, downloadUrl) {
+  if (name && name.toLowerCase().endsWith('.ts')) {
+    return `${CF_WORKER_URL}/?url=${encodeURIComponent(downloadUrl)}`;
+  }
+  return downloadUrl;
+}
+
 // High-speed In-Memory Cache (Global across server restarts/HMR in dev)
 const sourceCache = globalThis.__tubelock_source_cache || (globalThis.__tubelock_source_cache = new Map());
 const inFlightRequests = globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
@@ -67,20 +78,35 @@ export async function GET(request, context) {
       if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0) {
         const sampleUrl = cached.data.items[0]?.downloadUrl || cached.data.url;
         if (isTempauthValid(sampleUrl)) {
-          return NextResponse.json(cached.data, { headers: EDGE_CACHE_HEADERS });
+          // ดัดแปลง URL ก่อนส่งคืน Client
+          const clientData = {
+            ...cached.data,
+            items: cached.data.items?.map(i => ({
+              ...i,
+              downloadUrl: wrapWithWorkerCache(i.name, i.downloadUrl)
+            }))
+          };
+          return NextResponse.json(clientData, { headers: EDGE_CACHE_HEADERS });
         } else {
           sourceCache.delete(cacheKey);
         }
       }
     }
 
-    // ⚡ 2. In-Flight Request Deduplication (prevents parallel duplicate calls from React StrictMode)
+    // ⚡ 2. In-Flight Request Deduplication
     if (!forceFresh && inFlightRequests.has(cacheKey)) {
       const data = await inFlightRequests.get(cacheKey);
       if (data?.status && data.status !== 'READY' && !data.success) {
         return NextResponse.json(data, { status: 422 });
       }
-      return NextResponse.json(data, { headers: EDGE_CACHE_HEADERS });
+      const clientData = {
+        ...data,
+        items: data.items?.map(i => ({
+          ...i,
+          downloadUrl: wrapWithWorkerCache(i.name, i.downloadUrl)
+        }))
+      };
+      return NextResponse.json(clientData, { headers: EDGE_CACHE_HEADERS });
     }
 
     // ⚡ 3. Cold Fetch with Promise Coalescing & Database Persistent Cache
@@ -110,8 +136,7 @@ export async function GET(request, context) {
         };
       }
 
-      // ⚡⚡⚡ ULTRA-SPEED PERSISTENT DB CACHE HIT (<30ms) ⚡⚡⚡
-      // If cached in Neon DB and download URLs are still valid, return IMMEDIATELY!
+      // ⚡⚡⚡ PERSISTENT DB CACHE HIT (<30ms) ⚡⚡⚡
       const now = Date.now();
       if (!forceFresh && video.source_cache) {
         const parsedCache = typeof video.source_cache === 'string'
@@ -121,7 +146,6 @@ export async function GET(request, context) {
         const sampleUrl = parsedCache?.items?.[0]?.downloadUrl || parsedCache?.url;
         const isTokenValid = isTempauthValid(sampleUrl);
 
-        // Verify that HLS cache is not an incomplete early snapshot (e.g. only 144p cached while transcode finished)
         const cachedM3u8Count = parsedCache?.items?.filter((i) => i.name?.endsWith('.m3u8')).length || 0;
         const isStaleEarlySnapshot = (video.transcode_progress === 100 || video.status === 'READY') && cachedM3u8Count <= 2 && (parsedCache?.items?.length || 0) < 150;
 
@@ -136,8 +160,7 @@ export async function GET(request, context) {
             expiresAt: expTime > now ? expTime : now + 5 * 60 * 1000,
           });
 
-          // ⚡ Background SWR: If cache expired but token still valid, return IMMEDIATELY to user (<30ms)
-          // and quietly revalidate with Microsoft Graph in the background so NO user ever waits 10s!
+          // ⚡ Background SWR: Revalidate quietly
           if (expTime <= now) {
             console.log(`[SWR Background] Revalidating OneDrive URLs in background for video ${id}...`);
             Promise.resolve().then(async () => {
@@ -179,14 +202,13 @@ export async function GET(request, context) {
         }
       }
 
-      // If not in DB cache or expired, fetch fresh download URLs from OneDrive (valid for 60 mins)
+      // If not in DB cache or expired, fetch fresh download URLs from OneDrive
       const token = await getGraphToken();
       const driveId = await getUserDriveId(token);
 
       // Case 1: HLS Stream Folder
       if (video.source_type === 'hls' || video.onedrive_folder_id) {
         const folderId = video.onedrive_folder_id || video.onedrive_item_id;
-        // Do NOT use $select here: Graph API strips @microsoft.graph.downloadUrl if $select is present!
         let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$top=1000`;
         const allItems = [];
 
@@ -202,6 +224,7 @@ export async function GET(request, context) {
           nextUrl = data['@odata.nextLink'] || null;
         }
 
+        // ในฐานข้อมูลเรายังเก็บ Original OneDrive URL ไว้อยู่เพื่อตรวจ tempauth
         const validItems = allItems
           .filter(i => i.name && i['@microsoft.graph.downloadUrl'])
           .map(i => ({
@@ -220,7 +243,6 @@ export async function GET(request, context) {
           items: validItems,
         };
 
-        // Cache for 40 minutes if complete (leaving a 20-minute safety buffer before Microsoft 60-minute expiry)
         const isCompleted = Number(video.transcode_progress || 0) >= 100;
         const expiresAt = Date.now() + (isCompleted ? 40 * 60 * 1000 : 15 * 1000);
 
@@ -229,7 +251,6 @@ export async function GET(request, context) {
           expiresAt,
         });
 
-        // 💾 Persist to Neon DB so ALL serverless instances and users get <30ms response!
         try {
           const cachePayload = JSON.stringify({
             success: true,
@@ -303,7 +324,17 @@ export async function GET(request, context) {
       if (data?.status && data.status !== 'READY' && !data.success) {
         return NextResponse.json(data, { status: 422 });
       }
-      return NextResponse.json(data, { headers: EDGE_CACHE_HEADERS });
+
+      // 🔥 ก่อนส่งข้อมูลให้หน้าบ้าน: แปลง URL ของไฟล์ .ts ทั้งหมดให้ครอบด้วย Worker
+      const responseData = {
+        ...data,
+        items: data.items?.map(i => ({
+          ...i,
+          downloadUrl: wrapWithWorkerCache(i.name, i.downloadUrl)
+        }))
+      };
+
+      return NextResponse.json(responseData, { headers: EDGE_CACHE_HEADERS });
     } finally {
       inFlightRequests.delete(cacheKey);
     }
