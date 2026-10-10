@@ -51,6 +51,9 @@ export async function GET(request, context) {
         bitrate: video.bitrate || 0,
         thumbnailUrl: video.thumbnail_url || '',
         fileSizeBytes: video.file_size_bytes || 0,
+        runnerSpecs: typeof video.runner_specs === 'string'
+          ? (() => { try { return JSON.parse(video.runner_specs); } catch (_) { return null; } })()
+          : (video.runner_specs || null),
         createdAt: video.created_at,
         updatedAt: video.updated_at,
       },

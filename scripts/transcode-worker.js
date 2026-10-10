@@ -14,7 +14,61 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 import { neon } from '@neondatabase/serverless';
+
+function getRunnerSpecs() {
+    try {
+        const cpus = os.cpus() || [];
+        const cpuModel = cpus[0]?.model?.trim() || 'GitHub Actions Runner CPU';
+        const cpuCores = cpus.length || 1;
+        const totalRamGb = (os.totalmem() / (1024 ** 3)).toFixed(1);
+        const freeRamGb = (os.freemem() / (1024 ** 3)).toFixed(1);
+
+        let osName = `${os.type()} ${os.release()}`;
+        try {
+            if (fs.existsSync('/etc/os-release')) {
+                const osRel = fs.readFileSync('/etc/os-release', 'utf8');
+                const prettyMatch = osRel.match(/PRETTY_NAME="([^"]+)"/);
+                if (prettyMatch) osName = prettyMatch[1];
+            }
+        } catch (_) {}
+
+        let diskSpace = 'N/A';
+        try {
+            if (fs.statfsSync) {
+                const stats = fs.statfsSync('.');
+                const freeGb = ((stats.bavail * stats.bsize) / (1024 ** 3)).toFixed(1);
+                const totalGb = ((stats.blocks * stats.bsize) / (1024 ** 3)).toFixed(1);
+                diskSpace = `${freeGb} GB / ${totalGb} GB`;
+            }
+        } catch (_) {}
+
+        return {
+            cpuModel,
+            cpuCores,
+            totalRamGb: `${totalRamGb} GB`,
+            freeRamGb: `${freeRamGb} GB`,
+            osName,
+            arch: os.arch(),
+            diskSpace,
+            hostname: os.hostname(),
+            nodeVersion: process.version,
+        };
+    } catch (e) {
+        return {
+            cpuModel: 'Virtual CPU',
+            cpuCores: os.cpus()?.length || 2,
+            totalRamGb: '7.0 GB',
+            freeRamGb: 'N/A',
+            osName: 'Linux Ubuntu',
+            arch: 'x64',
+            diskSpace: 'N/A',
+            hostname: 'gh-runner',
+            nodeVersion: process.version,
+        };
+    }
+}
 
 // 1. Environment & Inputs
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
@@ -112,6 +166,19 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
                 }
                 if (extra.file_size_bytes) {
                     await sql`UPDATE videos SET file_size_bytes = ${extra.file_size_bytes} WHERE id = ${vidNum};`;
+                }
+                if (extra.runner_specs) {
+                    try {
+                        await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS runner_specs JSONB;`;
+                        await sql`UPDATE videos SET runner_specs = ${JSON.stringify(extra.runner_specs)}::jsonb WHERE id = ${vidNum};`;
+                    } catch (_) {
+                        try {
+                            await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS runner_specs TEXT;`;
+                            await sql`UPDATE videos SET runner_specs = ${JSON.stringify(extra.runner_specs)} WHERE id = ${vidNum};`;
+                        } catch (specsErr) {
+                            console.warn('Failed to save runner_specs:', specsErr.message);
+                        }
+                    }
                 }
             }
             break;
@@ -403,6 +470,19 @@ async function main() {
     try {
         fs.mkdirSync(tempDir, { recursive: true });
         fs.mkdirSync(hlsOutputDir, { recursive: true });
+
+        // Step 0: Collect & Report Runner Machine Specs before slicing video
+        const runnerSpecs = getRunnerSpecs();
+        console.log('🖥️ Runner Machine Specs:', JSON.stringify(runnerSpecs, null, 2));
+
+        await updateDbStatus({
+            status: 'PROCESSING',
+            progress: 8,
+            stageDetail: `GitHub Actions พร้อมทำงาน: ${runnerSpecs.cpuModel} (${runnerSpecs.cpuCores} Cores), RAM ${runnerSpecs.totalRamGb}`,
+            extra: {
+                runner_specs: runnerSpecs,
+            },
+        });
 
         // Step 1: Initial Processing status
         await updateDbStatus({

@@ -7,7 +7,7 @@ import {
   Upload, Film, CheckCircle2, AlertCircle, RefreshCw,
   Play, ChevronDown, ChevronUp,
   Copy, Check, ArrowRight, RotateCcw,
-  Terminal, X, ListOrdered, Database, Sliders, Trash2
+  Terminal, X, ListOrdered, Database, Sliders, Trash2, Cpu
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
 import { extractVideoMetadata } from '@/lib/uploader';
@@ -73,6 +73,8 @@ export default function UploadPage() {
   const [tags, setTags] = useState(['HLS', 'stream']);
   const [tagInputValue, setTagInputValue] = useState('');
   const [thumbnailUrl, setThumbnailUrl] = useState('');
+  const [runnerSpecs, setRunnerSpecs] = useState(null);
+  const runnerSpecsLoggedRef = useRef(false);
 
   // Form Helpers
   const handleCleanTitle = () => {
@@ -365,6 +367,8 @@ export default function UploadPage() {
     setStageDetail('');
     setErrorMsg(null);
     setCompletedVideo(null);
+    setRunnerSpecs(null);
+    runnerSpecsLoggedRef.current = false;
     setLogs([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -385,6 +389,15 @@ export default function UploadPage() {
         setCurrentStatus(vid.status);
         setTranscodeProgress(vid.transcodeProgress || 0);
         setStageDetail(vid.stageDetail || '');
+
+        // 🌟 If GitHub Actions reported runner specs, display them!
+        if (vid.runnerSpecs) {
+          setRunnerSpecs(vid.runnerSpecs);
+          if (!runnerSpecsLoggedRef.current) {
+            runnerSpecsLoggedRef.current = true;
+            addLog(`🖥️ สเปกเครื่อง GitHub Actions: ${vid.runnerSpecs.cpuModel} (${vid.runnerSpecs.cpuCores} Cores) • RAM: ${vid.runnerSpecs.totalRamGb} • ${vid.runnerSpecs.osName}`);
+          }
+        }
 
         // 🌟 If worker captured the thumbnail, display it immediately!
         if (vid.thumbnailUrl) {
@@ -1135,6 +1148,70 @@ export default function UploadPage() {
                         );
                       })}
                     </div>
+
+                    {/* ── Runner Hardware Specs Card (GitHub Actions) ──────── */}
+                    {runnerSpecs && (
+                      <div className="p-4 rounded-xl bg-gradient-to-r from-orange-500/5 via-violet-500/5 to-cyan-500/5 dark:from-orange-500/10 dark:via-violet-500/10 dark:to-cyan-500/10 border border-orange-500/20 dark:border-orange-500/30 flex flex-col gap-3 animate-in fade-in duration-300">
+                        <div className="flex items-center justify-between pb-2 border-b border-orange-500/15 dark:border-orange-500/20">
+                          <div className="flex items-center gap-2">
+                            <Cpu className="w-4 h-4 text-[#FF7A00]" />
+                            <span className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1]">
+                              สเปกเครื่องประมวลผล (GitHub Actions Runner)
+                            </span>
+                          </div>
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            Runner Online ({runnerSpecs.cpuCores} Cores)
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                          {/* CPU */}
+                          <div className="p-2.5 rounded-lg bg-white/70 dark:bg-black/40 border border-[#EFECE6] dark:border-white/5 flex flex-col">
+                            <span className="text-[10px] font-medium text-[#8C857B] dark:text-[#AAAAAA] uppercase">CPU</span>
+                            <span className="text-xs font-mono font-bold text-[#212529] dark:text-white truncate mt-0.5" title={runnerSpecs.cpuModel}>
+                              {runnerSpecs.cpuModel}
+                            </span>
+                            <span className="text-[10px] font-mono text-[#FF7A00] mt-0.5">
+                              {runnerSpecs.cpuCores} Cores ({runnerSpecs.arch})
+                            </span>
+                          </div>
+
+                          {/* RAM */}
+                          <div className="p-2.5 rounded-lg bg-white/70 dark:bg-black/40 border border-[#EFECE6] dark:border-white/5 flex flex-col">
+                            <span className="text-[10px] font-medium text-[#8C857B] dark:text-[#AAAAAA] uppercase">RAM</span>
+                            <span className="text-xs font-mono font-bold text-[#212529] dark:text-white mt-0.5">
+                              {runnerSpecs.totalRamGb}
+                            </span>
+                            <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
+                              ว่าง {runnerSpecs.freeRamGb}
+                            </span>
+                          </div>
+
+                          {/* OS */}
+                          <div className="p-2.5 rounded-lg bg-white/70 dark:bg-black/40 border border-[#EFECE6] dark:border-white/5 flex flex-col">
+                            <span className="text-[10px] font-medium text-[#8C857B] dark:text-[#AAAAAA] uppercase">ระบบปฏิบัติการ</span>
+                            <span className="text-xs font-mono font-bold text-[#212529] dark:text-white truncate mt-0.5" title={runnerSpecs.osName}>
+                              {runnerSpecs.osName}
+                            </span>
+                            <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">
+                              Host: {runnerSpecs.hostname}
+                            </span>
+                          </div>
+
+                          {/* Storage */}
+                          <div className="p-2.5 rounded-lg bg-white/70 dark:bg-black/40 border border-[#EFECE6] dark:border-white/5 flex flex-col">
+                            <span className="text-[10px] font-medium text-[#8C857B] dark:text-[#AAAAAA] uppercase">พื้นที่ Disk</span>
+                            <span className="text-xs font-mono font-bold text-[#212529] dark:text-white truncate mt-0.5">
+                              {runnerSpecs.diskSpace}
+                            </span>
+                            <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 mt-0.5">
+                              Node {runnerSpecs.nodeVersion}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="bg-[#FBF9F5] dark:bg-[#121212] border border-[#EFECE6] dark:border-white/10 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs">
                       <span className="text-[#212529] dark:text-[#F1F1F1] font-medium">
