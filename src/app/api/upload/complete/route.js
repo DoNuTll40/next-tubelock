@@ -48,6 +48,10 @@ export async function POST(request) {
     const finalTags = Array.isArray(tags) ? tags : [];
 
     // 2. Mark as QUEUED in Neon DB and save comprehensive client metadata
+    try {
+      await sql`ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);`;
+    } catch (_) {}
+
     await sql`
       UPDATE videos 
       SET 
@@ -63,7 +67,11 @@ export async function POST(request) {
         resolution = CASE WHEN ${clientMeta.resolution || ''} <> '' THEN ${clientMeta.resolution} ELSE resolution END,
         fps = CASE WHEN ${clientMeta.fps || 0} > 0 THEN ${clientMeta.fps} ELSE fps END,
         codec = CASE WHEN ${clientMeta.codec || ''} <> '' THEN ${clientMeta.codec} ELSE codec END,
-        thumbnail_url = CASE WHEN ${clientMeta.thumbnailDataUrl || ''} <> '' THEN ${clientMeta.thumbnailDataUrl} ELSE thumbnail_url END,
+        thumbnail_url = CASE 
+          WHEN ${clientMeta.thumbnailDataUrl || ''} <> '' THEN ${clientMeta.thumbnailDataUrl}
+          WHEN thumbnail_url IS NOT NULL AND thumbnail_url <> '' THEN thumbnail_url
+          ELSE ${`/streams/stream_vid_${videoId}/poster.jpg`}
+        END,
         updated_at = NOW()
       WHERE id = ${videoId};
     `;

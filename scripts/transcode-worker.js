@@ -134,29 +134,68 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
       `;
 
             if (Object.keys(extra).length > 0) {
+                if (extra.thumbnail_url) {
+                    try {
+                        await sql`UPDATE videos SET thumbnail_url = ${extra.thumbnail_url} WHERE id = ${vidNum};`;
+                    } catch (thumbErr) {
+                        console.warn('Failed to save thumbnail_url:', thumbErr.message);
+                    }
+                }
                 if (extra.onedrive_folder_id) {
-                    await sql`UPDATE videos SET onedrive_folder_id = ${extra.onedrive_folder_id} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`UPDATE videos SET onedrive_folder_id = ${extra.onedrive_folder_id} WHERE id = ${vidNum};`;
+                    } catch (e) {
+                        console.warn('Failed to save onedrive_folder_id:', e.message);
+                    }
                 }
                 if (extra.master_playlist_path) {
-                    await sql`UPDATE videos SET master_playlist_path = ${extra.master_playlist_path} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`UPDATE videos SET master_playlist_path = ${extra.master_playlist_path} WHERE id = ${vidNum};`;
+                    } catch (e) {
+                        console.warn('Failed to save master_playlist_path:', e.message);
+                    }
                 }
                 if (extra.storyboard_vtt_path) {
-                    await sql`UPDATE videos SET storyboard_vtt_path = ${extra.storyboard_vtt_path} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`UPDATE videos SET storyboard_vtt_path = ${extra.storyboard_vtt_path} WHERE id = ${vidNum};`;
+                    } catch (e) {
+                        console.warn('Failed to save storyboard_vtt_path:', e.message);
+                    }
                 }
                 if (extra.duration) {
-                    await sql`UPDATE videos SET duration = ${extra.duration} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`UPDATE videos SET duration = ${extra.duration} WHERE id = ${vidNum};`;
+                    } catch (e) {
+                        console.warn('Failed to save duration:', e.message);
+                    }
                 }
                 if (extra.resolution) {
-                    await sql`UPDATE videos SET resolution = ${extra.resolution} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`UPDATE videos SET resolution = ${extra.resolution} WHERE id = ${vidNum};`;
+                    } catch (e) {
+                        console.warn('Failed to save resolution:', e.message);
+                    }
                 }
                 if (extra.fps) {
-                    await sql`UPDATE videos SET fps = ${extra.fps} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);`;
+                    } catch (_) {}
+                    try {
+                        await sql`UPDATE videos SET fps = ${extra.fps} WHERE id = ${vidNum};`;
+                    } catch (fpsErr) {
+                        console.warn('Failed to update fps, trying fallback:', fpsErr.message);
+                        try {
+                            const roundedFps = Math.min(Math.round(Number(extra.fps) || 30), 99);
+                            await sql`UPDATE videos SET fps = ${roundedFps} WHERE id = ${vidNum};`;
+                        } catch (_) {}
+                    }
                 }
                 if (extra.codec) {
-                    await sql`UPDATE videos SET codec = ${extra.codec} WHERE id = ${vidNum};`;
-                }
-                if (extra.thumbnail_url) {
-                    await sql`UPDATE videos SET thumbnail_url = ${extra.thumbnail_url} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`UPDATE videos SET codec = ${extra.codec} WHERE id = ${vidNum};`;
+                    } catch (e) {
+                        console.warn('Failed to save codec:', e.message);
+                    }
                 }
                 if (extra.bitrate) {
                     try {
@@ -165,7 +204,11 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
                     } catch (_) { }
                 }
                 if (extra.file_size_bytes) {
-                    await sql`UPDATE videos SET file_size_bytes = ${extra.file_size_bytes} WHERE id = ${vidNum};`;
+                    try {
+                        await sql`UPDATE videos SET file_size_bytes = ${extra.file_size_bytes} WHERE id = ${vidNum};`;
+                    } catch (e) {
+                        console.warn('Failed to save file_size_bytes:', e.message);
+                    }
                 }
                 if (extra.runner_specs) {
                     try {
@@ -735,6 +778,7 @@ async function main() {
                 resolution: resolutionLabel,
                 fps,
                 codec,
+                thumbnail_url: thumbnailUrl,
             },
         });
 
@@ -1025,6 +1069,9 @@ async function main() {
             status: 'READY',
             progress: 100,
             stageDetail: `เสร็จสมบูรณ์ทุกความละเอียด (${finalQualitiesText}) พร้อมรับชมแบบเต็มประสิทธิภาพ`,
+            extra: {
+                thumbnail_url: thumbnailUrl,
+            },
         });
 
         console.log(`🎉 All progressive passes finished for Video #${VIDEO_ID}!`);
