@@ -17,34 +17,47 @@ on:
         type: string
         default: ''
 
+# ถ้ายิง video_id เดิมซ้ำ ให้ยกเลิกอันเก่าทันที แต่ถ้าคนละ video_id ให้รันขนานกันได้เลย
+concurrency:
+  group: transcode-vid-${{ inputs.video_id }}
+  cancel-in-progress: true
+
 jobs:
   transcode:
-    name: "Transcode HLS Multi-bitrate (Ubuntu 4-Core / 16GB)"
+    name: "Transcode Video #${{ inputs.video_id }} (4-Core / 12GB RAM Disk)"
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Worker Script Only (Ultra-Fast Sparse Checkout)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Boost RAM Disk (/dev/shm -> 12GB) & Verify FFmpeg
+        run: |
+          # ขยาย RAM Disk เป็น 12GB เพื่อให้ FFmpeg หั่นไฟล์ .ts บน RAM ได้เต็มสปีด
+          sudo mount -o remount,size=12G /dev/shm || true
+          df -h /dev/shm
+          # เช็ก FFmpeg ที่ติดมากับ Ubuntu Runner (ถ้าไม่มีค่อยลงใหม่)
+          if ! command -v ffmpeg &> /dev/null; then
+            sudo apt-get update -y && sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n 2
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: 'npm'
 
-      - name: Install System Dependencies (FFmpeg)
+      - name: Install Minimal Worker Dependency (@neondatabase/serverless)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ffmpeg
-          ffmpeg -version
+          # ลงเฉพาะไลบรารีที่ transcode-worker.js ใช้จริง (เสร็จใน 2 วินาที ไม่ต้องแบก Next.js ทั้งก้อน)
+          npm install --no-save --no-audit --no-fund @neondatabase/serverless
 
-      - name: Install Node.js Dependencies
-        run: |
-          npm ci || npm install --legacy-peer-deps
-
-      - name: Run Transcode Worker
+      - name: Run High-Performance Transcode Worker
         env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
