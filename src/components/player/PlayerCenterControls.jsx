@@ -152,8 +152,8 @@ export default function PlayerCenterControls({
                 !isPlaying && (
                   <motion.button
                     type="button"
-                    whileHover={{ scale: 1.06 }}
-                    whileTap={{ scale: 0.92 }}
+                    // whileHover={{ scale: 1.06 }}
+                    // whileTap={{ scale: 0.92 }}
                     onClick={(e) => { e.stopPropagation(); togglePlay(); }}
                     className="pointer-events-auto w-16 h-16 rounded-full bg-black/25 hover:bg-[#FF7A00] border border-white/20 text-white flex items-center justify-center transition-colors duration-200 shadow-2xl backdrop-blur-md cursor-pointer"
                   >

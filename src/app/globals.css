@@ -25,13 +25,16 @@ html.dark body {
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: #EFECE6;
   border-radius: 9999px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: #FF7A00;
 }
@@ -40,6 +43,7 @@ html.dark body {
   background: #272727;
   border-radius: 9999px;
 }
+
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #FF7A00;
 }
@@ -48,6 +52,7 @@ html.dark body {
   from {
     transform: translateX(-100%);
   }
+
   to {
     transform: translateX(0);
   }
@@ -58,6 +63,7 @@ html.dark body {
     opacity: 0;
     transform: scale(0.98);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -84,14 +90,28 @@ html.dark body {
 
 /* Player: Chevron wave (double-tap seek) — GPU compositor only (opacity + transform) */
 @keyframes chevwave {
-  0%, 100% { opacity: 0.25; transform: translateX(0); }
-  50%       { opacity: 1;    transform: translateX(0); }
+
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateX(0);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 /* Player: Controls fade-in — replaces Framer Motion initial/animate scale on mobile */
 @keyframes fadein {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 /* YouTube-style Dynamic Card Hover */
@@ -99,10 +119,15 @@ html.dark body {
   background-color: transparent;
   transition: background-color 0.2s cubic-bezier(0.2, 0, 0, 1);
 }
+
 .yt-card-hover:hover {
-  background-color: var(--hover-tint-light, #F2EFE9);
-}
-.dark .yt-card-hover:hover {
-  background-color: var(--hover-tint-dark, #242424);
+  background-color: var(--hover-tint-light, rgba(0, 0, 0, 0.05));
 }
 
+.dark .yt-card-hover:hover {
+  background-color: var(--hover-tint-dark, rgba(255, 255, 255, 0.08));
+}
+
+video {
+  background-color: transparent !important;
+}

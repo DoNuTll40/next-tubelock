@@ -60,15 +60,37 @@ export default function Navbar({ session }) {
     }
   };
 
+  const isWatchPage = pathname?.startsWith('/watch');
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  useEffect(() => {
+    if (!isWatchPage) return;
+
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 20);
+    };
+
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [isWatchPage]);
+
   // On mobile: hide navbar on /watch and /settings
   if ((pathname?.startsWith('/watch') || pathname?.startsWith('/settings')) && !isDesktop) {
     return null;
   }
 
-  console.log(session?.picture)
+  // โปร่งแสงบนหน้า /watch เมื่ออยู่ที่ด้านบนสุด เพื่อให้แสง Ambient ลอยทะลุผ่านเหมือน YouTube
+  const isTransparent = isWatchPage && !isScrolled;
 
   return (
-    <header className="sticky top-0 z-40 w-full bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10 px-4 py-2 select-none h-14 flex items-center">
+    <header
+      className={`sticky top-0 z-40 w-full px-4 py-2 select-none h-14 flex items-center transition-colors duration-300 ${
+        isTransparent
+          ? 'bg-transparent border-b border-transparent backdrop-blur-none'
+          : 'bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10'
+      }`}
+    >
       <div className="w-full flex items-center justify-between gap-4">
         {/* Left: Hamburger & Logo */}
         <div className="flex items-center gap-3">

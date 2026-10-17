@@ -125,7 +125,7 @@ export default function VideoCard({
         <Link
           href={`/watch/${video.id}`}
           replace={replace}
-          className="relative aspect-video w-[204.8px] h-[115.2px] xl:w-[294.4px] xl:h-[165.6px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
+          className="relative aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
         >
           {effectiveThumbnail && !imgError ? (
             <img
@@ -135,7 +135,7 @@ export default function VideoCard({
               crossOrigin="anonymous"
               onError={() => setImgError(true)}
               onLoad={handleImageLoad}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              className="w-full h-full object-cover transition-transform duration-300"
               loading="lazy"
             />
           ) : (

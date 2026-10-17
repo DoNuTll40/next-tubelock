@@ -4,8 +4,9 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2
+  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, Sparkles
 } from 'lucide-react';
+import AmbientModeIcon from '../icons/AmbientModeIcon';
 
 export default function PlayerSettingsModal({
   showSettingsMenu,
@@ -27,6 +28,8 @@ export default function PlayerSettingsModal({
   video,
   showToast,
   resetControlsTimer,
+  ambientMode = true,
+  setAmbientMode,
 }) {
   const [mounted, setMounted] = useState(false);
   const [isClientSmall, setIsClientSmall] = useState(false);
@@ -207,6 +210,30 @@ export default function PlayerSettingsModal({
                         <ChevronRight className="w-4 h-4 text-zinc-400" />
                       </div>
                     </button>
+
+                    {/* Ambient Mode Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = !ambientMode;
+                        setAmbientMode?.(nextVal);
+                        showToast?.(nextVal ? 'เปิดโหมด Ambient แล้ว' : 'ปิดโหมด Ambient แล้ว');
+                      }}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3.5">
+                        <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+                        <span className="text-[14px] text-zinc-200 font-medium">โหมด Ambient</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] text-zinc-400">
+                          {ambientMode ? 'เปิด' : 'ปิด'}
+                        </span>
+                        <div className={`w-9 h-5 rounded-full transition-colors flex items-center px-0.5 ${ambientMode ? 'bg-[#FF7A00]' : 'bg-white/20'}`}>
+                          <div className={`w-4 h-4 rounded-full bg-white transition-transform ${ambientMode ? 'translate-x-4' : 'translate-x-0'}`} />
+                        </div>
+                      </div>
+                    </button>
                   </motion.div>
                 )}
 
@@ -360,8 +387,8 @@ export default function PlayerSettingsModal({
           exit={{ opacity: 0, scale: 0.96, y: settingsPlacement === 'top' ? -6 : 6 }}
           transition={{ duration: 0.14, ease: 'easeOut' }}
           className={`absolute ${settingsPlacement === 'top'
-              ? 'top-14 right-3 sm:right-6'
-              : 'bottom-18 right-3 sm:right-6'
+            ? 'top-14 right-3 sm:right-6'
+            : 'bottom-18 right-3 sm:right-6'
             } bg-black/50 border border-white/15 rounded-2xl py-1.5 w-70 text-zinc-200 z-40 shadow-[0_16px_40px_rgba(0,0,0,0.6)] backdrop-blur-md overflow-hidden select-none will-change-transform`}
           onClick={(e) => e.stopPropagation()}
         >
@@ -420,6 +447,30 @@ export default function PlayerSettingsModal({
                     {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
                   </span>
                   <ChevronRight className="w-4 h-4 text-zinc-400" />
+                </div>
+              </button>
+
+              {/* Ambient Mode Toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  const nextVal = !ambientMode;
+                  setAmbientMode?.(nextVal);
+                  showToast?.(nextVal ? 'เปิดโหมด Ambient แล้ว' : 'ปิดโหมด Ambient แล้ว');
+                }}
+                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
+              >
+                <div className="flex items-center gap-3">
+                  <AmbientModeIcon className="w-5 h-5 text-zinc-400 group-hover:text-white transition shrink-0" />
+                  <span className="text-[13.5px] text-zinc-200 font-medium">โหมด Ambient</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[12.5px] text-zinc-400 font-medium">
+                    {ambientMode ? 'เปิด' : 'ปิด'}
+                  </span>
+                  <div className={`w-8 h-4.5 rounded-full transition-colors flex items-center px-0.5 ${ambientMode ? 'bg-[#FF7A00]' : 'bg-white/20'}`}>
+                    <div className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${ambientMode ? 'translate-x-3.5' : 'translate-x-0'}`} />
+                  </div>
                 </div>
               </button>
             </div>

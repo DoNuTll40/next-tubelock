@@ -35,10 +35,8 @@ export default function PlayerScrubber({
   // - fade-out   → ใช้ lastHoverRef (ค้างไว้ไม่ให้วิ่งไป 0:00)
   const lastPct = lastHoverPercentRef?.current ?? previewPercent;
   const lastTime = lastHoverTimeRef?.current ?? previewTime;
-  const previewLeft = Math.max(10, Math.min(
-    isScrubbing ? previewPercent : isHoveringSeek ? hoverPercent : lastPct,
-    90
-  ));
+  const rawLeft = (isScrubbing || isHoveringSeek) ? previewPercent : lastPct;
+  const previewLeft = Math.max(0, Math.min(rawLeft ?? 50, 100));
   const previewDisplayTime = isScrubbing ? previewTime : isHoveringSeek ? hoverTime : lastTime;
   const isVertical = videoRatio && videoRatio < 1;
 
@@ -73,7 +71,6 @@ export default function PlayerScrubber({
         >
           {poster && (
             <img
-              ref={scrubThumbSdRef}
               src={poster}
               alt="Thumbnail Preview"
               className="absolute inset-0 w-full h-full object-cover opacity-75"

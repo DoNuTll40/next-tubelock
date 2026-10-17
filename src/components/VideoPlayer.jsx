@@ -35,6 +35,8 @@ export default function VideoPlayer({
   onRatioChange = null,
   videoRef: externalVideoRef,
   desktopMaxHeight = 'calc(100vh - 100px)',
+  ambientMode = true,
+  setAmbientMode = null,
 }) {
   const video = useRef(null);
   useEffect(() => {
@@ -825,6 +827,31 @@ export default function VideoPlayer({
   }, [duration, video, updateStoryboardThumbnail]);
 
   // Scrubbing calculation
+  // Clamps preview thumbnail position so it never overflows left/right of video player boundary
+  const getClampedPreviewPercent = (offsetX, trackRect) => {
+    if (!trackRect || trackRect.width <= 0) return 50;
+    const previewEl = scrubPreviewRef.current;
+    const playerEl = containerRef.current;
+
+    // Measure preview half-width (default ~140px if not yet rendered)
+    const halfWidth = previewEl && previewEl.offsetWidth > 0 ? previewEl.offsetWidth / 2 : 140;
+
+    const playerRect = playerEl ? playerEl.getBoundingClientRect() : null;
+    const leftMargin = playerRect ? Math.max(0, trackRect.left - playerRect.left) : 24;
+    const rightMargin = playerRect ? Math.max(0, playerRect.right - trackRect.right) : 24;
+    const edgePadding = 8; // 8px safety margin inside player bounds
+
+    const minX = Math.max(0, halfWidth - leftMargin + edgePadding);
+    const maxX = Math.min(trackRect.width, trackRect.width + rightMargin - halfWidth - edgePadding);
+
+    if (minX >= maxX) {
+      return (offsetX / trackRect.width) * 100;
+    }
+
+    const clampedX = Math.max(minX, Math.min(offsetX, maxX));
+    return (clampedX / trackRect.width) * 100;
+  };
+
   // Scrubbing calculation
   const calculateScrubPosition = (clientX) => {
     if (typeof clientX !== 'number' || isNaN(clientX)) return;
@@ -835,7 +862,7 @@ export default function VideoPlayer({
     const offsetX = Math.max(0, Math.min(clientX - rect.left, rect.width));
     const percent = (offsetX / rect.width) * 100;
     const calculatedSec = (offsetX / rect.width) * realDur;
-    const clampedPercent = Math.max(10, Math.min(percent, 90));
+    const clampedPercent = getClampedPreviewPercent(offsetX, rect);
 
     latestScrubTimeRef.current = calculatedSec;
 
@@ -850,7 +877,7 @@ export default function VideoPlayer({
     if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${percent}%`;
     if (timeDisplayRef.current) timeDisplayRef.current.textContent = `${formatTime(calculatedSec)} / ${formatTime(realDur)}`;
 
-    setPreviewPercent(percent);
+    setPreviewPercent(clampedPercent);
     setPreviewTime(calculatedSec);
     updateStoryboardThumbnail(calculatedSec);
   };
@@ -864,7 +891,7 @@ export default function VideoPlayer({
     const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
     const pct = (offsetX / rect.width) * 100;
     const time = (offsetX / rect.width) * realDur;
-    const clampedPct = Math.max(10, Math.min(pct, 90));
+    const clampedPct = getClampedPreviewPercent(offsetX, rect);
 
     // Zero-lag direct DOM update on hover as well!
     if (scrubPreviewRef.current) {
@@ -875,9 +902,10 @@ export default function VideoPlayer({
     }
 
     setHoverPercent(pct);
+    setPreviewPercent(clampedPct);
     setHoverTime(time);
     lastHoverTimeRef.current = time;       // เก็บค้างไว้ใน ref เพื่อ fallback ตอน fade-out
-    lastHoverPercentRef.current = pct;
+    lastHoverPercentRef.current = clampedPct;
     updateStoryboardThumbnail(time);
     if (isScrubbingRef.current) {
       calculateScrubPosition(e.clientX);
@@ -1363,6 +1391,7 @@ export default function VideoPlayer({
       <video
         ref={video}
         poster={poster}
+        crossOrigin="anonymous"
         autoPlay={defaultAutoplay}
         playsInline
         webkit-playsinline="true"
@@ -1535,6 +1564,8 @@ export default function VideoPlayer({
         video={video}
         showToast={showToast}
         resetControlsTimer={resetControlsTimer}
+        ambientMode={ambientMode}
+        setAmbientMode={setAmbientMode}
       />
 
       {/* Modern High-Performance Bottom Controls Bar */}

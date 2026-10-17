@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import VideoPlayer from '@/components/VideoPlayer';
 import VideoCard from '@/components/VideoCard';
+import AmbientLight from '@/components/player/AmbientLight';
 import DescriptionBox from '@/components/watch/DescriptionBox';
 import {
   Share2, Layers, ThumbsUp, ThumbsDown,
@@ -49,6 +50,22 @@ export default function WatchPage() {
   const [isSaved, setIsSaved] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [detectedRatio, setDetectedRatio] = useState(null);
+  const [ambientMode, setAmbientMode] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const saved = localStorage.getItem('tubelock_ambient_mode');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleSetAmbientMode = (val) => {
+    setAmbientMode(val);
+    try {
+      localStorage.setItem('tubelock_ambient_mode', JSON.stringify(val));
+    } catch (_) { }
+  };
 
   const videoRef = useRef(null);
   const playerWrapperRef = useRef(null);
@@ -311,75 +328,89 @@ export default function WatchPage() {
           {/* 🎯 Video Player: Sticky on mobile across entire page / Static in Left Col on desktop */}
           <div
             ref={playerWrapperRef}
-            className={`sticky top-0 z-30 w-full bg-black lg:bg-transparent lg:static lg:z-auto ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] lg:h-auto flex justify-center items-center lg:block' : ''
+            className={`relative sticky top-0 z-20 w-full bg-black md:bg-transparent lg:relative lg:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] lg:h-auto flex justify-center items-center lg:block' : ''
               }`}
           >
-            {streamUrl ? (
-              <VideoPlayer
-                src={streamUrl}
-                poster={video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null)}
-                storyboard={storyboard}
-                title={video?.title}
-                onBack={() => router.push('/')}
-                resolution={video?.resolution}
-                width={video?.width}
-                height={video?.height}
-                aspectRatio={videoRatio}
-                fps={video?.fps}
-                codec={video?.codec}
-                videoId={video?.id}
-                videoRef={videoRef}
-                desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}
-                defaultVolume={playerConfig?.volume ?? 0.8}
-                defaultAutoplay={playerConfig?.autoplay ?? true}
-                defaultSpeed={playerConfig?.default_speed ?? 1}
-                defaultFit={playerConfig?.default_fit ?? 'fit'}
-                seekStep={playerConfig?.seek_step ?? 10}
-                autoStats={playerConfig?.auto_stats ?? false}
-                onRatioChange={(r) => setDetectedRatio(r)}
-              />
-            ) : (
-              /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
-              <div
-                className={`relative bg-zinc-950 sm:rounded-2xl overflow-hidden flex items-center justify-center select-none ${videoRatio < 0.98
-                  ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video'
-                  : 'w-full h-auto'
-                  }`}
-                style={{
-                  aspectRatio: videoRatio < 0.98 ? undefined : `${videoRatio}`,
-                  maxWidth: videoRatio >= 0.98 ? `calc((${DESKTOP_PLAYER_MAX_HEIGHT}) * ${videoRatio})` : undefined,
-                  maxHeight: DESKTOP_PLAYER_MAX_HEIGHT,
-                  margin: videoRatio >= 0.98 ? 0 : '0 auto',
-                }}
-              >
-                {/* Background Poster / Thumbnail */}
-                {video?.thumbnail_url && (
-                  <img
-                    src={video.thumbnail_url}
-                    alt={video?.title || 'Thumbnail'}
-                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                    className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
-                  />
-                )}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/65 backdrop-blur-[0.5px]" />
+            {/* YouTube-style Storyboard Ambient Mode Light */}
+            <AmbientLight
+              videoRef={videoRef}
+              storyboard={storyboard}
+              poster={video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null)}
+              enabled={ambientMode}
+              aspectRatio={videoRatio}
+              className="hidden sm:block"
+            />
 
-                {/* Center Glowing Spinner */}
-                <div className="relative z-10 flex flex-col items-center gap-3.5 px-4 text-center">
-                  <div className="relative flex items-center justify-center">
-                    <div className="absolute w-14 h-14 rounded-full bg-[#FF7A00]/25 blur-lg animate-pulse" />
-                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-[3px] border-white/15 border-t-[#FF7A00] animate-spin" />
-                  </div>
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-white text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md">
-                      กำลังเตรียมสัญญาณภาพ...
-                    </span>
-                    <span className="text-zinc-400 text-[10px] sm:text-[11px] font-mono">
-                      เชื่อมต่อคลาวด์สตรีมมิ่ง TubeLock
-                    </span>
+            <div className="relative z-10 w-full">
+              {streamUrl ? (
+                <VideoPlayer
+                  src={streamUrl}
+                  poster={video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null)}
+                  storyboard={storyboard}
+                  title={video?.title}
+                  onBack={() => router.push('/')}
+                  resolution={video?.resolution}
+                  width={video?.width}
+                  height={video?.height}
+                  aspectRatio={videoRatio}
+                  fps={video?.fps}
+                  codec={video?.codec}
+                  videoId={video?.id}
+                  videoRef={videoRef}
+                  desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}
+                  defaultVolume={playerConfig?.volume ?? 0.8}
+                  defaultAutoplay={playerConfig?.autoplay ?? true}
+                  defaultSpeed={playerConfig?.default_speed ?? 1}
+                  defaultFit={playerConfig?.default_fit ?? 'fit'}
+                  seekStep={playerConfig?.seek_step ?? 10}
+                  autoStats={playerConfig?.auto_stats ?? false}
+                  onRatioChange={(r) => setDetectedRatio(r)}
+                  ambientMode={ambientMode}
+                  setAmbientMode={handleSetAmbientMode}
+                />
+              ) : (
+                /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
+                <div
+                  className={`relative bg-zinc-950 sm:rounded-2xl overflow-hidden flex items-center justify-center select-none ${videoRatio < 0.98
+                    ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video'
+                    : 'w-full h-auto'
+                    }`}
+                  style={{
+                    aspectRatio: videoRatio < 0.98 ? undefined : `${videoRatio}`,
+                    maxWidth: videoRatio >= 0.98 ? `calc((${DESKTOP_PLAYER_MAX_HEIGHT}) * ${videoRatio})` : undefined,
+                    maxHeight: DESKTOP_PLAYER_MAX_HEIGHT,
+                    margin: videoRatio >= 0.98 ? 0 : '0 auto',
+                  }}
+                >
+                  {/* Background Poster / Thumbnail */}
+                  {video?.thumbnail_url && (
+                    <img
+                      src={video.thumbnail_url}
+                      alt={video?.title || 'Thumbnail'}
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/65 backdrop-blur-[0.5px]" />
+
+                  {/* Center Glowing Spinner */}
+                  <div className="relative z-10 flex flex-col items-center gap-3.5 px-4 text-center">
+                    <div className="relative flex items-center justify-center">
+                      <div className="absolute w-14 h-14 rounded-full bg-[#FF7A00]/25 blur-lg animate-pulse" />
+                      <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-[3px] border-white/15 border-t-[#FF7A00] animate-spin" />
+                    </div>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-white text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md">
+                        กำลังเตรียมสัญญาณภาพ...
+                      </span>
+                      <span className="text-zinc-400 text-[10px] sm:text-[11px] font-mono">
+                        เชื่อมต่อคลาวด์สตรีมมิ่ง TubeLock
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* 📱 YouTube-Style Video Details Section */}
@@ -489,7 +520,7 @@ export default function WatchPage() {
             style={{
               top: playerHeight ? `${playerHeight}px` : 'var(--watch-player-height, 56.25vw)',
             }}
-            className="sticky z-20 bg-[#FBF9F5] dark:bg-[#0F0F0F] -mx-3.5 px-3.5 py-2.5 border-b border-[#EFECE6]/80 dark:border-white/10 lg:static lg:mx-0 lg:px-0 lg:py-0.5 lg:border-none lg:bg-transparent"
+            className="sticky z-20 bg-[#FBF9F5] dark:bg-[#0F0F0F] sm:dark:bg-transparent -mx-3.5 px-3.5 py-2.5 border-b border-[#EFECE6]/80 dark:border-white/10 lg:static lg:mx-0 lg:px-0 lg:py-0.5 lg:border-none lg:bg-transparent"
           >
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 select-none">
               {[

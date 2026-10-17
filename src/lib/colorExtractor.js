@@ -64,7 +64,7 @@ export function extractDominantColor(imgElement) {
     ctx.drawImage(imgElement, 0, 0, size, size);
 
     const imgData = ctx.getImageData(0, 0, size, size).data;
-    
+
     let bestColor = null;
     let maxScore = -1;
     let totalR = 0, totalG = 0, totalB = 0, totalCount = 0;
@@ -111,24 +111,29 @@ export function extractDominantColor(imgElement) {
       targetB = Math.round(totalB / totalCount);
     }
 
-    // คำนวณสีโทน YouTube (ปรับให้อ่อนนุ่มลงนิดนึง กลมกลืนกับพื้นหลัง)
+    // คำนวณสีโปร่งแสงตระกูล Alpha ตามสีเด่นของวิดีโอ (YouTube Translucent Card Hover)
     const hsl = rgbToHsl(targetR, targetG, targetB);
     const isLowSat = hsl.s < 10;
-    const darkSat = isLowSat ? 0 : Math.max(20, Math.min(hsl.s, 30));
-    const lightSat = isLowSat ? 0 : Math.max(12, Math.min(hsl.s, 24));
 
-    const darkBg = isLowSat 
-      ? 'hsl(0, 0%, 14%)' 
-      : `hsl(${hsl.h}, ${darkSat}%, 12.5%)`;
+    // Dark Mode: ใช้ค่า Hue ของวิดีโอคู่กับความสว่าง 60-65% และ Alpha 0.16
+    // ทำให้สีโปร่งแสง ไม่ทับพื้นหลังทึบ แต่แสดงเฉดสีของคลิปนั้นอย่างมีมิติ
+    const darkAlphaBg = isLowSat
+      ? 'rgba(255, 255, 255, 0.08)'
+      : `hsla(${hsl.h}, ${Math.max(45, Math.min(hsl.s, 85))}%, 62%, 0.16)`;
 
-    const lightBg = isLowSat 
-      ? 'hsl(0, 0%, 94%)' 
-      : `hsl(${hsl.h}, ${lightSat}%, 94%)`;
+    // Light Mode: ใช้ค่า Hue ของวิดีโอคู่กับ Alpha 0.09 ให้สีพาสเทลโปร่งแสงนุ่มนวล
+    const lightAlphaBg = isLowSat
+      ? 'rgba(0, 0, 0, 0.05)'
+      : `hsla(${hsl.h}, ${Math.max(45, Math.min(hsl.s, 85))}%, 38%, 0.09)`;
 
     const result = {
       rgb: `${targetR}, ${targetG}, ${targetB}`,
-      darkBg,
-      lightBg,
+      darkBg: darkAlphaBg,
+      lightBg: lightAlphaBg,
+      darkAlphaBg,
+      lightAlphaBg,
+      rgbaDark: `rgba(${targetR}, ${targetG}, ${targetB}, 0.05)`,
+      rgbaLight: `rgba(${targetR}, ${targetG}, ${targetB}, 0.09)`,
     };
 
     colorCache.set(src, result);
