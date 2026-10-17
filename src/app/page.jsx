@@ -195,7 +195,7 @@ export default function FeedPage() {
           /* YOUTUBE PC & MOBILE RESPONSIVE VIDEO GRID */
           <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-y-7 "}>
             {filteredVideos.map((vid) => (
-              <div key={vid.id} className='bg-transparent hover:bg-neutral-200/50 dark:hover:bg-white/5 rounded-2xl p-2 transition-all duration-300 cursor-pointer hover:shadow-xs'>
+              <div key={vid.id}>
                 <VideoCard
                   video={vid}
                   onDelete={(deletedId) => {

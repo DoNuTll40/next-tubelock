@@ -93,3 +93,16 @@ html.dark body {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* YouTube-style Dynamic Card Hover */
+.yt-card-hover {
+  background-color: transparent;
+  transition: background-color 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+.yt-card-hover:hover {
+  background-color: var(--hover-tint-light, #F2EFE9);
+}
+.dark .yt-card-hover:hover {
+  background-color: var(--hover-tint-dark, #242424);
+}
+

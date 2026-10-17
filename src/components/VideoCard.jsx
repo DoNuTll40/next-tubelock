@@ -13,8 +13,9 @@ import {
   Bookmark,
   Share2
 } from 'lucide-react';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
+import { extractDominantColor } from '@/lib/colorExtractor';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
 const preWarmedIds = new Set();
@@ -31,6 +32,8 @@ export default function VideoCard({
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const [dominantColor, setDominantColor] = useState(null);
+  const imgRef = useRef(null);
   const hoverTimerRef = useRef(null);
 
   // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ เมื่อ user hover card
@@ -87,16 +90,36 @@ export default function VideoCard({
   const is4K = resBadge === '4K';
   const is2K = resBadge === '2K';
 
+  // สกัดสีเด่นเมื่อภาพ Thumbnail โหลดเสร็จ (สไตล์ YouTube Themed Color)
+  const handleImageLoad = (e) => {
+    const color = extractDominantColor(e.target);
+    if (color) setDominantColor(color);
+  };
+
+  useEffect(() => {
+    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+      const color = extractDominantColor(imgRef.current);
+      if (color) setDominantColor(color);
+    }
+  }, [effectiveThumbnail]);
+
+  // CSS variables กำหนดสี Hover แบบ YouTube (สีชัดลึกใน Dark Mode / พาสเทลใน Light Mode)
+  const cardHoverStyle = dominantColor ? {
+    '--hover-tint-dark': dominantColor.darkBg,
+    '--hover-tint-light': dominantColor.lightBg,
+  } : undefined;
+
   // ==========================================
   // 1. โหมด HALF (ปุ่ม 3 จุดอยู่มุมล่างขวา แสดงเฉพาะตอน Hover)
   // ==========================================
   if (half) {
     return (
       <div
-        className="flex gap-3 group relative select-none items-stretch p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer"
+        className="flex gap-3 group relative select-none items-stretch p-1.5 -m-1.5 rounded-xl yt-card-hover cursor-pointer"
         onMouseEnter={handlePreWarm}
         onMouseLeave={handlePreWarmCancel}
         onFocus={handlePreWarm}
+        style={cardHoverStyle}
       >
         {/* Thumbnail ฝั่งซ้าย */}
         <Link
@@ -106,9 +129,12 @@ export default function VideoCard({
         >
           {effectiveThumbnail && !imgError ? (
             <img
+              ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
+              crossOrigin="anonymous"
               onError={() => setImgError(true)}
+              onLoad={handleImageLoad}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               loading="lazy"
             />
@@ -177,10 +203,11 @@ export default function VideoCard({
   if (compact) {
     return (
       <div
-        className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl hover:bg-black/[0.04] dark:hover:bg-white/5 transition-colors cursor-pointer"
+        className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl yt-card-hover cursor-pointer"
         onMouseEnter={handlePreWarm}
         onMouseLeave={handlePreWarmCancel}
         onFocus={handlePreWarm}
+        style={cardHoverStyle}
       >
         <Link
           href={`/watch/${video.id}`}
@@ -189,9 +216,12 @@ export default function VideoCard({
         >
           {effectiveThumbnail && !imgError ? (
             <img
+              ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
+              crossOrigin="anonymous"
               onError={() => setImgError(true)}
+              onLoad={handleImageLoad}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               loading="lazy"
             />
@@ -252,26 +282,31 @@ export default function VideoCard({
   // ==========================================
   return (
     <div
-      className="flex flex-col group relative select-none"
+      className="flex flex-col group relative select-none rounded-2xl p-2 yt-card-hover cursor-pointer"
       onMouseEnter={handlePreWarm}
       onMouseLeave={handlePreWarmCancel}
       onFocus={handlePreWarm}
+      style={cardHoverStyle}
     >
       <Link href={`/watch/${video.id}`} replace={replace} className="flex flex-col">
         <div className="relative aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs">
-          {video.thumbnail_url && !imgError ? (
+          {effectiveThumbnail && !imgError ? (
             <>
               <img
-                src={video.thumbnail_url}
+                src={effectiveThumbnail}
                 alt=""
                 aria-hidden="true"
+                crossOrigin="anonymous"
                 onError={() => setImgError(true)}
                 className="absolute inset-0 w-full h-full object-cover blur-sm scale-110 opacity-30 select-none pointer-events-none"
               />
               <img
-                src={video.thumbnail_url}
+                ref={imgRef}
+                src={effectiveThumbnail}
                 alt={video.title}
+                crossOrigin="anonymous"
                 onError={() => setImgError(true)}
+                onLoad={handleImageLoad}
                 className="relative z-10 w-full h-full object-contain drop-shadow-sm"
                 loading="lazy"
               />
@@ -317,7 +352,7 @@ export default function VideoCard({
 
         <div className="flex-1 min-w-0 pr-1">
           <Link href={`/watch/${video.id}`} replace={replace}>
-            <h3 className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] line-clamp-2 leading-snug group-hover:text-[#FF7A00] transition-colors">
+            <h3 className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] line-clamp-2 leading-snug transition-colors">
               {video.title}
             </h3>
           </Link>
