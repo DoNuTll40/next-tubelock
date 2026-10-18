@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
+import { isMusicVideo } from '@/lib/videoUtils';
 
 let tableEnsured = false;
 
@@ -63,14 +65,53 @@ export async function GET(request) {
       await ensureTable(sql);
     }
 
-    // ⚡ Ultra-fast Slim Projection: Omits 3MB source_cache so feed responds in <50ms and consumes 99% less bandwidth
+    // Resolve user_id from session cookie
+    const cookieStore = await cookies();
+    const token = cookieStore.get('tubelock_session')?.value;
+    let userId = null;
+    if (token) {
+      try {
+        const sessionRows = await sql`
+          SELECT user_id FROM user_sessions
+          WHERE session_token = ${token}
+            AND is_active = TRUE
+            AND expires_at > NOW()
+          LIMIT 1;
+        `;
+        if (sessionRows.length > 0) {
+          userId = sessionRows[0].user_id;
+        }
+      } catch (_) {}
+    }
+
+    // ⚡ Ultra-fast Slim Projection with personalized watch_history
     let rows;
-    try {
-      rows = await sql`
+    const fetchVideos = async () => {
+      if (userId) {
+        return sql`
+          SELECT 
+            v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
+            v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, v.source_type,
+            v.user_id,
+            h.last_position_seconds,
+            (h.id IS NOT NULL) AS has_watched,
+            u.name AS author_name,
+            u.email AS author_email,
+            u.picture AS author_picture
+          FROM videos v
+          LEFT JOIN users u ON v.user_id = u.id
+          LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
+          WHERE v.status = 'READY' OR v.status IS NULL 
+          ORDER BY v.created_at DESC;
+        `;
+      }
+      return sql`
         SELECT 
           v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
           v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, v.source_type,
           v.user_id,
+          NULL AS last_position_seconds,
+          FALSE AS has_watched,
           u.name AS author_name,
           u.email AS author_email,
           u.picture AS author_picture
@@ -79,38 +120,38 @@ export async function GET(request) {
         WHERE v.status = 'READY' OR v.status IS NULL 
         ORDER BY v.created_at DESC;
       `;
+    };
+
+    try {
+      rows = await fetchVideos();
     } catch (queryErr) {
-      // Self-heal: If table or column doesn't exist yet, run ensureTable once and retry
       if (!tableEnsured) {
         await ensureTable(sql);
-        rows = await sql`
-          SELECT 
-            v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
-            v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, v.source_type,
-            v.user_id,
-            u.name AS author_name,
-            u.email AS author_email,
-            u.picture AS author_picture
-          FROM videos v
-          LEFT JOIN users u ON v.user_id = u.id
-          WHERE v.status = 'READY' OR v.status IS NULL 
-          ORDER BY v.created_at DESC;
-        `;
+        rows = await fetchVideos();
       } else {
         throw queryErr;
       }
     }
 
-    return NextResponse.json(
-      { success: true, data: rows },
-      {
-        headers: {
+    const headers = userId
+      ? { 'Cache-Control': 'private, no-cache, no-store, must-revalidate' }
+      : {
           'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
           'CDN-Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
           'Vercel-CDN-Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-        },
-      }
-    );
+        };
+
+    const sanitizedRows = (rows || []).map((v) => {
+      const isMusic = isMusicVideo(v);
+      const hasWatched = Boolean(v.has_watched || (v.last_position_seconds !== null && v.last_position_seconds !== undefined));
+      return {
+        ...v,
+        has_watched: hasWatched,
+        last_position_seconds: isMusic ? 0 : (Number(v.last_position_seconds) || 0),
+      };
+    });
+
+    return NextResponse.json({ success: true, data: sanitizedRows }, { headers });
   } catch (err) {
     console.error('[API_VIDEOS_GET_ERROR]:', err);
     return NextResponse.json({ success: false, error: err.message, data: [] }, { status: 500 });

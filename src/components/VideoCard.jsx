@@ -14,7 +14,7 @@ import {
   Share2
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { formatResolutionBadge } from '@/lib/videoUtils';
+import { formatResolutionBadge, isMusicVideo } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
@@ -90,6 +90,48 @@ export default function VideoCard({
   const is4K = resBadge === '4K';
   const is2K = resBadge === '2K';
 
+  // Music category videos never save progress and always restart from 00:00
+  const isMusic = isMusicVideo(video);
+
+  const [localWatched, setLocalWatched] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem(`tubelock_watched_${video?.id}`) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  // Watch History Progress Bar calculation (?t=... & orange bar at bottom of thumbnail)
+  const [localPos, setLocalPos] = useState(() => {
+    if (typeof window === 'undefined' || isMusic) return 0;
+    try {
+      const saved = localStorage.getItem(`tubelock_pos_${video?.id}`);
+      return saved ? parseInt(saved, 10) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  useEffect(() => {
+    if (isMusic && video?.id && typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(`tubelock_pos_${video.id}`);
+      } catch (_) {}
+    }
+  }, [isMusic, video?.id]);
+
+  const hasWatched = Boolean(video?.has_watched || localWatched);
+  const pos = isMusic ? 0 : (Number(video?.last_position_seconds) || localPos || 0);
+  const dur = Number(video?.duration) || 0;
+
+  // เพลง: ถ้าเคยดูแล้วให้เส้นเต็ม 100% เลย ไม่ต้องระบุเวลาดูเหมือนคลิปอื่นๆ
+  const progressPct = isMusic
+    ? (hasWatched ? 100 : 0)
+    : (dur > 0 && pos > 0 ? Math.min((pos / dur) * 100, 100) : 0);
+
+  const watchUrl = `/watch/${video?.id}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
+
   // สกัดสีเด่นเมื่อภาพ Thumbnail โหลดเสร็จ (สไตล์ YouTube Themed Color)
   const handleImageLoad = (e) => {
     const color = extractDominantColor(e.target);
@@ -123,7 +165,7 @@ export default function VideoCard({
       >
         {/* Thumbnail ฝั่งซ้าย */}
         <Link
-          href={`/watch/${video.id}`}
+          href={watchUrl}
           replace={replace}
           className="relative aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
         >
@@ -145,8 +187,18 @@ export default function VideoCard({
           )}
 
           {video.duration > 0 && (
-            <div className="absolute bottom-1 right-1 z-10 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded font-mono">
+            <div className="absolute bottom-1.5 right-1.5 z-10 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded font-mono">
               {formatDuration(video.duration)}
+            </div>
+          )}
+
+          {/* YouTube Watch Progress Bar */}
+          {progressPct > 0 && (
+            <div className="absolute left-0 right-0 bottom-0 z-20 h-1 bg-black/40 overflow-hidden">
+              <div
+                className="h-full bg-[#FF7A00]"
+                style={{ width: `${progressPct}%` }}
+              />
             </div>
           )}
         </Link>
@@ -154,7 +206,7 @@ export default function VideoCard({
         {/* คอลัมน์ข้อมูลฝั่งขวา: relative เพื่อใช้วางปุ่มมุมล่างขวา */}
         <div className="flex-1 min-w-0 pr-8 py-0.5 flex flex-col justify-start relative">
           {/* 1. Title */}
-          <Link href={`/watch/${video.id}`} replace={replace}>
+          <Link href={watchUrl} replace={replace}>
             <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[15px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
               {video.title}
             </h4>
@@ -220,7 +272,7 @@ export default function VideoCard({
         style={cardHoverStyle}
       >
         <Link
-          href={`/watch/${video.id}`}
+          href={watchUrl}
           replace={replace}
           className="relative aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
         >
@@ -246,10 +298,20 @@ export default function VideoCard({
               {formatDuration(video.duration)}
             </div>
           )}
+
+          {/* YouTube Watch Progress Bar */}
+          {progressPct > 0 && (
+            <div className="absolute left-0 right-0 bottom-0 z-20 h-1 bg-black/40 overflow-hidden">
+              <div
+                className="h-full bg-[#FF7A00]"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+          )}
         </Link>
 
         <div className="flex-1 min-w-0 pr-1 flex flex-col justify-start">
-          <Link href={`/watch/${video.id}`} replace={replace}>
+          <Link href={watchUrl} replace={replace}>
             <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
               {video.title}
             </h4>
@@ -308,7 +370,7 @@ export default function VideoCard({
       onFocus={handlePreWarm}
       style={cardHoverStyle}
     >
-      <Link href={`/watch/${video.id}`} replace={replace} className="flex flex-col">
+      <Link href={watchUrl} replace={replace} className="flex flex-col">
         <div className="relative aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs">
           {effectiveThumbnail && !imgError ? (
             <>
@@ -362,6 +424,16 @@ export default function VideoCard({
               {formatDuration(video.duration)}
             </div>
           )}
+
+          {/* YouTube Watch Progress Bar */}
+          {progressPct > 0 && (
+            <div className="absolute left-0 right-0 bottom-0 z-20 h-1 bg-black/40 overflow-hidden">
+              <div
+                className="h-full bg-[#FF7A00]"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+          )}
         </div>
       </Link>
 
@@ -384,7 +456,7 @@ export default function VideoCard({
         </div>
 
         <div className="flex-1 min-w-0 pr-1">
-          <Link href={`/watch/${video.id}`} replace={replace}>
+          <Link href={watchUrl} replace={replace}>
             <h3 className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] line-clamp-2 leading-snug transition-colors">
               {video.title}
             </h3>

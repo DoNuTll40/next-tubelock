@@ -64,7 +64,7 @@ export default function SyncPage() {
         setLogs((prev) => [...prev, ...data.logs]);
       }
 
-      addLog(`✨ ซิงก์สำเร็จ! นำเข้า/อัปเดตลง Neon DB เรียบร้อย (${data.count} วิดีโอ)`);
+      addLog(`ซิงก์สำเร็จ! นำเข้า/อัปเดตลง Neon DB เรียบร้อย (${data.count} วิดีโอ)`);
       setSummary({ total: data.total || data.count, imported: data.count, videos: data.videos });
     } catch (err) {
       console.error('[Sync Error]:', err);

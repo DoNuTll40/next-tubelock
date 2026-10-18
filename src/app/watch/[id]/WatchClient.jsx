@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import VideoPlayer from '@/components/VideoPlayer';
 import VideoCard from '@/components/VideoCard';
@@ -9,11 +9,11 @@ import AmbientLight from '@/components/player/AmbientLight';
 import DescriptionBox from '@/components/watch/DescriptionBox';
 import {
   Share2, ThumbsUp, ThumbsDown,
-  Sparkles, Bookmark, UploadCloud,
+  Film, Bookmark, UploadCloud,
   AlertCircle, ArrowLeft
 } from 'lucide-react';
 import { resolveClientPlaybackSource } from '@/lib/playbackResolver';
-import { formatResolutionBadge } from '@/lib/videoUtils';
+import { formatResolutionBadge, parseTimestamp, isMusicVideo } from '@/lib/videoUtils';
 
 // ============================================================================
 // 🎛️ [Video Player Desktop Height Settings]
@@ -21,8 +21,12 @@ import { formatResolutionBadge } from '@/lib/videoUtils';
 const DESKTOP_HEADER_OFFSET_PX = 105;
 const DESKTOP_PLAYER_MAX_HEIGHT = `calc(100vh - ${DESKTOP_HEADER_OFFSET_PX}px)`;
 
-export default function WatchClient({ initialVideo, initialRelated = [] }) {
+export default function WatchClient({ initialVideo, initialRelated = [], initialTime = 0 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlT = searchParams?.get('t');
+  const isMusic = isMusicVideo(initialVideo);
+  const targetInitialTime = isMusic ? 0 : (urlT ? parseTimestamp(urlT) : (Number(initialTime) || 0));
   const id = initialVideo?.id;
 
   // SSR Initialized State — Zero Waiting, Zero Mock Skeletons!
@@ -389,6 +393,8 @@ export default function WatchClient({ initialVideo, initialRelated = [] }) {
                   defaultFit={playerConfig?.default_fit ?? 'fit'}
                   seekStep={playerConfig?.seek_step ?? 10}
                   autoStats={playerConfig?.auto_stats ?? false}
+                  initialTime={targetInitialTime}
+                  isMusic={isMusic}
                   onRatioChange={(r) => setDetectedRatio(r)}
                   ambientMode={ambientMode}
                   setAmbientMode={handleSetAmbientMode}
@@ -576,7 +582,7 @@ export default function WatchClient({ initialVideo, initialRelated = [] }) {
             /* Premium YouTube-Style Empty Recommendations Card */
             <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-6 text-center shadow-xs flex flex-col items-center gap-3.5 mt-1">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#FF7A00]/15 to-[#FF9E40]/25 flex items-center justify-center text-[#FF7A00]">
-                <Sparkles className="w-6 h-6" />
+                <Film className="w-6 h-6 stroke-[1.8]" />
               </div>
               <div className="flex flex-col gap-1">
                 <h3 className="text-sm font-bold text-[#0F0F0F] dark:text-[#F1F1F1]">

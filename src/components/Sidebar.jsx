@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/context/SidebarContext';
 import { 
-  Home, History, PlusSquare, RefreshCw, 
+  Home, History, PlusSquare, 
   Settings, PlaySquare, ChevronRight, ListOrdered, Gauge
 } from 'lucide-react';
 
@@ -22,7 +22,6 @@ export default function Sidebar() {
     { label: 'หน้าแรก', path: '/', icon: Home, exact: true },
     { label: 'อัปโหลด', path: '/upload', icon: PlusSquare, exact: true },
     { label: 'คิวแปลงไฟล์', path: '/upload/queue', icon: ListOrdered, exact: true },
-    { label: 'ซิงก์ OneDrive', path: '/sync', icon: RefreshCw, exact: false },
   ];
 
   const userItems = [
@@ -50,7 +49,6 @@ export default function Sidebar() {
           { label: 'อัปโหลด', path: '/upload', icon: PlusSquare, exact: true },
           { label: 'คิวงาน', path: '/upload/queue', icon: ListOrdered, exact: true },
           { label: 'ประวัติ', path: '/history', icon: History, exact: false },
-          { label: 'ซิงก์', path: '/sync', icon: RefreshCw, exact: false },
           { label: 'เบนช์มาร์ก', path: '/benchmark', icon: Gauge, exact: false },
           { label: 'ตั้งค่า', path: '/settings', icon: Settings, exact: false },
         ].map((item) => {

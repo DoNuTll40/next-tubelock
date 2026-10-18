@@ -4,7 +4,7 @@ import React from 'react';
 import { useTheme } from '@/context/ThemeContext';
 import SettingCard from '@/components/ui/SettingCard';
 import SettingRow from '@/components/ui/SettingRow';
-import { Sun, Moon, Monitor, CheckCircle2, Sparkles, ShieldCheck } from 'lucide-react';
+import { Sun, Moon, Monitor, CheckCircle2, ShieldCheck } from 'lucide-react';
 
 const THEME_OPTIONS = [
   {
@@ -135,7 +135,6 @@ export default function GeneralSection() {
           {/* Dynamic Active Theme Status Banner */}
           <div className="mt-2 p-3.5 rounded-xl bg-[#FBF9F5] dark:bg-white/5 border border-[#EFECE6] dark:border-white/10 flex items-center justify-between text-xs">
             <div className="flex items-center gap-2.5">
-              {/* <Sparkles className="w-4 h-4 text-[#FF7A00] shrink-0" /> */}
               <span className="text-[#3A352F] dark:text-[#CCCCCC]">
                 สถานะการแสดงผลปัจจุบัน
                 <strong className="text-[#FF7A00] ml-1.5">

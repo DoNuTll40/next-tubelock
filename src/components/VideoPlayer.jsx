@@ -30,6 +30,8 @@ export default function VideoPlayer({
   defaultFit = 'fit',
   seekStep = 10,
   autoStats = false,
+  initialTime = 0,
+  isMusic = false,
   onTimeUpdate,
   onLoadedMetadata,
   onRatioChange = null,
@@ -48,6 +50,20 @@ export default function VideoPlayer({
   const seekTrackRef = useRef(null);
   const hlsInstanceRef = useRef(null);
   const hlsRetryCountRef = useRef(0);
+
+  // Resume / Timestamp seeking support (?t=seconds)
+  // For music: always restart from 00:00 (targetInitialTime = 0)
+  const initialSeekDoneRef = useRef(false);
+  const targetInitialTime = isMusic ? 0 : (Number(initialTime) || 0);
+
+  useEffect(() => {
+    initialSeekDoneRef.current = false;
+    if (isMusic && videoId && typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(`tubelock_pos_${videoId}`);
+      } catch (_) {}
+    }
+  }, [src, videoId, targetInitialTime, isMusic]);
 
   // Performance Direct-DOM Refs (Prevents React re-render thrashing!)
   const progressBarRef = useRef(null);
@@ -260,6 +276,7 @@ export default function VideoPlayer({
   const [isLooping, setIsLooping] = useState(false);
   const controlsTimeoutRef = useRef(null);
   const lastSavedTimeRef = useRef(0);
+  const lastSavedHistoryTimeRef = useRef(0);
 
   // ── Quality View Counting Tracker (Anti-Spam & 15s Watch Threshold) ──
   const accumulatedWatchTimeRef = useRef(0);
@@ -319,6 +336,29 @@ export default function VideoPlayer({
       setPlaybackRate(defaultSpeed);
     }
   }, [defaultVolume, defaultSpeed, video]);
+
+  // Resume / initial seek synchronization (?t=seconds)
+  useEffect(() => {
+    if (targetInitialTime > 0 && !initialSeekDoneRef.current && video.current) {
+      const v = video.current;
+      if (v.readyState >= 1) {
+        initialSeekDoneRef.current = true;
+        try {
+          v.currentTime = targetInitialTime;
+          setCurrentTime(targetInitialTime);
+          const dur = v.duration || duration;
+          if (dur > 0) {
+            const pct = Math.min((targetInitialTime / dur) * 100, 100);
+            if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
+            if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
+            if (timeDisplayRef.current) {
+              timeDisplayRef.current.textContent = `${formatTime(targetInitialTime)} / ${formatTime(dur)}`;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  }, [targetInitialTime, duration, video]);
 
   // Direct DOM Buffer Progress Update (Zero React re-render overhead!)
   const updateBufferProgress = useCallback(() => {
@@ -424,6 +464,32 @@ export default function VideoPlayer({
       if (onTimeUpdate) onTimeUpdate(e);
       lastSavedTimeRef.current = now;
     }
+
+    // Auto-save Watch History to database every 5 seconds
+    if (videoId && cur > 1 && now - lastSavedHistoryTimeRef.current > 5000) {
+      lastSavedHistoryTimeRef.current = now;
+      const historyPayload = JSON.stringify({ videoId, position: isMusic ? 0 : Math.floor(cur) });
+      if (isMusic) {
+        try {
+          localStorage.setItem(`tubelock_watched_${videoId}`, '1');
+          localStorage.removeItem(`tubelock_pos_${videoId}`);
+        } catch (_) {}
+      } else {
+        try {
+          localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(cur)));
+        } catch (_) {}
+      }
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        navigator.sendBeacon('/api/history', historyPayload);
+      } else {
+        fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: historyPayload,
+          keepalive: true,
+        }).catch(() => {});
+      }
+    }
   };
 
 
@@ -510,6 +576,8 @@ export default function VideoPlayer({
           const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
           const hls = new Hls({
+            startPosition: targetInitialTime > 0 ? targetInitialTime : -1,
+
             // mobile: บังคับเริ่มที่ level 0 (ต่ำสุด = 144p) แล้วค่อย ramp-up
             // desktop: ปล่อย ABR เลือกเอง (-1)
             startLevel: isMobile ? 0 : -1,
@@ -549,6 +617,15 @@ export default function VideoPlayer({
 
           hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
             setIsBuffering(false);
+            if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
+              initialSeekDoneRef.current = true;
+              setCurrentTime(targetInitialTime);
+              if (v) {
+                try {
+                  v.currentTime = targetInitialTime;
+                } catch (_) {}
+              }
+            }
             if (data.levels && data.levels.length > 0) {
               const videoFps = Number(fps) || 0;
               const parsed = data.levels.map((lvl, index) => {
@@ -656,10 +733,40 @@ export default function VideoPlayer({
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
           // Native Safari Apple hardware acceleration
           v.src = src;
+          if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
+            initialSeekDoneRef.current = true;
+            const applySeek = () => {
+              try {
+                v.currentTime = targetInitialTime;
+                setCurrentTime(targetInitialTime);
+              } catch (_) {}
+              v.removeEventListener('loadedmetadata', applySeek);
+            };
+            if (v.readyState >= 1) {
+              applySeek();
+            } else {
+              v.addEventListener('loadedmetadata', applySeek);
+            }
+          }
         }
       } else {
         // Direct MP4 - Clean Native Playback
         v.src = src;
+        if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
+          initialSeekDoneRef.current = true;
+          const applySeek = () => {
+            try {
+              v.currentTime = targetInitialTime;
+              setCurrentTime(targetInitialTime);
+            } catch (_) {}
+            v.removeEventListener('loadedmetadata', applySeek);
+          };
+          if (v.readyState >= 1) {
+            applySeek();
+          } else {
+            v.addEventListener('loadedmetadata', applySeek);
+          }
+        }
         if (defaultAutoplay && !isUserPausedRef.current) {
           v.play().then(() => setIsPlaying(true)).catch(() => {
             v.muted = true;
@@ -1453,8 +1560,8 @@ export default function VideoPlayer({
       className={`relative bg-transparent select-none overflow-hidden group/player ${isFullscreen
         ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
         : (videoRatio && videoRatio < 0.98)
-          ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-md'
-          : 'w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-md'
+          ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
+          : 'w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border-0 sm:border-black/10 shadow-none sm:shadow-none'
         } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
         aspectRatio: isFullscreen
@@ -1504,6 +1611,30 @@ export default function VideoPlayer({
         onPause={() => {
           setIsPlaying(false);
           lastTickTimeRef.current = null;
+          const v = video.current;
+          if (videoId && v && v.currentTime > 1) {
+            const historyPayload = JSON.stringify({ videoId, position: isMusic ? 0 : Math.floor(v.currentTime) });
+            if (isMusic) {
+              try {
+                localStorage.setItem(`tubelock_watched_${videoId}`, '1');
+                localStorage.removeItem(`tubelock_pos_${videoId}`);
+              } catch (_) {}
+            } else {
+              try {
+                localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(v.currentTime)));
+              } catch (_) {}
+            }
+            if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+              navigator.sendBeacon('/api/history', historyPayload);
+            } else {
+              fetch('/api/history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: historyPayload,
+                keepalive: true,
+              }).catch(() => {});
+            }
+          }
         }}
         onError={(e) => {
           const err = e.target.error;
@@ -1551,6 +1682,24 @@ export default function VideoPlayer({
           checkAndUpdateRatio();
           if (dur) setDuration(dur);
           updateBufferProgress();
+
+          if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
+            initialSeekDoneRef.current = true;
+            try {
+              e.target.currentTime = targetInitialTime;
+              setCurrentTime(targetInitialTime);
+            } catch (_) {}
+          }
+
+          if (dur && dur > 0 && targetInitialTime > 0) {
+            const pct = Math.min((targetInitialTime / dur) * 100, 100);
+            if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
+            if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
+            if (timeDisplayRef.current) {
+              timeDisplayRef.current.textContent = `${formatTime(targetInitialTime)} / ${formatTime(dur)}`;
+            }
+          }
+
           if (onLoadedMetadata) onLoadedMetadata(e);
         }}
         className={`w-full h-full pointer-events-none block ${aspectMode === 'crop'

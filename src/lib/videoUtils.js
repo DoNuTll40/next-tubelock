@@ -276,3 +276,78 @@ export function detectCodec(fourCC = '', fallback = 'h264') {
   return f;
 }
 
+/**
+ * Parses time formats into seconds:
+ * - Pure seconds: "649", "649s", 649 -> 649
+ * - YouTube formats: "10m49s", "1h2m3s", "45s" -> 649
+ * - Colon formats: "10:49", "1:10:49" -> 649, 4249
+ */
+export function parseTimestamp(t) {
+  if (!t && t !== 0) return 0;
+  if (typeof t === 'number') return Math.max(0, t);
+  const str = String(t).trim().toLowerCase();
+  if (!str) return 0;
+
+  // Pure digits or number ending in 's' (e.g. "649", "649s")
+  if (/^\d+(\.\d+)?s?$/.test(str)) {
+    return Math.max(0, parseFloat(str) || 0);
+  }
+
+  // Format: 1h2m3s, 10m49s, 45s
+  const hourMatch = str.match(/(\d+)h/);
+  const minMatch = str.match(/(\d+)m/);
+  const secMatch = str.match(/(\d+)s/);
+  if (hourMatch || minMatch || secMatch) {
+    const h = hourMatch ? parseInt(hourMatch[1], 10) : 0;
+    const m = minMatch ? parseInt(minMatch[1], 10) : 0;
+    const s = secMatch ? parseInt(secMatch[1], 10) : 0;
+    return Math.max(0, h * 3600 + m * 60 + s);
+  }
+
+  // Format: "10:49" or "1:10:49"
+  if (str.includes(':')) {
+    const parts = str.split(':').map(Number);
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      return Math.max(0, parts[0] * 60 + parts[1]);
+    }
+    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
+    }
+  }
+
+  const num = parseFloat(str);
+  return isNaN(num) ? 0 : Math.max(0, num);
+}
+
+/**
+ * Checks if a video belongs to the Music category
+ * (Music tracks always restart from 0:00 and do not save progress)
+ */
+export function isMusicVideo(video) {
+  if (!video) return false;
+  const cat = String(video.category || '').toLowerCase().trim();
+  if (cat === 'music' || cat === 'เพลง') return true;
+
+  const tags = Array.isArray(video.tags)
+    ? video.tags.map((t) => String(t).toLowerCase())
+    : typeof video.tags === 'string'
+      ? video.tags.toLowerCase().split(/[,\s]+/)
+      : [];
+  if (tags.includes('music') || tags.includes('เพลง')) return true;
+
+  const title = String(video.title || '').toLowerCase();
+  if (
+    title.includes('official mv') ||
+    title.includes('【official mv】') ||
+    title.includes('[official mv]') ||
+    title.includes('mv') ||
+    title.includes('เพลง')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+
+

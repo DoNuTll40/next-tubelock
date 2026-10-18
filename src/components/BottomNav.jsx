@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, History, Plus, RefreshCw, Settings } from 'lucide-react';
+import { Home, History, Plus, PlaySquare, Settings } from 'lucide-react';
 
 export default function BottomNav() {
   const pathname = usePathname();
@@ -16,7 +16,7 @@ export default function BottomNav() {
     { label: 'หน้าแรก', path: '/', icon: Home },
     { label: 'ประวัติ', path: '/history', icon: History },
     { label: 'อัปโหลด', path: '/upload', icon: Plus, isPrimary: true, isDev: false },
-    { label: 'ซิงก์', path: '/sync', icon: RefreshCw },
+    { label: 'คลังวิดีโอ', path: '/videos', icon: PlaySquare },
     { label: 'ตั้งค่า', path: '/settings', icon: Settings },
   ];
 

@@ -287,7 +287,13 @@ function SettingsContent() {
   // ─── Other actions ────────────────────────────────────────────────────────
   const handleClearHistory = async () => {
     if (window.confirm('คุณต้องการล้างประวัติการดูและตำแหน่งเวลาทั้งหมดใช่หรือไม่?')) {
-      alert('ล้างประวัติการรับชมเรียบร้อยแล้ว');
+      try {
+        await fetch('/api/history?all=true', { method: 'DELETE' });
+        alert('ล้างประวัติการรับชมเรียบร้อยแล้ว');
+      } catch (err) {
+        console.error('Failed to clear history:', err);
+        alert('เกิดข้อผิดพลาดในการล้างประวัติ');
+      }
     }
   };
 

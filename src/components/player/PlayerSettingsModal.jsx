@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, Sparkles
+  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2
 } from 'lucide-react';
 import AmbientModeIcon from '../icons/AmbientModeIcon';
 
@@ -222,7 +222,7 @@ export default function PlayerSettingsModal({
                       className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
                     >
                       <div className="flex items-center gap-3.5">
-                        <Sparkles className="w-5 h-5 text-[#FF7A00] shrink-0" />
+                        <AmbientModeIcon className="w-5 h-5 text-[#FF7A00] shrink-0" />
                         <span className="text-[14px] text-zinc-200 font-medium">โหมด Ambient</span>
                       </div>
                       <div className="flex items-center gap-2">

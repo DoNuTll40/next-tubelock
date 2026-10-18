@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/context/SidebarContext';
 import {
-  Menu, Layers, Home, PlusSquare, RefreshCw,
+  Menu, Layers, Home, PlusSquare,
   History, PlaySquare, Settings, Gauge, ChevronRight, X, ListOrdered
 } from 'lucide-react';
 
@@ -42,7 +42,6 @@ export default function SidebarDrawer() {
     { label: 'หน้าแรก', path: '/', icon: Home, exact: true },
     { label: 'อัปโหลด', path: '/upload', icon: PlusSquare, exact: true },
     { label: 'คิวแปลงไฟล์', path: '/upload/queue', icon: ListOrdered, exact: true },
-    { label: 'ซิงก์ OneDrive', path: '/sync', icon: RefreshCw, exact: false },
   ];
 
   const userItems = [
