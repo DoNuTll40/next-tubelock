@@ -13,7 +13,7 @@ import {
   AlertCircle, ArrowLeft
 } from 'lucide-react';
 import { resolveClientPlaybackSource } from '@/lib/playbackResolver';
-import { formatResolutionBadge, parseTimestamp, isMusicVideo } from '@/lib/videoUtils';
+import { formatResolutionBadge, parseTimestamp, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
 
 // ============================================================================
 // 🎛️ [Video Player Desktop Height Settings]
@@ -385,6 +385,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   fps={video?.fps}
                   codec={video?.codec}
                   videoId={video?.id}
+                  videoSlug={video?.slug || encodeVideoSlug(video?.id, video?.category)}
+                  videoCategory={video?.category}
                   videoRef={videoRef}
                   desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}
                   defaultVolume={playerConfig?.volume ?? 0.8}

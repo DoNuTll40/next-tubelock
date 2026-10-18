@@ -24,6 +24,8 @@ export default function VideoPlayer({
   fps,
   codec = 'h264',
   videoId,
+  videoSlug,
+  videoCategory,
   defaultVolume = 0.8,
   defaultAutoplay = true,
   defaultSpeed = 1,
@@ -1776,6 +1778,8 @@ export default function VideoPlayer({
         fps={fps}
         codec={codec}
         videoId={videoId}
+        videoSlug={videoSlug}
+        videoCategory={videoCategory}
         src={src}
         showToast={showToast}
       />

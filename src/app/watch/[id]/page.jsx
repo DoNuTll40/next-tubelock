@@ -118,15 +118,17 @@ export default async function WatchPage({ params, searchParams }) {
       notFound();
     }
 
+    const canonicalSlug = encodeVideoSlug(videoRows[0].id, videoRows[0].category);
+
     video = {
       ...videoRows[0],
+      slug: canonicalSlug,
       created_at: videoRows[0].created_at ? new Date(videoRows[0].created_at).toISOString() : null,
       views_count: Number(videoRows[0].views_count || 0),
     };
 
     // Canonical URL redirection: if accessed with numeric ID (e.g. /watch/851), redirect to /watch/v_g...
     if (/^\d+$/.test(rawSlug)) {
-      const canonicalSlug = encodeVideoSlug(video.id, video.category);
       if (canonicalSlug && canonicalSlug !== rawSlug) {
         const urlT = resolvedSearchParams?.t;
         redirect(`/watch/${canonicalSlug}${urlT ? `?t=${urlT}` : ''}`);

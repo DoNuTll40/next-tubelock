@@ -345,7 +345,7 @@ export async function uploadVideoFile(file, options = {}) {
   if (!completeRes.ok || !completeData.success) {
     onLog(`⚠️ บันทึกลงฐานข้อมูลไม่สมบูรณ์ แต่ไฟล์อยู่บน OneDrive แล้ว`);
   } else {
-    onLog(`✨ บันทึกลงฐานข้อมูล Neon สำเร็จ! Video ID: ${completeData.video?.id}`);
+    onLog(`✅ บันทึกลงฐานข้อมูล Neon สำเร็จ! Video ID: ${completeData.video?.id}`);
   }
 
   return {

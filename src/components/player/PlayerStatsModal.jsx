@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Activity, Copy, X, AlertTriangle, Zap } from 'lucide-react';
+import { encodeVideoSlug } from '@/lib/videoUtils';
 
 export default function PlayerStatsModal({
   showStats,
@@ -15,6 +16,8 @@ export default function PlayerStatsModal({
   fps = 30,
   codec = 'h264',
   videoId = '',
+  videoSlug = '',
+  videoCategory = '',
   src = '',
   showToast,
 }) {
@@ -258,6 +261,18 @@ export default function PlayerStatsModal({
     return () => clearInterval(interval);
   }, [showStats, video, hlsRef, containerRef, src, codec, fps]);
 
+  const displayVideoId = useMemo(() => {
+    if (videoSlug) return videoSlug;
+    const str = String(videoId || '').trim();
+    if (!str) return 'N/A';
+    if (str.startsWith('v_')) return str;
+    if (/^\d+$/.test(str)) {
+      const slug = encodeVideoSlug(str, videoCategory);
+      if (slug) return slug;
+    }
+    return str;
+  }, [videoId, videoSlug, videoCategory]);
+
   if (!showStats) return null;
 
   const currentFpsNumber = parseFloat(realtimeFps) || 0;
@@ -265,7 +280,7 @@ export default function PlayerStatsModal({
 
   const handleCopy = () => {
     const text = [
-      `Video ID / sCPN: ${videoId || 'N/A'} / ${stats.sCPN || 'N/A'}`,
+      `Video ID / sCPN: ${displayVideoId || 'N/A'} / ${stats.sCPN || 'N/A'}`,
       `Viewport / Frames: ${stats.viewport}*${stats.dpr} / ${stats.droppedFrames} dropped of ${stats.totalFrames} (${stats.dropRate})`,
       `Current / Optimal Res: ${stats.currentRes}@${fps || 30} / ${stats.optimalRes}@${fps || 30}`,
       `Volume / Normalized: ${stats.volumeNormalized}`,
@@ -339,7 +354,7 @@ export default function PlayerStatsModal({
         <div className="flex justify-between items-center py-0.5 border-b border-white/5">
           <span className="text-zinc-400">Video ID / sCPN</span>
           <span className="text-zinc-100 font-medium truncate ml-3 max-w-[210px] sm:max-w-[240px]">
-            {videoId || '827'} / {stats.sCPN}
+            {displayVideoId || 'N/A'} / {stats.sCPN}
           </span>
         </div>
 
