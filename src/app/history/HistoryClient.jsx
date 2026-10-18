@@ -7,7 +7,7 @@ import {
   Search, Trash2, PauseCircle, PlayCircle,
   X, AlertTriangle, ArrowRight, Film
 } from 'lucide-react';
-import { formatResolutionBadge, isMusicVideo } from '@/lib/videoUtils';
+import { formatResolutionBadge, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 
 // Helper: Group items by Date (YouTube Standard: วันนี้, เมื่อวานนี้, สัปดาห์นี้, เดือนนี้, ก่อนหน้านี้)
@@ -89,7 +89,8 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   const pos = isMusic ? 0 : (item.last_position_seconds || 0);
   // เพลงในหน้าประวัติการรับชม: เคยดูแล้วให้เส้นเต็ม 100% เลย ไม่ระบุเวลาดู
   const progressPct = isMusic ? 100 : (dur > 0 && pos > 0 ? Math.min((pos / dur) * 100, 100) : 0);
-  const watchUrl = `/watch/${item.video_id}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
+  const videoSlug = encodeVideoSlug(item.video_id, item.category) || item.video_id;
+  const watchUrl = `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
 
   const handleImageLoad = (e) => {
     const color = extractDominantColor(e.target);

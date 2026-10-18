@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
+import { decodeVideoSlug } from '@/lib/videoUtils';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -61,8 +62,10 @@ async function ensureSourceCacheColumns(sql) {
  */
 export async function GET(request, context) {
   try {
-    const { id } = await context.params;
-    if (!id) {
+    const { id: rawId } = await context.params;
+    const numericId = decodeVideoSlug(rawId) || parseInt(rawId, 10);
+    const id = numericId;
+    if (!id || isNaN(id)) {
       return NextResponse.json({ success: false, error: 'Video ID is required' }, { status: 400 });
     }
 

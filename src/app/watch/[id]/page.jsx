@@ -1,20 +1,23 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
-import { parseTimestamp, isMusicVideo } from '@/lib/videoUtils';
+import { parseTimestamp, isMusicVideo, decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
 import WatchClient from './WatchClient';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function generateMetadata({ params }) {
-  const { id } = await params;
+  const { id: rawSlug } = await params;
+  const numericId = decodeVideoSlug(rawSlug);
+  if (!numericId) return { title: 'TubeLock' };
+
   try {
     const sql = getDb();
     const rows = await sql`
       SELECT id, title, description, thumbnail_url, tags, category
       FROM videos
-      WHERE id = ${id}
+      WHERE id = ${numericId}
       LIMIT 1;
     `;
     if (!rows || rows.length === 0) {
@@ -36,7 +39,12 @@ export async function generateMetadata({ params }) {
 }
 
 export default async function WatchPage({ params, searchParams }) {
-  const { id } = await params;
+  const { id: rawSlug } = await params;
+  const numericId = decodeVideoSlug(rawSlug);
+  if (!numericId) {
+    notFound();
+  }
+
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const initialTime = parseTimestamp(resolvedSearchParams?.t);
   const sql = getDb();
@@ -71,7 +79,7 @@ export default async function WatchPage({ params, searchParams }) {
           u.name AS author_name, u.email AS author_email, u.picture AS author_picture
         FROM videos v
         LEFT JOIN users u ON v.user_id = u.id
-        WHERE v.id = ${id}
+        WHERE v.id = ${numericId}
         LIMIT 1;
       `,
       userId
@@ -86,7 +94,7 @@ export default async function WatchPage({ params, searchParams }) {
             FROM videos v
             LEFT JOIN users u ON v.user_id = u.id
             LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
-            WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${id}
+            WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
             ORDER BY v.created_at DESC
             LIMIT 30;
           `
@@ -100,7 +108,7 @@ export default async function WatchPage({ params, searchParams }) {
               u.name AS author_name, u.email AS author_email, u.picture AS author_picture
             FROM videos v
             LEFT JOIN users u ON v.user_id = u.id
-            WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${id}
+            WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
             ORDER BY v.created_at DESC
             LIMIT 30;
           `
@@ -116,6 +124,15 @@ export default async function WatchPage({ params, searchParams }) {
       views_count: Number(videoRows[0].views_count || 0),
     };
 
+    // Canonical URL redirection: if accessed with numeric ID (e.g. /watch/851), redirect to /watch/v_g...
+    if (/^\d+$/.test(rawSlug)) {
+      const canonicalSlug = encodeVideoSlug(video.id, video.category);
+      if (canonicalSlug && canonicalSlug !== rawSlug) {
+        const urlT = resolvedSearchParams?.t;
+        redirect(`/watch/${canonicalSlug}${urlT ? `?t=${urlT}` : ''}`);
+      }
+    }
+
     relatedVideos = relatedRows.map((item) => {
       const isItemMusic = isMusicVideo(item);
       const hasWatched = Boolean(item.has_watched || (item.last_position_seconds !== null && item.last_position_seconds !== undefined));
@@ -128,6 +145,10 @@ export default async function WatchPage({ params, searchParams }) {
       };
     });
   } catch (err) {
+    // Re-throw Next.js redirect or notFound
+    if (err?.message === 'NEXT_REDIRECT' || err?.digest?.startsWith('NEXT_REDIRECT')) {
+      throw err;
+    }
     console.error('[WatchPage SSR Error]:', err);
     notFound();
   }

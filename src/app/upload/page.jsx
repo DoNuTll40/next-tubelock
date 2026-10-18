@@ -14,7 +14,8 @@ import { extractVideoMetadata } from '@/lib/uploader';
 import {
   formatAspectRatio,
   detectResolutionLabel,
-  detectCodecFromHeader
+  detectCodecFromHeader,
+  encodeVideoSlug
 } from '@/lib/videoUtils';
 
 const STAGES = [
@@ -28,6 +29,7 @@ const STAGES = [
 const UPLOAD_CATEGORIES = [
   { value: 'general', label: 'ทั่วไป (General)' },
   { value: 'shorts', label: 'วิดีโอสั้น (Shorts)' },
+  { value: 'cinema', label: 'ภาพยนตร์ / ซีรีส์ (Cinema)' },
   { value: 'music', label: 'เพลง / ดนตรี (Music)' },
   { value: 'entertainment', label: 'บันเทิง / วาไรตี้' },
   { value: 'gaming', label: 'เกม (Gaming)' },
@@ -738,8 +740,9 @@ export default function UploadPage() {
     setTimeout(() => setCopiedLog(false), 2000);
   };
 
-  const copyWatchLink = (vidId) => {
-    const url = `${window.location.origin}/watch/${vidId}`;
+  const copyWatchLink = (vidId, cat = '') => {
+    const slug = encodeVideoSlug(vidId, cat || category) || vidId;
+    const url = `${window.location.origin}/watch/${slug}`;
     navigator.clipboard.writeText(url);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -1256,7 +1259,7 @@ export default function UploadPage() {
 
                     <div className="flex items-center gap-2 shrink-0">
                       <Link
-                        href={`/watch/${completedVideo.id}`}
+                        href={`/watch/${encodeVideoSlug(completedVideo.id, completedVideo.category || category) || completedVideo.id}`}
                         className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition"
                       >
                         <Play className="w-3.5 h-3.5 fill-white" />
@@ -1265,7 +1268,7 @@ export default function UploadPage() {
 
                       <button
                         type="button"
-                        onClick={() => copyWatchLink(completedVideo.id)}
+                        onClick={() => copyWatchLink(completedVideo.id, completedVideo.category || category)}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white dark:bg-white/10 border border-emerald-300 dark:border-emerald-700/50 text-emerald-900 dark:text-emerald-200 font-semibold text-xs hover:bg-emerald-100 dark:hover:bg-white/15 transition cursor-pointer"
                       >
                         {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}

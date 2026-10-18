@@ -14,7 +14,7 @@ import {
   Share2
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { formatResolutionBadge, isMusicVideo } from '@/lib/videoUtils';
+import { formatResolutionBadge, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
@@ -130,7 +130,8 @@ export default function VideoCard({
     ? (hasWatched ? 100 : 0)
     : (dur > 0 && pos > 0 ? Math.min((pos / dur) * 100, 100) : 0);
 
-  const watchUrl = `/watch/${video?.id}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
+  const videoSlug = encodeVideoSlug(video?.id, video?.category) || video?.id;
+  const watchUrl = `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
 
   // สกัดสีเด่นเมื่อภาพ Thumbnail โหลดเสร็จ (สไตล์ YouTube Themed Color)
   const handleImageLoad = (e) => {
@@ -512,6 +513,7 @@ function VideoMenu({
   canDelete = false,
 }) {
   const isHalf = variant === 'half';
+  const slug = encodeVideoSlug(video?.id, video?.category) || video?.id;
 
   return (
     <div className="relative shrink-0">
@@ -549,7 +551,7 @@ function VideoMenu({
               onClick={(e) => e.stopPropagation()}
             >
               <Link
-                href={`/watch/${video.id}`}
+                href={`/watch/${slug}`}
                 className="w-full px-4 py-2.5 hover:bg-white/10 flex items-center gap-3.5 transition-colors"
                 onClick={() => setShowMenu(false)}
               >
@@ -587,7 +589,7 @@ function VideoMenu({
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/watch/${video.id}`);
+                  navigator.clipboard.writeText(`${window.location.origin}/watch/${slug}`);
                   setShowMenu(false);
                 }}
                 className="w-full text-left px-4 py-2.5 hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
@@ -622,7 +624,7 @@ function VideoMenu({
               onClick={(e) => e.stopPropagation()}
             >
               <Link
-                href={`/watch/${video.id}`}
+                href={`/watch/${slug}`}
                 className="w-full px-2.5 py-2 rounded-lg hover:bg-white/10 flex items-center gap-2 text-zinc-200 transition-colors"
                 onClick={() => setShowMenu(false)}
               >
@@ -633,7 +635,7 @@ function VideoMenu({
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/watch/${video.id}`);
+                  navigator.clipboard.writeText(`${window.location.origin}/watch/${slug}`);
                   setShowMenu(false);
                 }}
                 className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-white/10 flex items-center gap-2 text-zinc-300 transition-colors cursor-pointer"

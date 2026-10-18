@@ -6,6 +6,7 @@ import {
   Upload, RefreshCw, CheckCircle2, Play,
   RotateCcw, Trash2, ListOrdered, Clock
 } from 'lucide-react';
+import { encodeVideoSlug } from '@/lib/videoUtils';
 
 export default function UploadQueuePage() {
   const [queueItems, setQueueItems] = useState([]);
@@ -208,7 +209,7 @@ export default function UploadQueuePage() {
                   <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                     {isReady && (
                       <Link
-                        href={`/watch/${item.id}`}
+                        href={`/watch/${encodeVideoSlug(item.id, item.category) || item.id}`}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition shadow-xs"
                       >
                         <Play className="w-3.5 h-3.5 fill-white" />

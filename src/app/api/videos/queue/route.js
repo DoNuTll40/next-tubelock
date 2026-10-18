@@ -21,6 +21,7 @@ export async function GET() {
         error_message, 
         raw_file_name, 
         file_size_bytes, 
+        category,
         created_at, 
         updated_at
       FROM videos 
@@ -35,6 +36,7 @@ export async function GET() {
       queue: rows.map((r) => ({
         id: r.id,
         title: r.title,
+        category: r.category || 'general',
         status: r.status,
         transcodeProgress: r.transcode_progress || 0,
         stageDetail: r.stage_detail || '',

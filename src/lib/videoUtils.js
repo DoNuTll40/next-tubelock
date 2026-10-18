@@ -349,5 +349,119 @@ export function isMusicVideo(video) {
   return false;
 }
 
+// ============================================================================
+// 🔒 Video Slug Obfuscation (Reversible 32-bit Feistel Cipher + Base62)
+// Format: v_[categoryPrefix][6-char-hash]
+// Example: 851 (gaming) -> v_gX22NFW
+// ============================================================================
+const B62_ALPHABET = 'kX8mZ3vL9bQ2pW7aN1cF6sY0dG5tH4eJqRiuwzAMBKOSTCUVDEIPojyhlgfnx';
+
+function roundFunction(val, key) {
+  val = Math.imul(val ^ key, 0xcc9e2d51);
+  val = (val << 13) | (val >>> 19);
+  return Math.imul(val, 0x1b873593) >>> 0;
+}
+
+function obfuscateInt(num, key = 0x7b3d9a51) {
+  let L = (num >>> 16) & 0xffff;
+  let R = num & 0xffff;
+  const roundKeys = [0x9e3779b9, 0x6a09e667, 0xbb67ae85, 0x3c6ef372];
+  for (let i = 0; i < 4; i++) {
+    const temp = R;
+    R = (L ^ roundFunction(R, roundKeys[i] ^ key)) & 0xffff;
+    L = temp;
+  }
+  return ((L << 16) | R) >>> 0;
+}
+
+function deobfuscateInt(num, key = 0x7b3d9a51) {
+  let L = (num >>> 16) & 0xffff;
+  let R = num & 0xffff;
+  const roundKeys = [0x9e3779b9, 0x6a09e667, 0xbb67ae85, 0x3c6ef372];
+  for (let i = 3; i >= 0; i--) {
+    const temp = L;
+    L = (R ^ roundFunction(L, roundKeys[i] ^ key)) & 0xffff;
+    R = temp;
+  }
+  return ((L << 16) | R) >>> 0;
+}
+
+function toBase62(num, length = 6) {
+  let res = '';
+  let n = num >>> 0;
+  for (let i = 0; i < length; i++) {
+    res = B62_ALPHABET[n % 62] + res;
+    n = Math.floor(n / 62);
+  }
+  return res;
+}
+
+function fromBase62(str) {
+  if (!str || typeof str !== 'string') return null;
+  let num = 0;
+  for (let i = 0; i < str.length; i++) {
+    const idx = B62_ALPHABET.indexOf(str[i]);
+    if (idx === -1) return null;
+    num = num * 62 + idx;
+  }
+  return num >>> 0;
+}
+
+export function getCategoryPrefix(category = '') {
+  const cat = String(category || '').toLowerCase().trim();
+  if (cat === 'shorts' || cat.startsWith('short')) return 's';      // s = short
+  if (cat === 'cinema' || cat.startsWith('cine')) return 'c';       // c = cinema
+  if (cat === 'music' || cat === 'เพลง' || cat.startsWith('mus')) return 'm'; // m = music
+  if (cat === 'gaming' || cat === 'เกม' || cat.startsWith('game')) return 'g'; // g = gaming
+  if (cat === 'general' || cat === 'video' || !cat) return 'v';     // v = video
+  if (/^[a-z]$/.test(cat[0])) return cat[0];
+  return 'v';
+}
+
+/**
+ * Encodes a numeric video ID into an unguessable slug:
+ * Format: v_[categoryPrefix][6-char-hash] (e.g. v_gX22NFW)
+ */
+export function encodeVideoSlug(id, category = '') {
+  const n = parseInt(id, 10);
+  if (!n || isNaN(n) || n <= 0) return '';
+  const prefix = getCategoryPrefix(category);
+  const hash = toBase62(obfuscateInt(n), 6);
+  return `v_${prefix}${hash}`;
+}
+
+/**
+ * Decodes a slug or numeric ID back to the integer video ID
+ * Supports:
+ * - Slugs: 'v_gX22NFW', 'v_mkAf2NA'
+ * - Backward compatibility: '851', 851
+ * - Raw hash fallback: 'X22NFW'
+ */
+export function decodeVideoSlug(slugOrId) {
+  if (!slugOrId && slugOrId !== 0) return null;
+  const str = String(slugOrId).trim();
+  if (/^\d+$/.test(str)) {
+    const n = parseInt(str, 10);
+    return n > 0 ? n : null;
+  }
+  const match = str.match(/^v_([a-z0-9])([a-zA-Z0-9]{6})$/i);
+  if (match) {
+    const hashPart = match[2];
+    const intVal = fromBase62(hashPart);
+    if (intVal === null) return null;
+    const decoded = deobfuscateInt(intVal);
+    return decoded > 0 ? decoded : null;
+  }
+  if (/^[a-zA-Z0-9]{6}$/.test(str)) {
+    const intVal = fromBase62(str);
+    if (intVal !== null) {
+      const decoded = deobfuscateInt(intVal);
+      return decoded > 0 ? decoded : null;
+    }
+  }
+  return null;
+}
+
+
 
 

@@ -3,8 +3,13 @@ import { neon } from '@neondatabase/serverless';
 
 export async function proxy(request) {
   const url = request.nextUrl.clone();
-  const host = request.headers.get('host') || '';
   const { pathname } = url;
+  const host = request.headers.get('host') || '';
+
+  // ── เข้า /watch โดยไม่ระบุรหัสวิดีโอ → redirect ไปหน้าแรก / เสมอ ──
+  if (pathname === '/watch' || pathname === '/watch/') {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
 
   // ── 1. Paths ที่ bypass auth ────────────────────────────────────────────────
   // OAuth callbacks และ static assets ไม่ต้องตรวจ session
