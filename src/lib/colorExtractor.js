@@ -119,7 +119,7 @@ export function extractDominantColor(imgElement) {
     // ทำให้สีโปร่งแสง ไม่ทับพื้นหลังทึบ แต่แสดงเฉดสีของคลิปนั้นอย่างมีมิติ
     const darkAlphaBg = isLowSat
       ? 'rgba(255, 255, 255, 0.08)'
-      : `hsla(${hsl.h}, ${Math.max(45, Math.min(hsl.s, 85))}%, 62%, 0.16)`;
+      : `hsla(${hsl.h}, ${Math.max(45, Math.min(hsl.s, 85))}%, 62%, 0.22)`;
 
     // Light Mode: ใช้ค่า Hue ของวิดีโอคู่กับ Alpha 0.09 ให้สีพาสเทลโปร่งแสงนุ่มนวล
     const lightAlphaBg = isLowSat
@@ -132,7 +132,7 @@ export function extractDominantColor(imgElement) {
       lightBg: lightAlphaBg,
       darkAlphaBg,
       lightAlphaBg,
-      rgbaDark: `rgba(${targetR}, ${targetG}, ${targetB}, 0.05)`,
+      rgbaDark: `rgba(${targetR}, ${targetG}, ${targetB}, 0.22)`,
       rgbaLight: `rgba(${targetR}, ${targetG}, ${targetB}, 0.09)`,
     };
 

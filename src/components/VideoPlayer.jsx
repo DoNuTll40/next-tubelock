@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
-import { formatTime } from './player/playerUtils';
+import { formatTime, formatTimePair } from './player/playerUtils';
 import PlayerTopBar from './player/PlayerTopBar';
 import PlayerCenterControls from './player/PlayerCenterControls';
 import PlayerBottomBar from './player/PlayerBottomBar';
@@ -67,7 +67,7 @@ export default function VideoPlayer({
     if (isMusic && videoId && typeof window !== 'undefined') {
       try {
         localStorage.removeItem(`tubelock_pos_${videoId}`);
-      } catch (_) {}
+      } catch (_) { }
     }
   }, [src, videoId, targetInitialTime, isMusic]);
 
@@ -284,6 +284,7 @@ export default function VideoPlayer({
   const controlsTimeoutRef = useRef(null);
   const lastSavedTimeRef = useRef(0);
   const lastSavedHistoryTimeRef = useRef(0);
+  const lastReportedSecondRef = useRef(-1);
 
   // ── Quality View Counting Tracker (Anti-Spam & 15s Watch Threshold) ──
   const accumulatedWatchTimeRef = useRef(0);
@@ -362,7 +363,7 @@ export default function VideoPlayer({
               timeDisplayRef.current.textContent = `${formatTime(targetInitialTime)} / ${formatTime(dur)}`;
             }
           }
-        } catch (_) {}
+        } catch (_) { }
       }
     }
   }, [targetInitialTime, duration, video]);
@@ -396,14 +397,25 @@ export default function VideoPlayer({
     }
 
     const cur = e.target.currentTime;
-    const dur = e.target.duration || duration;
+    const rawDur = e.target.duration || duration || 0;
+    const dur = Math.max(rawDur, cur);
+
+    // Sync state duration if it drifts (e.g. initial metadata vs decoded fragments)
+    if (dur > 0 && Math.abs(dur - duration) > 0.5) {
+      setDuration(dur);
+    }
 
     // ถ้า isSeeking หรือ isScrubbing เป็นจริง ห้ามอัปเดต currentTime จากตัว <video> เด็ดขาด (กันค่า 0 ชั่วคราวมาทับ UI)
     if (isSeeking || isSeekingRef.current || isScrubbing || isScrubbingRef.current) {
       return;
     }
 
-    setCurrentTime(cur);
+    // Throttled React state update: only update currentTime state once per second to prevent 4x/s re-render thrashing
+    const curSecFloor = Math.floor(cur);
+    if (curSecFloor !== lastReportedSecondRef.current) {
+      lastReportedSecondRef.current = curSecFloor;
+      setCurrentTime(cur);
+    }
 
     // Direct DOM manipulation - doesn't re-render the 1400 lines of React components!
     if (dur > 0) {
@@ -415,19 +427,19 @@ export default function VideoPlayer({
         scrubberKnobRef.current.style.left = `${pct}%`;
       }
       if (timeDisplayRef.current) {
-        timeDisplayRef.current.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+        timeDisplayRef.current.textContent = formatTimePair(cur, dur);
       }
     }
 
-    // 🎬 Cinematic Fade to Black (ช่วง ~0.8s สุดท้ายก่อนจบวิดีโอ)
+    // 🎬 Cinematic Fade to Black (ช่วง ~1.0s สุดท้ายก่อนจบวิดีโอ)
     if (dur > 2) {
       const timeLeft = dur - cur;
-      if (timeLeft <= 0.8 && timeLeft >= 0) {
+      if (timeLeft <= 1.0) {
         if (fadeBlackOverlayRef.current && fadeBlackOverlayRef.current.style.opacity !== '1') {
-          fadeBlackOverlayRef.current.style.transition = 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)';
+          fadeBlackOverlayRef.current.style.transition = 'opacity 700ms cubic-bezier(0.4, 0, 0.2, 1)';
           fadeBlackOverlayRef.current.style.opacity = '1';
         }
-      } else if (timeLeft > 1.2) {
+      } else if (timeLeft > 1.8) {
         if (fadeBlackOverlayRef.current && fadeBlackOverlayRef.current.style.opacity !== '0') {
           fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
           fadeBlackOverlayRef.current.style.opacity = '0';
@@ -496,11 +508,11 @@ export default function VideoPlayer({
         try {
           localStorage.setItem(`tubelock_watched_${videoId}`, '1');
           localStorage.removeItem(`tubelock_pos_${videoId}`);
-        } catch (_) {}
+        } catch (_) { }
       } else {
         try {
           localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(cur)));
-        } catch (_) {}
+        } catch (_) { }
       }
       if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
         navigator.sendBeacon('/api/history', historyPayload);
@@ -510,7 +522,7 @@ export default function VideoPlayer({
           headers: { 'Content-Type': 'application/json' },
           body: historyPayload,
           keepalive: true,
-        }).catch(() => {});
+        }).catch(() => { });
       }
     }
   };
@@ -646,7 +658,7 @@ export default function VideoPlayer({
               if (v) {
                 try {
                   v.currentTime = targetInitialTime;
-                } catch (_) {}
+                } catch (_) { }
               }
             }
             if (data.levels && data.levels.length > 0) {
@@ -762,7 +774,7 @@ export default function VideoPlayer({
               try {
                 v.currentTime = targetInitialTime;
                 setCurrentTime(targetInitialTime);
-              } catch (_) {}
+              } catch (_) { }
               v.removeEventListener('loadedmetadata', applySeek);
             };
             if (v.readyState >= 1) {
@@ -781,7 +793,7 @@ export default function VideoPlayer({
             try {
               v.currentTime = targetInitialTime;
               setCurrentTime(targetInitialTime);
-            } catch (_) {}
+            } catch (_) { }
             v.removeEventListener('loadedmetadata', applySeek);
           };
           if (v.readyState >= 1) {
@@ -1007,7 +1019,7 @@ export default function VideoPlayer({
     if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
     if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
     if (timeDisplayRef.current) {
-      timeDisplayRef.current.textContent = `${formatTime(clamped)} / ${formatTime(dur)}`;
+      timeDisplayRef.current.textContent = formatTimePair(clamped, dur);
     }
     setScrubPercent(pct);
     setPreviewTime(clamped);
@@ -1075,7 +1087,7 @@ export default function VideoPlayer({
     }
     if (progressBarRef.current) progressBarRef.current.style.width = `${percent}%`;
     if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${percent}%`;
-    if (timeDisplayRef.current) timeDisplayRef.current.textContent = `${formatTime(calculatedSec)} / ${formatTime(realDur)}`;
+    if (timeDisplayRef.current) timeDisplayRef.current.textContent = formatTimePair(calculatedSec, realDur);
 
     setScrubPercent(percent);
     setPreviewPercent(clampedPercent);
@@ -1565,8 +1577,8 @@ export default function VideoPlayer({
   const currentProgressPct = duration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / duration) * 100)) : 0;
   const activeScrubPercent = isScrubbing ? scrubPercent : currentProgressPct;
   const activeTimeDisplay = isScrubbing
-    ? `${formatTime(previewTime)} / ${formatTime(duration)}`
-    : `${formatTime(currentVideoTime)} / ${formatTime(duration)}`;
+    ? formatTimePair(previewTime, duration)
+    : formatTimePair(currentVideoTime, duration);
 
   const initialBufferPct = 0;
 
@@ -1641,11 +1653,11 @@ export default function VideoPlayer({
               try {
                 localStorage.setItem(`tubelock_watched_${videoId}`, '1');
                 localStorage.removeItem(`tubelock_pos_${videoId}`);
-              } catch (_) {}
+              } catch (_) { }
             } else {
               try {
                 localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(v.currentTime)));
-              } catch (_) {}
+              } catch (_) { }
             }
             if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
               navigator.sendBeacon('/api/history', historyPayload);
@@ -1655,7 +1667,7 @@ export default function VideoPlayer({
                 headers: { 'Content-Type': 'application/json' },
                 body: historyPayload,
                 keepalive: true,
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         }}
@@ -1668,17 +1680,28 @@ export default function VideoPlayer({
         }}
         onProgress={updateBufferProgress}
         onTimeUpdate={handleNativeTimeUpdate}
+        onDurationChange={(e) => {
+          const d = e.target.duration;
+          if (d && !isNaN(d) && isFinite(d) && d > 0) {
+            setDuration(d);
+            const c = e.target.currentTime || 0;
+            if (timeDisplayRef.current) {
+              timeDisplayRef.current.textContent = formatTimePair(c, d);
+            }
+          }
+        }}
         onEnded={() => {
           if (fadeBlackOverlayRef.current) {
+            fadeBlackOverlayRef.current.style.transition = 'opacity 200ms ease-out';
             fadeBlackOverlayRef.current.style.opacity = '1';
           }
           if (isLooping) {
             setTimeout(() => {
               if (fadeBlackOverlayRef.current) {
-                fadeBlackOverlayRef.current.style.transition = 'opacity 350ms ease-out';
+                fadeBlackOverlayRef.current.style.transition = 'opacity 400ms ease-out';
                 fadeBlackOverlayRef.current.style.opacity = '0';
               }
-            }, 80);
+            }, 150);
           }
         }}
         onSeeking={() => {
@@ -1698,8 +1721,13 @@ export default function VideoPlayer({
 
           const v = video.current;
           if (v) {
+            const vDur = Math.max(v.duration || 0, duration, v.currentTime);
             setCurrentTime(v.currentTime);
-            if (fadeBlackOverlayRef.current && (v.duration - v.currentTime) > 1.2) {
+            lastReportedSecondRef.current = Math.floor(v.currentTime);
+            if (timeDisplayRef.current) {
+              timeDisplayRef.current.textContent = formatTimePair(v.currentTime, vDur);
+            }
+            if (fadeBlackOverlayRef.current && (vDur - v.currentTime) > 1.8) {
               fadeBlackOverlayRef.current.style.transition = 'none';
               fadeBlackOverlayRef.current.style.opacity = '0';
             }
@@ -1732,7 +1760,7 @@ export default function VideoPlayer({
             try {
               e.target.currentTime = targetInitialTime;
               setCurrentTime(targetInitialTime);
-            } catch (_) {}
+            } catch (_) { }
           }
 
           if (dur && dur > 0 && targetInitialTime > 0) {
@@ -1740,7 +1768,7 @@ export default function VideoPlayer({
             if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
             if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
             if (timeDisplayRef.current) {
-              timeDisplayRef.current.textContent = `${formatTime(targetInitialTime)} / ${formatTime(dur)}`;
+              timeDisplayRef.current.textContent = formatTimePair(targetInitialTime, dur);
             }
           }
 
@@ -1759,11 +1787,10 @@ export default function VideoPlayer({
         }}
       />
 
-      {/* 🎬 Cinematic Fade-to-Black Overlay (ช่วง ~0.8s ก่อนจบวิดีโอ) */}
+      {/* 🎬 Cinematic Fade-to-Black Overlay (ช่วง ~0.8s - 1.0s ก่อนจบวิดีโอ) */}
       <div
         ref={fadeBlackOverlayRef}
-        className="absolute inset-0 bg-black pointer-events-none z-[2]"
-        style={{ opacity: 0 }}
+        className="absolute inset-0 bg-black pointer-events-none z-[4] transition-opacity duration-500 ease-out opacity-0"
       />
 
       {/* Unified 3-Zone Click / Double-Click Overlay (Left -10s, Center Play/Pause/Fullscreen, Right +10s) */}
