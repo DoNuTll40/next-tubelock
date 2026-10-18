@@ -4,7 +4,7 @@ import React from 'react';
 import {
   Play, Pause, Volume2, VolumeX, Volume1, ThumbsUp, ThumbsDown,
   MessageSquare, Share2, MoreHorizontal, Subtitles, Settings,
-  PictureInPicture2, Minimize, Maximize, Plus, RotateCw
+  PictureInPicture2, Minimize, Maximize, Plus, RotateCw, RotateCcw
 } from 'lucide-react';
 import PlayerScrubber from './PlayerScrubber';
 import PlayerTooltip from './PlayerTooltip';
@@ -13,6 +13,7 @@ import { getGearBadge } from '@/lib/videoUtils';
 export default function PlayerBottomBar({
   showControls,
   isPlaying,
+  isEnded = false,
   isScrubbing,
   isMobileView,
   isFullscreen,
@@ -132,7 +133,7 @@ export default function PlayerBottomBar({
           <div className="flex items-center gap-2.5">
             {/* Play/Pause */}
             <PlayerTooltip
-              text={isPlaying ? 'หยุดชั่วคราว' : 'เล่น'}
+              text={isEnded ? 'เล่นใหม่' : isPlaying ? 'หยุดชั่วคราว' : 'เล่น'}
               hotkey="k"
               align="left"
               minWidth="116px"
@@ -142,7 +143,13 @@ export default function PlayerBottomBar({
                 onClick={togglePlay}
                 className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-white/15 active:scale-90 transition cursor-pointer shrink-0"
               >
-                {isPlaying ? <Pause className="w-6 h-6 fill-white" /> : <Play className="w-6 h-6 fill-white ml-0.5" />}
+                {isEnded ? (
+                  <RotateCcw className="w-5.5 h-5.5 text-white" />
+                ) : isPlaying ? (
+                  <Pause className="w-6 h-6 fill-white" />
+                ) : (
+                  <Play className="w-6 h-6 fill-white ml-0.5" />
+                )}
               </button>
             </PlayerTooltip>
 

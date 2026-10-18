@@ -29,6 +29,15 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   const targetInitialTime = isMusic ? 0 : (urlT ? parseTimestamp(urlT) : (Number(initialTime) || 0));
   const id = initialVideo?.id;
 
+  // Clean URL query param (?t=...) after reading initial seek time, so page reload won't stick to old time!
+  useEffect(() => {
+    if (urlT && typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('t');
+      window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+    }
+  }, [urlT]);
+
   // SSR Initialized State — Zero Waiting, Zero Mock Skeletons!
   const [video, setVideo] = useState(initialVideo);
   const [relatedVideos, setRelatedVideos] = useState(initialRelated);

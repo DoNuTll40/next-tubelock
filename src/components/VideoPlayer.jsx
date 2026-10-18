@@ -156,6 +156,7 @@ export default function VideoPlayer({
 
   // Playback states
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isEnded, setIsEnded] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -434,12 +435,12 @@ export default function VideoPlayer({
     // 🎬 Cinematic Fade to Black (ช่วง ~1.0s สุดท้ายก่อนจบวิดีโอ)
     if (dur > 2) {
       const timeLeft = dur - cur;
-      if (timeLeft <= 1.0) {
+      if (timeLeft <= 0.5) {
         if (fadeBlackOverlayRef.current && fadeBlackOverlayRef.current.style.opacity !== '1') {
           fadeBlackOverlayRef.current.style.transition = 'opacity 700ms cubic-bezier(0.4, 0, 0.2, 1)';
           fadeBlackOverlayRef.current.style.opacity = '1';
         }
-      } else if (timeLeft > 1.8) {
+      } else if (timeLeft > 1) {
         if (fadeBlackOverlayRef.current && fadeBlackOverlayRef.current.style.opacity !== '0') {
           fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
           fadeBlackOverlayRef.current.style.opacity = '0';
@@ -849,6 +850,23 @@ export default function VideoPlayer({
   const togglePlay = useCallback(() => {
     if (!video.current) return;
 
+    if (video.current.ended || isEnded) {
+      video.current.currentTime = 0;
+      setIsEnded(false);
+      isUserPausedRef.current = false;
+      if (fadeBlackOverlayRef.current) {
+        fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
+        fadeBlackOverlayRef.current.style.opacity = '0';
+      }
+      video.current.play()
+        .then(() => {
+          setIsPlaying(true);
+        })
+        .catch(() => setIsPlaying(false));
+      resetControlsTimer();
+      return;
+    }
+
     if (video.current.paused) {
       isUserPausedRef.current = false;
       video.current.play()
@@ -862,7 +880,7 @@ export default function VideoPlayer({
       setIsPlaying(false);
     }
     resetControlsTimer();
-  }, [video, resetControlsTimer]);
+  }, [video, isEnded, resetControlsTimer]);
 
   // Volume Handlers
   const handleVolumeChange = (e) => {
@@ -1199,6 +1217,11 @@ export default function VideoPlayer({
       return;
     }
     if (!containerRef.current) return;
+
+    if (isEnded) {
+      togglePlay();
+      return;
+    }
 
     const rect = containerRef.current.getBoundingClientRect();
     const xRatio = (e.clientX - rect.left) / rect.width;
@@ -1639,6 +1662,7 @@ export default function VideoPlayer({
         onPlaying={() => {
           setIsBuffering(false);
           setIsPlaying(true);
+          setIsEnded(false);
           isUserPausedRef.current = false;
           checkAndUpdateRatio();
           lastTickTimeRef.current = performance.now();
@@ -1691,6 +1715,8 @@ export default function VideoPlayer({
           }
         }}
         onEnded={() => {
+          setIsEnded(true);
+          setIsPlaying(false);
           if (fadeBlackOverlayRef.current) {
             fadeBlackOverlayRef.current.style.transition = 'opacity 200ms ease-out';
             fadeBlackOverlayRef.current.style.opacity = '1';
@@ -1707,6 +1733,7 @@ export default function VideoPlayer({
         onSeeking={() => {
           isSeekingRef.current = true;
           lastTickTimeRef.current = null;
+          setIsEnded(false);
           if (fadeBlackOverlayRef.current) {
             fadeBlackOverlayRef.current.style.transition = 'none';
             fadeBlackOverlayRef.current.style.opacity = '0';
@@ -1724,6 +1751,9 @@ export default function VideoPlayer({
             const vDur = Math.max(v.duration || 0, duration, v.currentTime);
             setCurrentTime(v.currentTime);
             lastReportedSecondRef.current = Math.floor(v.currentTime);
+            if (vDur - v.currentTime > 1.0) {
+              setIsEnded(false);
+            }
             if (timeDisplayRef.current) {
               timeDisplayRef.current.textContent = formatTimePair(v.currentTime, vDur);
             }
@@ -1829,6 +1859,7 @@ export default function VideoPlayer({
         accumulatedSeconds={accumulatedSeconds}
         showControls={showControls}
         isPlaying={isPlaying}
+        isEnded={isEnded}
         isBuffering={isBuffering}
         hlsError={hlsError}
         isMobileView={isMobileView}
@@ -1901,6 +1932,7 @@ export default function VideoPlayer({
       <PlayerBottomBar
         showControls={showControls}
         isPlaying={isPlaying}
+        isEnded={isEnded}
         isScrubbing={isScrubbing}
         isMobileView={isMobileView}
         isFullscreen={isFullscreen}

@@ -20,6 +20,7 @@ export default function PlayerCenterControls({
   duration,
   showToast,
   resetControlsTimer,
+  isEnded = false,
 }) {
   return (
     <>
@@ -101,7 +102,7 @@ export default function PlayerCenterControls({
             </svg>
           </div>
         ) : (
-          (showControls || !isPlaying) && !doubleTapSide && (
+          (showControls || !isPlaying) && !doubleTapSide && !isEnded && (
             <>
               {isMobileView ? (
                 /* Mobile Trio — CSS fade-in, active:scale CSS (ไม่ใช้ whileTap Framer บน mobile) */
@@ -149,7 +150,7 @@ export default function PlayerCenterControls({
                 </div>
               ) : (
                 /* Desktop — Framer whileHover/whileTap ปกติ (desktop มี CPU สำรอง) */
-                !isPlaying && (
+                !isPlaying && !isEnded && (
                   <motion.button
                     type="button"
                     // whileHover={{ scale: 1.06 }}
