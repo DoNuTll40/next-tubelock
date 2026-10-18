@@ -60,6 +60,10 @@ export default function VideoPlayer({
 
   useEffect(() => {
     initialSeekDoneRef.current = false;
+    if (fadeBlackOverlayRef.current) {
+      fadeBlackOverlayRef.current.style.transition = 'none';
+      fadeBlackOverlayRef.current.style.opacity = '0';
+    }
     if (isMusic && videoId && typeof window !== 'undefined') {
       try {
         localStorage.removeItem(`tubelock_pos_${videoId}`);
@@ -72,6 +76,7 @@ export default function VideoPlayer({
   const bufferBarRef = useRef(null);
   const scrubberKnobRef = useRef(null);
   const timeDisplayRef = useRef(null);
+  const fadeBlackOverlayRef = useRef(null);
 
   // Compute initial aspect ratio from metadata props (prioritizes DB width/height or parsed resolution)
   const computePropRatio = useCallback(() => {
@@ -411,6 +416,22 @@ export default function VideoPlayer({
       }
       if (timeDisplayRef.current) {
         timeDisplayRef.current.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+      }
+    }
+
+    // 🎬 Cinematic Fade to Black (ช่วง ~0.8s สุดท้ายก่อนจบวิดีโอ)
+    if (dur > 2) {
+      const timeLeft = dur - cur;
+      if (timeLeft <= 0.8 && timeLeft >= 0) {
+        if (fadeBlackOverlayRef.current && fadeBlackOverlayRef.current.style.opacity !== '1') {
+          fadeBlackOverlayRef.current.style.transition = 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)';
+          fadeBlackOverlayRef.current.style.opacity = '1';
+        }
+      } else if (timeLeft > 1.2) {
+        if (fadeBlackOverlayRef.current && fadeBlackOverlayRef.current.style.opacity !== '0') {
+          fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
+          fadeBlackOverlayRef.current.style.opacity = '0';
+        }
       }
     }
 
@@ -1647,9 +1668,26 @@ export default function VideoPlayer({
         }}
         onProgress={updateBufferProgress}
         onTimeUpdate={handleNativeTimeUpdate}
+        onEnded={() => {
+          if (fadeBlackOverlayRef.current) {
+            fadeBlackOverlayRef.current.style.opacity = '1';
+          }
+          if (isLooping) {
+            setTimeout(() => {
+              if (fadeBlackOverlayRef.current) {
+                fadeBlackOverlayRef.current.style.transition = 'opacity 350ms ease-out';
+                fadeBlackOverlayRef.current.style.opacity = '0';
+              }
+            }, 80);
+          }
+        }}
         onSeeking={() => {
           isSeekingRef.current = true;
           lastTickTimeRef.current = null;
+          if (fadeBlackOverlayRef.current) {
+            fadeBlackOverlayRef.current.style.transition = 'none';
+            fadeBlackOverlayRef.current.style.opacity = '0';
+          }
         }}
         onSeeked={() => {
           lastTickTimeRef.current = performance.now();
@@ -1661,6 +1699,10 @@ export default function VideoPlayer({
           const v = video.current;
           if (v) {
             setCurrentTime(v.currentTime);
+            if (fadeBlackOverlayRef.current && (v.duration - v.currentTime) > 1.2) {
+              fadeBlackOverlayRef.current.style.transition = 'none';
+              fadeBlackOverlayRef.current.style.opacity = '0';
+            }
           }
 
           setTimeout(() => {
@@ -1715,6 +1757,13 @@ export default function VideoPlayer({
           willChange: 'auto',
           backfaceVisibility: 'hidden',
         }}
+      />
+
+      {/* 🎬 Cinematic Fade-to-Black Overlay (ช่วง ~0.8s ก่อนจบวิดีโอ) */}
+      <div
+        ref={fadeBlackOverlayRef}
+        className="absolute inset-0 bg-black pointer-events-none z-[2]"
+        style={{ opacity: 0 }}
       />
 
       {/* Unified 3-Zone Click / Double-Click Overlay (Left -10s, Center Play/Pause/Fullscreen, Right +10s) */}
