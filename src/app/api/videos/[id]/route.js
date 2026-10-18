@@ -19,12 +19,17 @@ export async function GET(request, context) {
     const sql = getDb();
     const rows = await sql`
       SELECT 
-        id, title, description, duration, file_size_bytes, resolution, fps, codec,
-        thumbnail_url, tags, category, views_count, created_at, status, 
-        transcode_progress, stage_detail, error_message, source_type,
-        onedrive_item_id, onedrive_folder_id, raw_file_name, master_playlist_path
-      FROM videos 
-      WHERE id = ${id} 
+        v.id, v.title, v.description, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec,
+        v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, 
+        v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
+        v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
+        v.user_id,
+        u.name AS author_name,
+        u.email AS author_email,
+        u.picture AS author_picture
+      FROM videos v
+      LEFT JOIN users u ON v.user_id = u.id
+      WHERE v.id = ${id} 
       LIMIT 1;
     `;
     if (!rows || rows.length === 0) {
@@ -35,9 +40,7 @@ export async function GET(request, context) {
       { success: true, video: rows[0] },
       {
         headers: {
-          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
-          'CDN-Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
-          'Vercel-CDN-Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
         },
       }
     );

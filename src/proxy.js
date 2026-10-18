@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { neon } from '@neondatabase/serverless';
 
-export async function middleware(request) {
+export async function proxy(request) {
   const url = request.nextUrl.clone();
   const host = request.headers.get('host') || '';
   const { pathname } = url;
@@ -14,7 +14,7 @@ export async function middleware(request) {
 
   const isPublicPath =
     pathname === '/' ||
-    pathname === '/api/videos' ||
+    pathname.startsWith('/api/videos') ||
     pathname.startsWith('/streams') ||
     pathname.startsWith('/login') ||
     pathname === '/api/auth/logout' ||

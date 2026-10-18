@@ -222,7 +222,7 @@ export default function PlayerSettingsModal({
                       className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
                     >
                       <div className="flex items-center gap-3.5">
-                        <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+                        <Sparkles className="w-5 h-5 text-[#FF7A00] shrink-0" />
                         <span className="text-[14px] text-zinc-200 font-medium">โหมด Ambient</span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -443,7 +443,7 @@ export default function PlayerSettingsModal({
                   <span className="text-[13.5px] text-zinc-200 font-medium">สัดส่วนวิดีโอ</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[13px] text-amber-400 font-semibold">
+                  <span className="text-[13px] text-[#FF7A00] font-semibold">
                     {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
                   </span>
                   <ChevronRight className="w-4 h-4 text-zinc-400" />

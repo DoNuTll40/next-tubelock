@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
 import { createUploadSession } from '@/lib/onedriveServer';
 
@@ -33,8 +34,31 @@ export async function POST(request) {
     const targetFolder = '/raw';
     const sessionData = await createUploadSession(uniqueRawFileName, targetFolder);
 
-    // 3. Create initial video record in Neon DB with status 'UPLOADING'
+    // 3. Resolve logged-in uploader from tubelock_session cookie
     const sql = getDb();
+    let userId = null;
+    try {
+      const cookieStore = await cookies();
+      const token = cookieStore.get('tubelock_session')?.value;
+      if (token) {
+        const sessionRows = await sql`
+          SELECT user_id FROM user_sessions
+          WHERE session_token = ${token} AND is_active = TRUE AND expires_at > NOW()
+          LIMIT 1;
+        `;
+        if (sessionRows.length > 0) {
+          userId = sessionRows[0].user_id;
+        }
+      }
+    } catch (_) { }
+
+    // If not found in active session, fallback to default user (ID: 1 iinter731@gmail.com)
+    if (!userId) {
+      const defaultUser = await sql`SELECT id FROM users WHERE email = 'iinter731@gmail.com' LIMIT 1;`;
+      if (defaultUser.length > 0) userId = defaultUser[0].id;
+    }
+
+    // 4. Create initial video record in Neon DB with status 'UPLOADING'
     const rows = await sql`
       INSERT INTO videos (
         title, 
@@ -46,6 +70,7 @@ export async function POST(request) {
         raw_file_name, 
         source_type, 
         tags,
+        user_id,
         created_at, 
         updated_at
       ) VALUES (
@@ -58,6 +83,7 @@ export async function POST(request) {
         ${uniqueRawFileName}, 
         'hls', 
         ${['Upload', 'HLS']}, 
+        ${userId},
         NOW(), 
         NOW()
       )

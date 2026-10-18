@@ -204,6 +204,9 @@ export default function VideoPlayer({
   useEffect(() => {
     if (!showSettingsMenu) return;
 
+    // ปิด seek hover preview ทันทีเมื่อเปิดเมนูตั้งค่า
+    setIsHoveringSeek(false);
+
     const handlePointerDownOutside = (e) => {
       if (settingsMenuRef.current && settingsMenuRef.current.contains(e.target)) {
         return;
@@ -232,6 +235,7 @@ export default function VideoPlayer({
   useEffect(() => {
     isScrubbingRef.current = isScrubbing;
   }, [isScrubbing]);
+  const [scrubPercent, setScrubPercent] = useState(0);
   const [previewTime, setPreviewTime] = useState(0);
   const [previewPercent, setPreviewPercent] = useState(0);
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
@@ -256,6 +260,17 @@ export default function VideoPlayer({
   const [isLooping, setIsLooping] = useState(false);
   const controlsTimeoutRef = useRef(null);
   const lastSavedTimeRef = useRef(0);
+
+  // ── Quality View Counting Tracker (Anti-Spam & 15s Watch Threshold) ──
+  const accumulatedWatchTimeRef = useRef(0);
+  const lastTickTimeRef = useRef(null);
+  const viewCountRecordedRef = useRef(false);
+
+  useEffect(() => {
+    accumulatedWatchTimeRef.current = 0;
+    lastTickTimeRef.current = null;
+    viewCountRecordedRef.current = false;
+  }, [videoId]);
 
   const isUserPausedRef = useRef(!defaultAutoplay);
   const wakeLockSentinelRef = useRef(null);
@@ -358,6 +373,50 @@ export default function VideoPlayer({
     }
 
     updateBufferProgress();
+
+    // ⚡ Quality View Counting Tracker (Anti-Spam & 15s Watch Threshold)
+    if (videoId && !viewCountRecordedRef.current) {
+      const nowTs = performance.now();
+      if (lastTickTimeRef.current !== null) {
+        const deltaSec = (nowTs - lastTickTimeRef.current) / 1000;
+        // ป้องกันค่ากระโดดผิดปกติ (เช่น สลับแท็บ) โดยรับเฉพาะ tick ปกติ (0 - 1.5 วินาที)
+        if (deltaSec > 0 && deltaSec < 1.5) {
+          accumulatedWatchTimeRef.current += deltaSec;
+        }
+      }
+      lastTickTimeRef.current = nowTs;
+
+      // เกณฑ์ 15 วินาที หรือ 30% ของคลิปสั้น
+      const minRequired = dur > 0 ? Math.min(15, Math.max(3, dur * 0.3)) : 15;
+      if (accumulatedWatchTimeRef.current >= minRequired) {
+        viewCountRecordedRef.current = true;
+
+        const storageKey = `tubelock_viewed_${videoId}`;
+        const alreadyCountedInSession = typeof window !== 'undefined' && sessionStorage.getItem(storageKey);
+
+        if (!alreadyCountedInSession) {
+          if (typeof window !== 'undefined') {
+            try { sessionStorage.setItem(storageKey, '1'); } catch (_) { }
+          }
+
+          const payload = JSON.stringify({
+            watchTime: Math.floor(accumulatedWatchTimeRef.current),
+            duration: Math.floor(dur),
+          });
+
+          if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+            navigator.sendBeacon(`/api/videos/${videoId}/view`, payload);
+          } else {
+            fetch(`/api/videos/${videoId}/view`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: payload,
+              keepalive: true,
+            }).catch(() => { });
+          }
+        }
+      }
+    }
 
     // Trigger external callback periodically (for watch position saving)
     const now = performance.now();
@@ -820,8 +879,19 @@ export default function VideoPlayer({
     if (timeDisplayRef.current) {
       timeDisplayRef.current.textContent = `${formatTime(clamped)} / ${formatTime(dur)}`;
     }
+    setScrubPercent(pct);
     setPreviewTime(clamped);
-    setPreviewPercent(pct);
+    if (seekTrackRef.current) {
+      const rect = seekTrackRef.current.getBoundingClientRect();
+      if (rect && rect.width > 0) {
+        const offsetX = (clamped / dur) * rect.width;
+        setPreviewPercent(getClampedPreviewPercent(offsetX, rect));
+      } else {
+        setPreviewPercent(pct);
+      }
+    } else {
+      setPreviewPercent(pct);
+    }
     updateStoryboardThumbnail(clamped); // เรียกใช้ได้แล้ว เพราะประกาศไว้ด้านบนแล้ว
     pendingTargetTimeRef.current = null;
   }, [duration, video, updateStoryboardThumbnail]);
@@ -877,6 +947,7 @@ export default function VideoPlayer({
     if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${percent}%`;
     if (timeDisplayRef.current) timeDisplayRef.current.textContent = `${formatTime(calculatedSec)} / ${formatTime(realDur)}`;
 
+    setScrubPercent(percent);
     setPreviewPercent(clampedPercent);
     setPreviewTime(calculatedSec);
     updateStoryboardThumbnail(calculatedSec);
@@ -885,7 +956,7 @@ export default function VideoPlayer({
   const handleSeekMouseMove = (e) => {
     const realDur = video.current?.duration || duration;
     if (!seekTrackRef.current || realDur <= 0) return;
-    if (!isScrubbingRef.current && !isHoveringSeek) return;
+    if (!isScrubbingRef.current && (!isHoveringSeek || showSettingsMenu)) return;
     const rect = seekTrackRef.current.getBoundingClientRect();
     if (!rect || rect.width <= 0) return;
     const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
@@ -914,6 +985,8 @@ export default function VideoPlayer({
 
   const handlePointerDown = (e) => {
     if (e.button !== undefined && e.button !== 0) return;
+    if (showSettingsMenu) setShowSettingsMenu(false);
+    if (contextMenu) setContextMenu(null);
     e.stopPropagation();
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -1267,63 +1340,83 @@ export default function VideoPlayer({
     resetControlsTimer();
   };
 
-  // Keyboard Shortcuts
+  // Keyboard Shortcuts (Supports all keyboard languages via physical e.code)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName)) return;
+      // Ignore if user is typing in an input, textarea, or contentEditable element
+      if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName) || e.target?.isContentEditable) return;
+      // Do not hijack browser system combos (Ctrl+C, Ctrl+F, Ctrl+P, Alt+Left, etc.)
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      if (e.key === ' ' || e.key === 'k' || e.key === 'K') {
+      const code = e.code;
+      const key = e.key?.toLowerCase();
+
+      // Number jump: 0-9 (Digit0-Digit9 or Numpad0-Numpad9 works even in Thai keyboard mode)
+      const digitMatch = code?.match(/^(Digit|Numpad)([0-9])$/);
+      if ((digitMatch || /^[0-9]$/.test(e.key)) && duration > 0) {
+        e.preventDefault();
+        const num = digitMatch ? parseInt(digitMatch[2], 10) : parseInt(e.key, 10);
+        const fraction = num / 10;
+        commitSeek(duration * fraction);
+        showToast(`กระโดดไปที่ ${fraction * 100}%`);
+        return;
+      }
+
+      if (code === 'Space' || code === 'KeyK' || key === ' ' || key === 'k') {
         e.preventDefault();
         togglePlay();
-      } else if (e.key === 'c' || e.key === 'C') {
+      } else if (code === 'KeyF' || key === 'f') {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (code === 'KeyM' || key === 'm') {
+        e.preventDefault();
+        toggleMute();
+      } else if (code === 'KeyJ' || key === 'j') {
+        e.preventDefault();
+        commitSeek((video.current?.currentTime || 0) - 10);
+        showToast('-10 วินาที');
+      } else if (code === 'KeyL' || key === 'l') {
+        e.preventDefault();
+        commitSeek((video.current?.currentTime || 0) + 10);
+        showToast('+10 วินาที');
+      } else if (code === 'KeyC' || key === 'c') {
         e.preventDefault();
         setIsCcActive((prev) => {
           const next = !prev;
           showToast(next ? 'เปิดคำบรรยาย' : 'ปิดคำบรรยาย');
           return next;
         });
-      } else if (e.key === 'p' || e.key === 'P') {
+      } else if (code === 'KeyP' || key === 'p') {
         e.preventDefault();
         togglePiP();
-      } else if (e.key === 'ArrowRight') {
+      } else if (code === 'ArrowRight' || e.key === 'ArrowRight') {
         e.preventDefault();
         commitSeek((video.current?.currentTime || 0) + seekStep);
         showToast(`+${seekStep} วินาที`);
-      } else if (e.key === 'ArrowLeft') {
+      } else if (code === 'ArrowLeft' || e.key === 'ArrowLeft') {
         e.preventDefault();
         commitSeek((video.current?.currentTime || 0) - seekStep);
         showToast(`-${seekStep} วินาที`);
-      } else if (e.key === 'l' || e.key === 'L') {
-        e.preventDefault();
-        commitSeek((video.current?.currentTime || 0) + 10);
-        showToast('+10 วินาที');
-      } else if (e.key === 'j' || e.key === 'J') {
-        e.preventDefault();
-        commitSeek((video.current?.currentTime || 0) - 10);
-        showToast('-10 วินาที');
-      } else if (e.key === 'f' || e.key === 'F') {
-        e.preventDefault();
-        toggleFullscreen();
-      } else if (e.key === 'm' || e.key === 'M') {
-        e.preventDefault();
-        toggleMute();
-      } else if (e.key === 'ArrowUp') {
+      } else if (code === 'ArrowUp' || e.key === 'ArrowUp') {
         e.preventDefault();
         const nextVol = Math.min(volume + 0.05, 1);
         setVolume(nextVol);
         if (video.current) video.current.volume = nextVol;
         showToast(`ระดับเสียง: ${Math.round(nextVol * 100)}%`);
-      } else if (e.key === 'ArrowDown') {
+      } else if (code === 'ArrowDown' || e.key === 'ArrowDown') {
         e.preventDefault();
         const nextVol = Math.max(volume - 0.05, 0);
         setVolume(nextVol);
         if (video.current) video.current.volume = nextVol;
         showToast(`ระดับเสียง: ${Math.round(nextVol * 100)}%`);
-      } else if (/^[0-9]$/.test(e.key) && duration > 0) {
+      } else if (code === 'Home') {
         e.preventDefault();
-        const fraction = parseInt(e.key, 10) / 10;
-        commitSeek(duration * fraction);
-        showToast(`กระโดดไปที่ ${fraction * 100}%`);
+        commitSeek(0);
+        showToast('จุดเริ่มต้น');
+      } else if (code === 'End' && duration > 0) {
+        e.preventDefault();
+        commitSeek(duration);
+        showToast('จุดสิ้นสุด');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -1340,7 +1433,7 @@ export default function VideoPlayer({
   // ให้แถบ Seekbar และตัวเลขเวลาใน UI ใช้ค่าเวลาตามเงื่อนไข: isSeeking ? seekTime : currentTime
   const currentVideoTime = isSeeking ? seekTime : currentTime;
   const currentProgressPct = duration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / duration) * 100)) : 0;
-  const activeScrubPercent = isScrubbing ? previewPercent : currentProgressPct;
+  const activeScrubPercent = isScrubbing ? scrubPercent : currentProgressPct;
   const activeTimeDisplay = isScrubbing
     ? `${formatTime(previewTime)} / ${formatTime(duration)}`
     : `${formatTime(currentVideoTime)} / ${formatTime(duration)}`;
@@ -1406,20 +1499,27 @@ export default function VideoPlayer({
           setIsPlaying(true);
           isUserPausedRef.current = false;
           checkAndUpdateRatio();
+          lastTickTimeRef.current = performance.now();
         }}
-        onPause={() => setIsPlaying(false)}
+        onPause={() => {
+          setIsPlaying(false);
+          lastTickTimeRef.current = null;
+        }}
         onError={(e) => {
           const err = e.target.error;
           const msg = err ? `ข้อผิดพลาดในการเล่น (${err.code}): ${err.message || ''}` : 'Native video error';
           setHlsError(msg);
           setIsBuffering(false);
+          lastTickTimeRef.current = null;
         }}
         onProgress={updateBufferProgress}
         onTimeUpdate={handleNativeTimeUpdate}
         onSeeking={() => {
           isSeekingRef.current = true;
+          lastTickTimeRef.current = null;
         }}
         onSeeked={() => {
+          lastTickTimeRef.current = performance.now();
           if (seekCooldownTimerRef.current) {
             clearTimeout(seekCooldownTimerRef.current);
             seekCooldownTimerRef.current = null;

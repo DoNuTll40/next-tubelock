@@ -75,7 +75,7 @@ export async function GET(request, context) {
     } else {
       // ⚡ 1. Ultra-fast Cache Hit (<1ms) with Token Expiry Validation
       const cached = sourceCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0) {
+      if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0 && cached.data?.video?.author_picture) {
         const sampleUrl = cached.data.items[0]?.downloadUrl || cached.data.url;
         if (isTempauthValid(sampleUrl)) {
           // ดัดแปลง URL ก่อนส่งคืน Client
@@ -114,7 +114,17 @@ export async function GET(request, context) {
       const sql = getDb();
       await ensureSourceCacheColumns(sql);
 
-      const rows = await sql`SELECT * FROM videos WHERE id = ${id} LIMIT 1;`;
+      const rows = await sql`
+        SELECT 
+          v.*,
+          u.name AS author_name,
+          u.email AS author_email,
+          u.picture AS author_picture
+        FROM videos v
+        LEFT JOIN users u ON v.user_id = u.id
+        WHERE v.id = ${id} 
+        LIMIT 1;
+      `;
       if (!rows || rows.length === 0) {
         throw new Error('Video not found');
       }

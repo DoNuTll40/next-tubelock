@@ -1,6 +1,7 @@
 import "./globals.css";
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
+import NextTopLoader from 'nextjs-toploader';
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ViewModeProvider } from "@/context/ViewModeContext";
 import { SidebarProvider } from "@/context/SidebarContext";
@@ -68,6 +69,19 @@ export default async function RootLayout({ children }) {
         />
       </head>
       <body className="bg-[#FBF9F5] text-[#212529] dark:bg-[#0F0F0F] dark:text-[#F1F1F1] min-h-screen selection:bg-[#FF7A00]/25 selection:text-[#0F0F0F] dark:selection:text-[#FFFFFF] antialiased font-sans transition-colors duration-200">
+        <NextTopLoader
+          color="#FF7A00"
+          initialPosition={0.08}
+          crawlSpeed={200}
+          height={2.5}
+          crawl={true}
+          showSpinner={false}
+          easing="ease"
+          speed={200}
+          shadow="0 0 12px #FF7A00, 0 0 4px #FF7A00"
+          zIndex={999999}
+          showAtBottom={false}
+        />
         <ThemeProvider>
           <ViewModeProvider>
             <SidebarProvider>

@@ -81,7 +81,7 @@ export default function PlayerBottomBar({
 
   return (
     <div
-      className={`absolute bottom-0 left-0 right-0 px-2.5 sm:px-6 pb-2 sm:pb-3 pt-0 sm:pt-8 bg-gradient-to-t from-black/40 via-black/10 to-transparent flex flex-col gap-0 sm:gap-0.5 sm:gap-0 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
+      className={`absolute bottom-0 left-0 right-0 px-2.5 sm:px-6 pb-2 sm:pb-2 pt-0 sm:pt-8 bg-gradient-to-t from-black/40 via-black/10 to-transparent flex flex-col gap-0 sm:gap-0.5 sm:gap-0 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
         ? 'opacity-100 pointer-events-auto translate-y-0'
         : 'opacity-0 pointer-events-none translate-y-1'
         }`}
@@ -119,6 +119,7 @@ export default function PlayerBottomBar({
         setIsScrubbing={setIsScrubbing}
         isScrubbingRef={isScrubbingRef}
         isMobileView={isMobileView}
+        showSettingsMenu={showSettingsMenu}
       />
 
       {/* Bottom Bar: Desktop vs Mobile */}
@@ -126,7 +127,7 @@ export default function PlayerBottomBar({
         /* ============================================================ */
         /* PC DESKTOP BOTTOM BAR                                        */
         /* ============================================================ */
-        <div className="flex items-center justify-between text-white text-sm pt-1.5 px-1 sm:px-2 select-none">
+        <div className="flex items-center justify-between text-white text-sm px-1 sm:px-2 select-none">
           {/* Left Controls: Play/Pause, Volume + Hover Slider, Time Display */}
           <div className="flex items-center gap-2.5">
             {/* Play/Pause */}
@@ -306,6 +307,7 @@ export default function PlayerBottomBar({
                 data-settings-btn="true"
                 onClick={() => {
                   setSettingsPlacement?.('bottom');
+                  setIsHoveringSeek?.(false);
                   setShowSettingsMenu(!showSettingsMenu);
                   setActiveMenuTab?.('main');
                 }}

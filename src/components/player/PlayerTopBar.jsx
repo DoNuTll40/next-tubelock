@@ -32,7 +32,7 @@ export default function PlayerTopBar({
 
   return (
     <div
-      className="absolute top-0 left-0 right-0 px-2.5 sm:px-6 pt-2.5 sm:pt-4 pb-6 sm:pb-8 bg-gradient-to-b from-black/75 via-black/25 to-transparent flex items-center justify-between z-30 transition-opacity duration-150"
+      className="absolute top-0 left-0 right-0 px-2.5 sm:px-6 pt-2.5 sm:pt-4 pb-6 sm:pb-8 bg-gradient-to-b from-black/40 via-black/10 to-transparent flex items-center justify-between z-30 transition-opacity duration-150"
       onClick={(e) => e.stopPropagation()}
     >
       {/* Top-Left: Title in Fullscreen, or Back Button in Mobile Portrait */}
@@ -40,7 +40,7 @@ export default function PlayerTopBar({
         <div className="flex items-center gap-2 max-w-[75%] min-w-0">
           <div className="flex flex-col min-w-0 text-left">
             <div className="flex items-center gap-1.5">
-              <span className="text-white text-xs sm:text-base font-semibold truncate drop-shadow-md select-none">
+              <span className="text-white text-xs sm:text-base font-medium truncate drop-shadow-sm select-none">
                 {title || 'วิดีโอ TubeLock'}
               </span>
               {isMobileView && <ChevronRight className="w-3.5 h-3.5 text-zinc-400 shrink-0" />}

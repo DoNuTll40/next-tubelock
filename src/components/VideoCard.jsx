@@ -160,14 +160,24 @@ export default function VideoCard({
             </h4>
           </Link>
 
-          {/* 2. OneDrive Cloud Storage (อยู่ติดกับ Title) */}
-          <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate block mt-1 hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors">
-            OneDrive Cloud Storage
-          </span>
+          {/* 2. Channel info (อยู่ติดกับ Title) */}
+          <div className="flex items-center gap-1.5 mt-1">
+            {video.author_picture && (
+              <img
+                src={video.author_picture}
+                alt={video.author_name || 'Channel'}
+                className="w-4 h-4 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors font-medium">
+              {video.author_name || 'DONUŤ'}
+            </span>
+          </div>
 
           {/* 3. ยอดวิว / สตรีม (อยู่ติดด้านล่างต่อลงมาทันที) */}
           <div className="flex items-center gap-1.5 text-[#606060] dark:text-[#888888] text-[12px] mt-1 truncate">
-            <span>{video.views_count ? `${video.views_count.toLocaleString()} views` : '270K views'}</span>
+            <span>{`${Number(video.views_count || 0).toLocaleString()} ครั้ง`}</span>
             <span>•</span>
             <span>HLS</span>
           </div>
@@ -244,11 +254,21 @@ export default function VideoCard({
               {video.title}
             </h4>
           </Link>
-          <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate mt-1 hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors">
-            OneDrive Cloud Storage
-          </span>
+          <div className="flex items-center gap-1.5 mt-1">
+            {video.author_picture && (
+              <img
+                src={video.author_picture}
+                alt={video.author_name || 'Channel'}
+                className="w-3.5 h-3.5 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors font-medium">
+              {video.author_name || 'DONUŤ'}
+            </span>
+          </div>
           <div className="flex items-center gap-1 text-[#606060] dark:text-[#888888] text-[12px] mt-0.5 truncate">
-            <span>{video.views_count ? `${video.views_count.toLocaleString()} ครั้ง` : '270K views'}</span>
+            <span>{`${Number(video.views_count || 0).toLocaleString()} ครั้ง`}</span>
             <span>•</span>
             <span>HLS Direct</span>
           </div>
@@ -346,8 +366,21 @@ export default function VideoCard({
       </Link>
 
       <div className="flex items-start gap-3 pt-3 px-0.5">
-        <div className="w-9 h-9 rounded-full bg-[#FFF4EB] dark:bg-[#FF7A00]/15 border border-[#FF7A00]/20 flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
-          <Layers className="w-4 h-4 text-[#FF7A00]" />
+        <div className="shrink-0 mt-0.5">
+          {video.author_picture ? (
+            <img
+              src={video.author_picture}
+              alt={video.author_name || 'Channel'}
+              className="w-9 h-9 rounded-full object-cover shadow-xs ring-1 ring-black/10 dark:ring-white/10"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-full bg-[#FFF4EB] dark:bg-[#FF7A00]/15 border border-[#FF7A00]/20 flex items-center justify-center shadow-xs">
+              <span className="font-bold text-xs text-[#FF7A00]">
+                {(video.author_name || 'D').charAt(0).toUpperCase()}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 min-w-0 pr-1">
@@ -358,8 +391,8 @@ export default function VideoCard({
           </Link>
 
           <div className="flex flex-col text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-normal">
-            <span className="truncate hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-colors">
-              {video.description ? video.description.replace('สแกนจากโฟลเดอร์ ', '') : 'OneDrive Storage'}
+            <span className="truncate hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-colors font-medium">
+              {video.author_name || 'DONUŤ'}
             </span>
             <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
               <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px]">

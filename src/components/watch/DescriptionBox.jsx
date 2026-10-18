@@ -332,7 +332,7 @@ export default function DescriptionBox({
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const rawDescription = video?.description || 'วิดีโอนี้สตรีมตรงผ่าน OneDrive HLS Multi-Bitrate Engine ปรับความละเอียดอัตโนมัติตามความเร็วเน็ตเวิร์ก (ABR Adaptive Streaming)';
+  const rawDescription = video?.description || (video ? 'ไม่มีคำอธิบายสำหรับวิดีโอนี้' : '');
 
   const parsedContent = useMemo(() => {
     return parseDescriptionTokens(rawDescription, onSeek);

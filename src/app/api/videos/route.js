@@ -41,6 +41,8 @@ async function ensureTable(sql) {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS raw_file_name TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS master_playlist_path TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'general';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE SET NULL;`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id);`;
     try {
       await sql`ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);`;
     } catch (_) {}
@@ -66,11 +68,16 @@ export async function GET(request) {
     try {
       rows = await sql`
         SELECT 
-          id, title, duration, file_size_bytes, resolution, fps, codec, 
-          thumbnail_url, tags, category, views_count, created_at, status, source_type
-        FROM videos 
-        WHERE status = 'READY' OR status IS NULL 
-        ORDER BY created_at DESC;
+          v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
+          v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, v.source_type,
+          v.user_id,
+          u.name AS author_name,
+          u.email AS author_email,
+          u.picture AS author_picture
+        FROM videos v
+        LEFT JOIN users u ON v.user_id = u.id
+        WHERE v.status = 'READY' OR v.status IS NULL 
+        ORDER BY v.created_at DESC;
       `;
     } catch (queryErr) {
       // Self-heal: If table or column doesn't exist yet, run ensureTable once and retry
@@ -78,11 +85,16 @@ export async function GET(request) {
         await ensureTable(sql);
         rows = await sql`
           SELECT 
-            id, title, duration, file_size_bytes, resolution, fps, codec, 
-            thumbnail_url, tags, category, views_count, created_at, status, source_type
-          FROM videos 
-          WHERE status = 'READY' OR status IS NULL 
-          ORDER BY created_at DESC;
+            v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
+            v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, v.source_type,
+            v.user_id,
+            u.name AS author_name,
+            u.email AS author_email,
+            u.picture AS author_picture
+          FROM videos v
+          LEFT JOIN users u ON v.user_id = u.id
+          WHERE v.status = 'READY' OR v.status IS NULL 
+          ORDER BY v.created_at DESC;
         `;
       } else {
         throw queryErr;

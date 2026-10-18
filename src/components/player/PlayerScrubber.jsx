@@ -28,11 +28,13 @@ export default function PlayerScrubber({
   handleSeekMouseMove,
   handlePointerUp,
   isMobileView,
+  showSettingsMenu,
 }) {
   // ตำแหน่งและเวลาของ preview:
   // - scrubbing  → ใช้ค่า scrub จริง
   // - hovering   → ใช้ค่า hover จริง
   // - fade-out   → ใช้ lastHoverRef (ค้างไว้ไม่ให้วิ่งไป 0:00)
+  const showPreview = (isScrubbing || isHoveringSeek) && !showSettingsMenu;
   const lastPct = lastHoverPercentRef?.current ?? previewPercent;
   const lastTime = lastHoverTimeRef?.current ?? previewTime;
   const rawLeft = (isScrubbing || isHoveringSeek) ? previewPercent : lastPct;
@@ -49,7 +51,7 @@ export default function PlayerScrubber({
       onPointerCancel={handlePointerUp}
       onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
       onMouseEnter={(e) => {
-        if (!isMobileView && e?.pointerType !== 'touch') setIsHoveringSeek?.(true);
+        if (!isMobileView && e?.pointerType !== 'touch' && !showSettingsMenu) setIsHoveringSeek?.(true);
       }}
       onMouseLeave={() => setIsHoveringSeek?.(false)}
       className="relative flex items-center h-6 sm:h-5 cursor-pointer touch-none group/seek py-1"
@@ -57,9 +59,9 @@ export default function PlayerScrubber({
       {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
       <div
         ref={scrubPreviewRef}
-        className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${isScrubbing || isHoveringSeek
+        className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${showPreview
           ? 'opacity-100 scale-100 translate-y-10 sm:translate-y-2'
-          : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5'
+          : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5 pointer-events-none'
           }`}
         style={{ left: `${previewLeft}%` }}
       >
@@ -98,7 +100,7 @@ export default function PlayerScrubber({
         {/* Buffer Track (Direct DOM) */}
         <div ref={bufferBarRef} className="absolute left-0 top-0 bottom-0 bg-white/40" style={{ width: `${initialBufferPct}%` }} />
         {/* Hover Preview Track */}
-        {isHoveringSeek && !isScrubbing && (
+        {isHoveringSeek && !isScrubbing && !showSettingsMenu && (
           <div className="absolute left-0 top-0 bottom-0 bg-white/30" style={{ width: `${hoverPercent}%` }} />
         )}
         {/* Playback Progress (Direct DOM - TubeLock Orange) */}
@@ -108,7 +110,11 @@ export default function PlayerScrubber({
       {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
       <div
         ref={scrubberKnobRef}
-        className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${isScrubbing ? 'scale-125' : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
+        className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${isScrubbing
+          ? 'scale-125'
+          : showSettingsMenu
+            ? 'scale-0'
+            : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
           }`}
         style={{ left: `${activeScrubPercent}%` }}
       />
