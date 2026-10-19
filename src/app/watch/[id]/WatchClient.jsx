@@ -409,6 +409,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   onRatioChange={(r) => setDetectedRatio(r)}
                   ambientMode={ambientMode}
                   setAmbientMode={handleSetAmbientMode}
+                  currentVideo={video}
+                  relatedVideos={relatedVideos}
                 />
               ) : (
                 /* Instant Player Shell: Thumbnail + Center Glowing Spinner */

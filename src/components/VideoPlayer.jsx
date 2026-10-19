@@ -9,6 +9,7 @@ import PlayerBottomBar from './player/PlayerBottomBar';
 import PlayerSettingsModal from './player/PlayerSettingsModal';
 import PlayerStatsModal from './player/PlayerStatsModal';
 import PlayerContextMenu from './player/PlayerContextMenu';
+import PlayerEndScreen from './player/PlayerEndScreen';
 
 export default function VideoPlayer({
   src,
@@ -41,6 +42,8 @@ export default function VideoPlayer({
   desktopMaxHeight = 'calc(100vh - 100px)',
   ambientMode = true,
   setAmbientMode = null,
+  currentVideo = null,
+  relatedVideos = [],
 }) {
   const video = useRef(null);
   useEffect(() => {
@@ -1870,6 +1873,15 @@ export default function VideoPlayer({
         duration={duration}
         showToast={showToast}
         resetControlsTimer={resetControlsTimer}
+      />
+
+      {/* 🎬 YouTube-style End Screen Overlay (Dynamic 3 Cards on PC) */}
+      <PlayerEndScreen
+        isVisible={isEnded && !isLooping}
+        isFullscreen={isFullscreen}
+        currentVideo={currentVideo || { id: videoId, title, category: videoCategory, author_name: channelName }}
+        relatedVideos={relatedVideos}
+        onReplay={togglePlay}
       />
 
       {/* Telemetry HUD (Stats for Nerds) */}
