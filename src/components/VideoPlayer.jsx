@@ -63,6 +63,7 @@ export default function VideoPlayer({
 
   useEffect(() => {
     initialSeekDoneRef.current = false;
+    setIsEnded(false);
     if (fadeBlackOverlayRef.current) {
       fadeBlackOverlayRef.current.style.transition = 'none';
       fadeBlackOverlayRef.current.style.opacity = '0';
@@ -70,6 +71,23 @@ export default function VideoPlayer({
     if (isMusic && videoId && typeof window !== 'undefined') {
       try {
         localStorage.removeItem(`tubelock_pos_${videoId}`);
+      } catch (_) { }
+    }
+
+    // Resume fullscreen across video transitions
+    if (typeof window !== 'undefined') {
+      try {
+        if (sessionStorage.getItem('tubelock_keep_fullscreen') === '1') {
+          sessionStorage.removeItem('tubelock_keep_fullscreen');
+          const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+          if (!isFull && containerRef.current) {
+            if (containerRef.current.requestFullscreen) {
+              containerRef.current.requestFullscreen().catch(() => { });
+            } else if (containerRef.current.webkitRequestFullscreen) {
+              containerRef.current.webkitRequestFullscreen().catch(() => { });
+            }
+          }
+        }
       } catch (_) { }
     }
   }, [src, videoId, targetInitialTime, isMusic]);

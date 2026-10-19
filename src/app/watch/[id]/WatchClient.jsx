@@ -145,12 +145,9 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
     async function initStream() {
       try {
         setError(null);
-        setStreamUrl('');
-
-        // Revoke previous blob URLs
-        for (const u of activeBlobUrlsRef.current) {
-          try { URL.revokeObjectURL(u); } catch (_) { }
-        }
+        // เก็บ blob URLs เดิมไว้ revoke หลัง stream ใหม่พร้อม
+        // ไม่เรียก setStreamUrl('') ทันที เพื่อป้องกัน VideoPlayer ถูก unmount จนทำให้หลุด Fullscreen
+        const prevBlobUrls = [...activeBlobUrlsRef.current];
         activeBlobUrlsRef.current = [];
 
         // ⚡ Step: Fetch Stream Source from OneDrive
@@ -192,6 +189,10 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         }
 
         setStreamUrl(resolved.url);
+        // Revoke blob URLs เก่าหลังจาก stream ใหม่พร้อมแล้ว
+        for (const u of prevBlobUrls) {
+          try { URL.revokeObjectURL(u); } catch (_) { }
+        }
         if (resolved.aspectRatio) {
           setDetectedRatio(resolved.aspectRatio);
         }

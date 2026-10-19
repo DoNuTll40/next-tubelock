@@ -179,6 +179,13 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
   return (
     <Link
       href={watchUrl}
+      onClick={() => {
+        if (isFullscreen || (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement))) {
+          try {
+            sessionStorage.setItem('tubelock_keep_fullscreen', '1');
+          } catch (_) {}
+        }
+      }}
       onMouseEnter={() => {
         setIsHovered(true);
         onPreWarm(v.id);
@@ -337,7 +344,7 @@ export default function PlayerEndScreen({
 
       {/* 3 Video Cards Row (YouTube Desktop 3-Card Layout) */}
       <div className={`grid grid-cols-2 md:grid-cols-3 w-full mx-auto items-start ${containerMaxWidth} ${isFullscreen
-        ? 'gap-5 sm:gap-6 md:gap-7 lg:gap-8'
+        ? 'gap-5 sm:gap-6'
         : 'gap-3 sm:gap-4 md:gap-5'
         }`}>
         {recommendations.map((v, idx) => (
