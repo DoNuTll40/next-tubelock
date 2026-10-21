@@ -27,7 +27,17 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   const urlT = searchParams?.get('t');
   const isMusic = isMusicVideo(initialVideo);
   const targetInitialTime = isMusic ? 0 : (urlT ? parseTimestamp(urlT) : (Number(initialTime) || 0));
-  const id = initialVideo?.id;
+  const [currentVideoId, setCurrentVideoId] = useState(initialVideo?.id);
+  const id = currentVideoId || initialVideo?.id;
+
+  // Handle browser Back / Forward buttons
+  useEffect(() => {
+    const handlePopState = () => {
+      router.refresh();
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [router]);
 
   // Clean URL query param (?t=...) after reading initial seek time, so page reload won't stick to old time!
   useEffect(() => {
@@ -53,6 +63,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   });
 
   const [streamUrl, setStreamUrl] = useState('');
+  const [isSwitchingVideo, setIsSwitchingVideo] = useState(false);
   const [storyboard, setStoryboard] = useState(null);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -129,6 +140,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   // Update initial props if server props change (during soft navigation)
   useEffect(() => {
     if (initialVideo) {
+      setCurrentVideoId(initialVideo.id);
       setVideo(initialVideo);
       setAvatarError(false);
     }
@@ -136,6 +148,22 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
       setRelatedVideos(initialRelated);
     }
   }, [initialVideo, initialRelated]);
+
+  // ⚡ YouTube In-Place Instant Video Switcher (Keeps DOM intact -> Fullscreen stays 100% active!)
+  const handleSelectVideo = (newVideo) => {
+    if (!newVideo || !newVideo.id) return;
+    const videoSlug = encodeVideoSlug(newVideo.id, newVideo.category) || newVideo.id;
+    const newUrl = `/watch/${videoSlug}`;
+
+    if (typeof window !== 'undefined') {
+      window.history.pushState(null, '', newUrl);
+    }
+
+    setIsSwitchingVideo(true);
+    setCurrentVideoId(newVideo.id);
+    setVideo(newVideo);
+    setRelatedVideos((prev) => prev.filter((item) => item.id !== newVideo.id));
+  };
 
   // Fetch Stream Source from OneDrive
   useEffect(() => {
@@ -189,6 +217,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         }
 
         setStreamUrl(resolved.url);
+        setIsSwitchingVideo(false);
         // Revoke blob URLs เก่าหลังจาก stream ใหม่พร้อมแล้ว
         for (const u of prevBlobUrls) {
           try { URL.revokeObjectURL(u); } catch (_) { }
@@ -210,6 +239,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
       } catch (err) {
         console.error('[WatchPage Error]:', err);
         if (!cancelled) {
+          setIsSwitchingVideo(false);
+          setStreamUrl('');
           setError(err.message || 'เกิดข้อผิดพลาดในการโหลดวิดีโอ');
         }
       }
@@ -412,6 +443,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   setAmbientMode={handleSetAmbientMode}
                   currentVideo={video}
                   relatedVideos={relatedVideos}
+                  onSelectVideo={handleSelectVideo}
+                  isSwitchingVideo={isSwitchingVideo}
                 />
               ) : (
                 /* Instant Player Shell: Thumbnail + Center Glowing Spinner */

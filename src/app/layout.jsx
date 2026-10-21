@@ -11,6 +11,10 @@ import DevTools from "@/components/DevTools";
 export const metadata = {
   title: "TubeLock - Private HLS Streaming",
   description: "Private Client-Side HLS Video Streaming Platform on Next.js",
+  icons: {
+    icon: "/images/TubeLock.png",
+    apple: "/images/TubeLock.png",
+  },
 };
 
 export default async function RootLayout({ children }) {

@@ -10,8 +10,12 @@ function LoginForm() {
   return (
     <div className="min-h-screen w-full relative bg-[#0F0F0F] flex items-center justify-center p-4 select-none">
       <div className="max-w-md w-full bg-[#181818] border border-white/10 rounded-3xl p-8 flex flex-col items-center text-center shadow-2xl">
-        <div className="w-14 h-14 bg-[#FF7A00]/15 border border-[#FF7A00]/30 rounded-2xl flex items-center justify-center mb-4">
-          <span className="text-2xl font-bold text-[#FF7A00]">TL</span>
+        <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-[0_8px_24px_rgba(255,122,0,0.35)] mb-4 shrink-0">
+          <img
+            src="/images/TubeLock.png"
+            alt="TubeLock Logo"
+            className="w-full h-full object-contain"
+          />
         </div>
 
         <h1 className="text-2xl font-bold text-white mb-2">เข้าสู่ระบบ TubeLock</h1>

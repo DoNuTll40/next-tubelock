@@ -147,7 +147,7 @@ export function getDynamicRecommendations(currentVideo, allVideos = [], count = 
 /**
  * EndScreenCard: Single recommendation card with dynamic dominant color hover background
  */
-function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = false }) {
+function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = false, onSelectVideo = null }) {
   const [dominantColor, setDominantColor] = useState(null);
   const [isHovered, setIsHovered] = useState(false);
   const imgRef = useRef(null);
@@ -179,11 +179,16 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
   return (
     <Link
       href={watchUrl}
-      onClick={() => {
-        if (isFullscreen || (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement))) {
-          try {
-            sessionStorage.setItem('tubelock_keep_fullscreen', '1');
-          } catch (_) {}
+      onClick={(e) => {
+        if (onSelectVideo) {
+          e.preventDefault();
+          onSelectVideo(v);
+        } else {
+          if (isFullscreen || (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement))) {
+            try {
+              sessionStorage.setItem('tubelock_keep_fullscreen', '1');
+            } catch (_) {}
+          }
         }
       }}
       onMouseEnter={() => {
@@ -277,6 +282,7 @@ export default function PlayerEndScreen({
   currentVideo = null,
   relatedVideos = [],
   onReplay = null,
+  onSelectVideo = null,
 }) {
   const [recommendations, setRecommendations] = useState([]);
   const hasSampledRef = useRef(false);
@@ -354,6 +360,7 @@ export default function PlayerEndScreen({
             isFullscreen={isFullscreen}
             isThirdOnMobile={idx === 2}
             onPreWarm={handlePreWarm}
+            onSelectVideo={onSelectVideo}
           />
         ))}
       </div>

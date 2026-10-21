@@ -44,6 +44,8 @@ export default function VideoPlayer({
   setAmbientMode = null,
   currentVideo = null,
   relatedVideos = [],
+  onSelectVideo = null,
+  isSwitchingVideo = false,
 }) {
   const video = useRef(null);
   useEffect(() => {
@@ -61,17 +63,64 @@ export default function VideoPlayer({
   const initialSeekDoneRef = useRef(false);
   const targetInitialTime = isMusic ? 0 : (Number(initialTime) || 0);
 
+  // When switching video: pause old video immediately, show buffering, reset progress to 0:00, show new poster!
   useEffect(() => {
+    if (isSwitchingVideo) {
+      if (video.current) {
+        try { video.current.pause(); } catch (_) { }
+      }
+      setIsPlaying(false);
+      setIsBuffering(true);
+      isEndedRef.current = false;
+      setIsEnded(false);
+      isUserPausedRef.current = false;
+      setShowPoster(true);
+
+      // Reset playback states immediately
+      setCurrentTime(0);
+      setDuration(0);
+      setSeekTime(0);
+      setIsSeeking(false);
+      lastReportedSecondRef.current = 0;
+
+      // Clear progress bar, scrubber knob, buffer bar, and time display immediately
+      if (progressBarRef.current) progressBarRef.current.style.width = '0%';
+      if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = '0%';
+      if (bufferBarRef.current) bufferBarRef.current.style.width = '0%';
+      if (timeDisplayRef.current) timeDisplayRef.current.textContent = '0:00 / 0:00';
+      if (fadeBlackOverlayRef.current) {
+        fadeBlackOverlayRef.current.style.transition = 'none';
+        fadeBlackOverlayRef.current.style.opacity = '0';
+      }
+    }
+  }, [isSwitchingVideo]);
+
+  // Track previous stream source URL to guard against redundant resets
+  const prevSrcRef = useRef(src);
+
+  // Reset playback and scrubber ONLY when the new stream URL (src) actually changes
+  useEffect(() => {
+    if (src === prevSrcRef.current) return;
+    prevSrcRef.current = src;
+
     initialSeekDoneRef.current = false;
+    isEndedRef.current = false;
     setIsEnded(false);
+    isUserPausedRef.current = false;
+    setShowPoster(true);
+    const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
+    if (video.current) {
+      try {
+        video.current.currentTime = startSec;
+      } catch (_) { }
+    }
+    setCurrentTime(startSec);
+    if (progressBarRef.current) progressBarRef.current.style.width = '0%';
+    if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = '0%';
+    if (timeDisplayRef.current) timeDisplayRef.current.textContent = '0:00 / 0:00';
     if (fadeBlackOverlayRef.current) {
       fadeBlackOverlayRef.current.style.transition = 'none';
       fadeBlackOverlayRef.current.style.opacity = '0';
-    }
-    if (isMusic && videoId && typeof window !== 'undefined') {
-      try {
-        localStorage.removeItem(`tubelock_pos_${videoId}`);
-      } catch (_) { }
     }
 
     // Resume fullscreen across video transitions
@@ -90,7 +139,16 @@ export default function VideoPlayer({
         }
       } catch (_) { }
     }
-  }, [src, videoId, targetInitialTime, isMusic]);
+  }, [src, targetInitialTime]);
+
+  // Clean music position on videoId change
+  useEffect(() => {
+    if (isMusic && videoId && typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem(`tubelock_pos_${videoId}`);
+      } catch (_) { }
+    }
+  }, [videoId, isMusic]);
 
   // Performance Direct-DOM Refs (Prevents React re-render thrashing!)
   const progressBarRef = useRef(null);
@@ -178,7 +236,9 @@ export default function VideoPlayer({
   // Playback states
   const [isPlaying, setIsPlaying] = useState(false);
   const [isEnded, setIsEnded] = useState(false);
+  const isEndedRef = useRef(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  const [showPoster, setShowPoster] = useState(true);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -453,7 +513,7 @@ export default function VideoPlayer({
       }
     }
 
-    // 🎬 Cinematic Fade to Black (ช่วง ~1.0s สุดท้ายก่อนจบวิดีโอ)
+    // 🎬 Cinematic Fade to Black (ช่วง ~0.5s สุดท้ายก่อนจบวิดีโอ)
     if (dur > 2) {
       const timeLeft = dur - cur;
       if (timeLeft <= 0.5) {
@@ -461,7 +521,7 @@ export default function VideoPlayer({
           fadeBlackOverlayRef.current.style.transition = 'opacity 700ms cubic-bezier(0.4, 0, 0.2, 1)';
           fadeBlackOverlayRef.current.style.opacity = '1';
         }
-      } else if (timeLeft > 1) {
+      } else if (timeLeft > 1 && !isEndedRef.current) {
         if (fadeBlackOverlayRef.current && fadeBlackOverlayRef.current.style.opacity !== '0') {
           fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
           fadeBlackOverlayRef.current.style.opacity = '0';
@@ -574,19 +634,31 @@ export default function VideoPlayer({
   const attemptAutoPlay = useCallback(() => {
     const v = video.current;
     if (!v || !defaultAutoplay || isUserPausedRef.current) return;
+
+    // Do NOT autoplay if video is ended or approaching the end (leaves playback stopped at end screen)
+    if (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current) {
+      return;
+    }
+
     if (!v.paused) return;
 
     const p = v.play();
     if (p !== undefined) {
       p.then(() => {
         setIsPlaying(true);
+        isEndedRef.current = false;
+        setIsEnded(false);
       }).catch((err) => {
         // Browser Autoplay Policy: if unmuted autoplay is blocked, mute and play immediately!
         if (v && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
           v.muted = true;
           setIsMuted(true);
           v.play()
-            .then(() => setIsPlaying(true))
+            .then(() => {
+              setIsPlaying(true);
+              isEndedRef.current = false;
+              setIsEnded(false);
+            })
             .catch(() => { });
         }
       });
@@ -646,7 +718,8 @@ export default function VideoPlayer({
             // ลดขนาดแคชสูงสุด (มือถือไม่เกิน 30MB, คอมไม่เกิน 60MB)
             maxBufferSize: (isMobile ? 120 : 240) * 1000 * 1000,
 
-            backBufferLength: 5,
+            // ป้องกันการลบ buffer ด้านหลังเร็วเกินไป (30s แทน 5s ป้องกัน Chrome MSE buffer decode stall)
+            backBufferLength: 30,
             enableWorker: true,
             lowLatencyMode: false,
 
@@ -659,13 +732,14 @@ export default function VideoPlayer({
 
             testBandwidth: true,
 
-            // ปรับลดค่าประเมินเริ่มต้นเหลือ 1.5 - 3 Mbps (แทนที่จะยัดไป 20 Mbps)
-            // เพื่อให้ตัวเล่นเริ่มที่ 720p/480p ก่อน แล้วค่อยสลับขึ้น 1080p/4K ถ้ารับไหวจริง
+            // ปรับลดค่าประเมินเริ่มต้นเหลือ 1.5 - 3 Mbps
             abrEwmaDefaultEstimate: isMobile ? 1500000 : 3500000,
 
-            fpsDroppedMonitoring: true,
-            fpsDroppedMonitoringPeriod: 4000,
-            fpsDroppedMonitoringThreshold: 0.2,
+            // Anti-stall watchdog settings: ข้าม micro-gaps อัตโนมัติ ป้องกันวิดีโอหยุดเล่นเอง
+            maxBufferHole: 0.5,
+            highBufferWatchdogPeriod: 2,
+            nudgeOffset: 0.1,
+            nudgeMaxRetry: 5,
           });
 
           hls.loadSource(src);
@@ -674,15 +748,16 @@ export default function VideoPlayer({
 
           hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
             setIsBuffering(false);
-            if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
-              initialSeekDoneRef.current = true;
-              setCurrentTime(targetInitialTime);
-              if (v) {
-                try {
-                  v.currentTime = targetInitialTime;
-                } catch (_) { }
-              }
+            isEndedRef.current = false;
+            setIsEnded(false);
+            const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
+            if (v) {
+              try {
+                v.currentTime = startSec;
+              } catch (_) { }
             }
+            setCurrentTime(startSec);
+            initialSeekDoneRef.current = true;
             if (data.levels && data.levels.length > 0) {
               const videoFps = Number(fps) || 0;
               const parsed = data.levels.map((lvl, index) => {
@@ -785,6 +860,16 @@ export default function VideoPlayer({
                   hls.destroy();
                   break;
               }
+            } else {
+              // Auto-recover non-fatal buffer stalls so video NEVER freezes on its own
+              if (
+                data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+              ) {
+                if (!isUserPausedRef.current && v && v.paused) {
+                  v.play().catch(() => { });
+                }
+              }
             }
           });
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
@@ -871,8 +956,9 @@ export default function VideoPlayer({
   const togglePlay = useCallback(() => {
     if (!video.current) return;
 
-    if (video.current.ended || isEnded) {
+    if (video.current.ended || isEnded || isEndedRef.current) {
       video.current.currentTime = 0;
+      isEndedRef.current = false;
       setIsEnded(false);
       isUserPausedRef.current = false;
       if (fadeBlackOverlayRef.current) {
@@ -1617,12 +1703,16 @@ export default function VideoPlayer({
 
   // Persistent progress and time values with Optimistic UI:
   // ให้แถบ Seekbar และตัวเลขเวลาใน UI ใช้ค่าเวลาตามเงื่อนไข: isSeeking ? seekTime : currentTime
-  const currentVideoTime = isSeeking ? seekTime : currentTime;
-  const currentProgressPct = duration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / duration) * 100)) : 0;
-  const activeScrubPercent = isScrubbing ? scrubPercent : currentProgressPct;
-  const activeTimeDisplay = isScrubbing
-    ? formatTimePair(previewTime, duration)
-    : formatTimePair(currentVideoTime, duration);
+  const effectiveTime = isSwitchingVideo ? 0 : (isSeeking ? seekTime : currentTime);
+  const effectiveDuration = isSwitchingVideo ? 0 : duration;
+  const currentVideoTime = effectiveTime;
+  const currentProgressPct = effectiveDuration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / effectiveDuration) * 100)) : 0;
+  const activeScrubPercent = isSwitchingVideo ? 0 : (isScrubbing ? scrubPercent : currentProgressPct);
+  const activeTimeDisplay = isSwitchingVideo
+    ? '0:00 / 0:00'
+    : isScrubbing
+      ? formatTimePair(previewTime, duration)
+      : formatTimePair(currentVideoTime, duration);
 
   const initialBufferPct = 0;
 
@@ -1672,6 +1762,7 @@ export default function VideoPlayer({
         poster={poster}
         crossOrigin="anonymous"
         autoPlay={defaultAutoplay}
+        loop={isLooping}
         playsInline
         webkit-playsinline="true"
         x5-playsinline="true"
@@ -1683,15 +1774,65 @@ export default function VideoPlayer({
         onPlaying={() => {
           setIsBuffering(false);
           setIsPlaying(true);
+          setShowPoster(false);
+          isEndedRef.current = false;
           setIsEnded(false);
           isUserPausedRef.current = false;
           checkAndUpdateRatio();
           lastTickTimeRef.current = performance.now();
         }}
         onPause={() => {
+          const v = video.current;
+          const isAtEnd = v && (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current);
+
+          if (isAtEnd) {
+            // จบวิดีโอตามปกติ: อัปเดตสถานะจบ, ค้างจอดำ และแสดง End Screen (ไม่วนเล่นซ้ำถ้าไม่ได้เปิด loop)
+            isEndedRef.current = true;
+            setIsEnded(true);
+            setIsPlaying(false);
+            lastTickTimeRef.current = null;
+            if (fadeBlackOverlayRef.current) {
+              fadeBlackOverlayRef.current.style.transition = 'opacity 200ms ease-out';
+              fadeBlackOverlayRef.current.style.opacity = '1';
+            }
+            if (videoId && v && v.currentTime > 1) {
+              const historyPayload = JSON.stringify({ videoId, position: isMusic ? 0 : Math.floor(v.currentTime) });
+              if (isMusic) {
+                try {
+                  localStorage.setItem(`tubelock_watched_${videoId}`, '1');
+                  localStorage.removeItem(`tubelock_pos_${videoId}`);
+                } catch (_) { }
+              } else {
+                try {
+                  localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(v.currentTime)));
+                } catch (_) { }
+              }
+              if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+                navigator.sendBeacon('/api/history', historyPayload);
+              } else {
+                fetch('/api/history', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: historyPayload,
+                  keepalive: true,
+                }).catch(() => { });
+              }
+            }
+            return;
+          }
+
+          // หากเบราว์เซอร์ emit pause เองระหว่างเล่น โดยที่ผู้ใช้ไม่ได้กดหยุด และคลิปยังไม่จบ (เช่น Buffer stall / MSE pipeline hiccup)
+          if (!isUserPausedRef.current && !isSwitchingVideo) {
+            if (v && v.readyState >= 2) {
+              v.play().catch(() => { });
+              return;
+            } else {
+              setIsBuffering(true);
+            }
+          }
+
           setIsPlaying(false);
           lastTickTimeRef.current = null;
-          const v = video.current;
           if (videoId && v && v.currentTime > 1) {
             const historyPayload = JSON.stringify({ videoId, position: isMusic ? 0 : Math.floor(v.currentTime) });
             if (isMusic) {
@@ -1736,6 +1877,7 @@ export default function VideoPlayer({
           }
         }}
         onEnded={() => {
+          isEndedRef.current = true;
           setIsEnded(true);
           setIsPlaying(false);
           if (fadeBlackOverlayRef.current) {
@@ -1754,6 +1896,7 @@ export default function VideoPlayer({
         onSeeking={() => {
           isSeekingRef.current = true;
           lastTickTimeRef.current = null;
+          isEndedRef.current = false;
           setIsEnded(false);
           if (fadeBlackOverlayRef.current) {
             fadeBlackOverlayRef.current.style.transition = 'none';
@@ -1773,6 +1916,7 @@ export default function VideoPlayer({
             setCurrentTime(v.currentTime);
             lastReportedSecondRef.current = Math.floor(v.currentTime);
             if (vDur - v.currentTime > 1.0) {
+              isEndedRef.current = false;
               setIsEnded(false);
             }
             if (timeDisplayRef.current) {
@@ -1806,20 +1950,21 @@ export default function VideoPlayer({
           if (dur) setDuration(dur);
           updateBufferProgress();
 
-          if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
+          const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
+          if (!initialSeekDoneRef.current) {
             initialSeekDoneRef.current = true;
             try {
-              e.target.currentTime = targetInitialTime;
-              setCurrentTime(targetInitialTime);
+              e.target.currentTime = startSec;
+              setCurrentTime(startSec);
             } catch (_) { }
           }
 
-          if (dur && dur > 0 && targetInitialTime > 0) {
-            const pct = Math.min((targetInitialTime / dur) * 100, 100);
+          if (dur && dur > 0) {
+            const pct = Math.min((startSec / dur) * 100, 100);
             if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
             if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
             if (timeDisplayRef.current) {
-              timeDisplayRef.current.textContent = formatTimePair(targetInitialTime, dur);
+              timeDisplayRef.current.textContent = formatTimePair(startSec, dur);
             }
           }
 
@@ -1837,6 +1982,37 @@ export default function VideoPlayer({
           backfaceVisibility: 'hidden',
         }}
       />
+
+      {/* 🖼️ Instant Video Poster / Transition Backdrop (Shows new video's thumbnail immediately!) */}
+      {poster && (
+        <div
+          className={`absolute inset-0 z-[2] overflow-hidden pointer-events-none transition-opacity duration-500 ease-out ${
+            (showPoster || isSwitchingVideo) ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          {/* Ambient blurred backdrop fills entire player */}
+          <img
+            src={poster}
+            alt=""
+            aria-hidden="true"
+            className="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-40 select-none pointer-events-none"
+          />
+          {/* Main crisp poster image */}
+          <img
+            src={poster}
+            alt={title || 'Video Poster'}
+            className={`w-full h-full relative z-[1] select-none pointer-events-none ${
+              aspectMode === 'crop'
+                ? 'object-cover scale-[1.08]'
+                : aspectMode === 'fill'
+                  ? 'object-cover'
+                  : 'object-contain'
+            }`}
+          />
+          {/* Gentle cinematic vignette for crisp controls contrast */}
+          <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/60 via-black/20 to-black/60 pointer-events-none" />
+        </div>
+      )}
 
       {/* 🎬 Cinematic Fade-to-Black Overlay (ช่วง ~0.8s - 1.0s ก่อนจบวิดีโอ) */}
       <div
@@ -1881,7 +2057,7 @@ export default function VideoPlayer({
         showControls={showControls}
         isPlaying={isPlaying}
         isEnded={isEnded}
-        isBuffering={isBuffering}
+        isBuffering={isBuffering || isSwitchingVideo}
         hlsError={hlsError}
         isMobileView={isMobileView}
         seekStep={seekStep}
@@ -1895,11 +2071,12 @@ export default function VideoPlayer({
 
       {/* 🎬 YouTube-style End Screen Overlay (Dynamic 3 Cards on PC) */}
       <PlayerEndScreen
-        isVisible={isEnded && !isLooping}
+        isVisible={isEnded && !isLooping && !isSwitchingVideo}
         isFullscreen={isFullscreen}
         currentVideo={currentVideo || { id: videoId, title, category: videoCategory, author_name: channelName }}
         relatedVideos={relatedVideos}
         onReplay={togglePlay}
+        onSelectVideo={onSelectVideo}
       />
 
       {/* Telemetry HUD (Stats for Nerds) */}

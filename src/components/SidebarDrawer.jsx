@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/context/SidebarContext';
 import {
-  Menu, Layers, Home, PlusSquare,
+  Menu, Home, PlusSquare,
   History, PlaySquare, Settings, Gauge, ChevronRight, X, ListOrdered
 } from 'lucide-react';
 
@@ -88,9 +88,11 @@ export default function SidebarDrawer() {
             onClick={closeDrawer}
             className="flex items-center gap-2 active:scale-95 transition"
           >
-            <div className="w-7 h-7 rounded-lg bg-[#FF7A00] flex items-center justify-center text-white shadow-[0_2px_8px_rgba(255,122,0,0.3)]">
-              <Layers className="w-3.5 h-3.5 fill-white stroke-[2]" />
-            </div>
+            <img
+              src="/images/TubeLock.png"
+              alt="TubeLock Logo"
+              className="w-7 h-7 rounded-lg object-contain shadow-[0_2px_8px_rgba(255,122,0,0.3)] shrink-0"
+            />
             <div className="flex items-start gap-1">
               <span className="font-bold text-base tracking-tight text-[#212529] dark:text-[#F1F1F1]">
                 Tube<span className="text-[#FF7A00]">Lock</span>

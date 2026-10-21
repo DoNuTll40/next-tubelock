@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { Layers, User, Menu, Search, Mic, Plus, Bell } from 'lucide-react';
+import { User, Menu, Search, Mic, Plus, Bell } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useSidebar } from '@/context/SidebarContext';
 import { useViewMode } from '@/context/ViewModeContext';
@@ -85,11 +85,10 @@ export default function Navbar({ session }) {
 
   return (
     <header
-      className={`sticky top-0 z-40 w-full px-4 py-2 select-none h-14 flex items-center transition-colors duration-300 ${
-        isTransparent
-          ? 'bg-transparent border-b border-transparent backdrop-blur-none'
-          : 'bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10'
-      }`}
+      className={`sticky top-0 z-40 w-full px-4 py-2 select-none h-14 flex items-center transition-colors duration-300 ${isTransparent
+        ? 'bg-transparent border-b border-transparent backdrop-blur-none'
+        : 'bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10'
+        }`}
     >
       <div className="w-full flex items-center justify-between gap-4">
         {/* Left: Hamburger & Logo */}
@@ -110,9 +109,11 @@ export default function Navbar({ session }) {
           </button>
 
           <Link href="/" className="flex items-center gap-2 transition">
-            <div className="w-7 h-7 rounded-lg bg-[#FF7A00] flex items-center justify-center text-white shadow-[0_2px_8px_rgba(255,122,0,0.3)]">
-              <Layers className="w-3.5 h-3.5 fill-white stroke-[2]" />
-            </div>
+            <img
+              src="/images/TubeLock.png"
+              alt="TubeLock Logo"
+              className="w-7 h-7 rounded-lg object-contain shadow-[0_2px_8px_rgba(255,122,0,0.3)] shrink-0"
+            />
             <div className="flex items-start gap-1">
               <span className="font-bold text-base tracking-tight text-[#212529] dark:text-[#F1F1F1]">
                 Tube<span className="text-[#FF7A00]">Lock</span>
@@ -132,7 +133,7 @@ export default function Navbar({ session }) {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="ค้นหาใน TubeLock"
-                  className="w-full py-2 pl-4 pr-3 text-xs text-[#212529] dark:text-[#F1F1F1] placeholder:text-[#8C857B] dark:placeholder:text-[#777777] focus:outline-none bg-transparent"
+                  className="w-full py-2 pl-4 pr-3 text-md text-[#212529] dark:text-[#F1F1F1] placeholder:text-[#8C857B] dark:placeholder:text-[#777777] focus:outline-none bg-transparent"
                 />
               </div>
               <button
