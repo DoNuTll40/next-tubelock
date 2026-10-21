@@ -19,6 +19,8 @@ export async function proxy(request) {
 
   const isPublicPath =
     pathname === '/' ||
+    pathname.startsWith('/results') ||
+    pathname.startsWith('/api/search') ||
     pathname.startsWith('/api/videos') ||
     pathname.startsWith('/streams') ||
     pathname.startsWith('/login') ||

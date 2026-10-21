@@ -45,6 +45,7 @@ export default async function RootLayout({ children }) {
   return (
     <html lang="th" className="h-full antialiased" suppressHydrationWarning>
       <head>
+        <link rel="icon" href="/images/TubeLock.png" type="image/png" />
         <script
           dangerouslySetInnerHTML={{
             __html: `

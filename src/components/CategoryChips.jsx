@@ -37,7 +37,7 @@ export default function CategoryChips({ activeCategory = 'all', onSelectCategory
   };
 
   return (
-    <div className="sticky top-14 z-30 w-full bg-[#FBF9F5]/98 dark:bg-[#0F0F0F]/98 backdrop-blur-md py-2 px-4 sm:px-6 border-b border-[#EFECE6] dark:border-white/10 select-none shadow-xs transition-colors">
+    <div className="sticky top-14 z-30 w-full bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md py-2 px-4 sm:px-6 border-b border-[#EFECE6] dark:border-white/10 select-none shadow-xs transition-colors">
       <div className="relative flex items-center max-w-full">
         {/* Left Arrow (Desktop) */}
         {showLeftArrow && (
@@ -66,11 +66,10 @@ export default function CategoryChips({ activeCategory = 'all', onSelectCategory
                 key={cat.id}
                 type="button"
                 onClick={() => onSelectCategory(cat.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all duration-150 cursor-pointer ${
-                  isActive
-                    ? 'bg-[#212529] dark:bg-[#F1F1F1] text-white dark:text-[#0F0F0F] shadow-xs'
-                    : 'bg-[#F0EDE6] dark:bg-[#222222] hover:bg-[#E5E0D8] dark:hover:bg-[#2e2e2e] text-[#212529] dark:text-[#F1F1F1]'
-                }`}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all duration-150 cursor-pointer ${isActive
+                  ? 'bg-[#212529] dark:bg-[#F1F1F1] text-white dark:text-[#0F0F0F] shadow-xs'
+                  : 'bg-[#F0EDE6] dark:bg-[#222222] hover:bg-[#E5E0D8] dark:hover:bg-[#2e2e2e] text-[#212529] dark:text-[#F1F1F1]'
+                  }`}
               >
                 {cat.label}
               </button>

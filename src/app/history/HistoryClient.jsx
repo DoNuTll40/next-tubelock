@@ -108,7 +108,7 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
     if (isMusic && item.video_id && typeof window !== 'undefined') {
       try {
         localStorage.removeItem(`tubelock_pos_${item.video_id}`);
-      } catch (_) {}
+      } catch (_) { }
     }
   }, [isMusic, item.video_id]);
 
@@ -402,7 +402,7 @@ export default function HistoryClient({ initialHistory = [], initialUser, initia
         </div>
 
         {/* Right Column: Clean YouTube Desktop Control Sidebar (~300px) */}
-        <div className="hidden lg:flex flex-col w-[280px] xl:w-[320px] shrink-0 sticky top-20 gap-3">
+        <div className="hidden lg:flex flex-col w-[280px] xl:w-[320px] shrink-0 sticky top-20 gap-3 sm:mt-3">
           {/* Search History Input */}
           <div className="relative flex items-center">
             <Search className="w-4 h-4 text-[#8C857B] dark:text-[#888888] absolute left-3.5 pointer-events-none" />
@@ -424,7 +424,7 @@ export default function HistoryClient({ initialHistory = [], initialUser, initia
             )}
           </div>
 
-          <div className="h-px bg-[#EFECE6] dark:bg-white/10 my-1" />
+          {/* <div className="h-px bg-[#EFECE6] dark:bg-white/10 my-1" /> */}
 
           {/* Clear All History Button */}
           <button
@@ -432,8 +432,8 @@ export default function HistoryClient({ initialHistory = [], initialUser, initia
             onClick={() => setShowClearModal(true)}
             disabled={history.length === 0}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition text-left cursor-pointer ${history.length === 0
-                ? 'opacity-30 cursor-not-allowed text-[#8C857B]'
-                : 'hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-600 dark:text-rose-400'
+              ? 'opacity-30 cursor-not-allowed text-[#8C857B]'
+              : 'hover:bg-rose-50 dark:hover:bg-rose-950/20 text-rose-600 dark:text-rose-400'
               }`}
           >
             <Trash2 className="w-4 h-4 shrink-0" />

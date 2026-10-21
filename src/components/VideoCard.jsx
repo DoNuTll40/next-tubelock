@@ -117,7 +117,7 @@ export default function VideoCard({
     if (isMusic && video?.id && typeof window !== 'undefined') {
       try {
         localStorage.removeItem(`tubelock_pos_${video.id}`);
-      } catch (_) {}
+      } catch (_) { }
     }
   }, [isMusic, video?.id]);
 
@@ -401,7 +401,7 @@ export default function VideoCard({
           )}
 
           {/* Badges */}
-          <div className="absolute top-2.5 left-2.5 z-10 flex gap-1 items-center">
+          {/* <div className="absolute top-2.5 left-2.5 z-10 flex gap-1 items-center">
             <span
               className={`text-[10px] font-bold px-2 py-0.5 rounded-md border backdrop-blur-md uppercase tracking-wide ${is4K
                 ? 'bg-[#FF7A00] text-white border-[#FF7A00] shadow-xs'
@@ -417,11 +417,11 @@ export default function VideoCard({
                 {Number(video.fps).toFixed(0)} fps
               </span>
             )}
-          </div>
+          </div> */}
 
           {video.duration > 0 && (
-            <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/80 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 border border-white/10 font-mono">
-              <Clock className="w-3 h-3 stroke-[2]" />
+            <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/35 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 font-mono">
+              {/* <Clock className="w-3 h-3 stroke-[2]" /> */}
               {formatDuration(video.duration)}
             </div>
           )}

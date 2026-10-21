@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { User, Menu, Search, Mic, Plus, Bell } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { User, Menu, Search, Mic, Plus, Bell, X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import { useSidebar } from '@/context/SidebarContext';
 import { useViewMode } from '@/context/ViewModeContext';
+import SearchDropdown from './navbar/SearchDropdown';
 
 // Browser Native Crypto SHA-256
 async function sha256(message) {
@@ -23,6 +24,9 @@ export default function Navbar({ session }) {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [imgError, setImgError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const searchContainerRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -53,12 +57,69 @@ export default function Navbar({ session }) {
     };
   }, []);
 
+  const handleSelectQuery = (query, thumbnail) => {
+    setSearchQuery(query);
+    setIsSearchFocused(false);
+    if (query.trim()) {
+      try {
+        const saved = localStorage.getItem('tubelock_search_history');
+        const parsed = saved ? JSON.parse(saved) : [];
+        const existing = parsed.find((item) => item.query.toLowerCase() === query.trim().toLowerCase());
+        const effectiveThumb = thumbnail || existing?.thumbnail || null;
+        const filtered = parsed.filter((item) => item.query.toLowerCase() !== query.trim().toLowerCase());
+        const updated = [{ id: 'h_' + Date.now(), query: query.trim(), thumbnail: effectiveThumb }, ...filtered].slice(0, 25);
+        localStorage.setItem('tubelock_search_history', JSON.stringify(updated));
+      } catch (_) { }
+
+      const formattedQuery = encodeURIComponent(query.trim()).replace(/%20/g, '+');
+      router.push(`/results?search_query=${formattedQuery}`);
+
+      // Save to account database if logged in
+      fetch('/api/search/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: query.trim(), thumbnail: effectiveThumb }),
+      }).catch(() => {});
+    }
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      router.push(`/?q=${encodeURIComponent(searchQuery.trim())}`);
+      setIsSearchFocused(false);
+      let foundThumb = null;
+      try {
+        const saved = localStorage.getItem('tubelock_search_history');
+        const parsed = saved ? JSON.parse(saved) : [];
+        const existing = parsed.find((item) => item.query.toLowerCase() === searchQuery.trim().toLowerCase());
+        foundThumb = existing?.thumbnail || null;
+        const filtered = parsed.filter((item) => item.query.toLowerCase() !== searchQuery.trim().toLowerCase());
+        const updated = [{ id: 'h_' + Date.now(), query: searchQuery.trim(), thumbnail: foundThumb }, ...filtered].slice(0, 25);
+        localStorage.setItem('tubelock_search_history', JSON.stringify(updated));
+      } catch (_) { }
+
+      const formattedQuery = encodeURIComponent(searchQuery.trim()).replace(/%20/g, '+');
+      router.push(`/results?search_query=${formattedQuery}`);
+
+      // Save to account database if logged in
+      fetch('/api/search/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: searchQuery.trim(), thumbnail: foundThumb }),
+      }).catch(() => {});
     }
   };
+
+  // Sync search input from URL when visiting /results
+  useEffect(() => {
+    if (typeof window !== 'undefined' && pathname === '/results') {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get('search_query');
+      if (q) {
+        setSearchQuery(q);
+      }
+    }
+  }, [pathname]);
 
   const isWatchPage = pathname?.startsWith('/watch');
   const [isScrolled, setIsScrolled] = useState(false);
@@ -92,7 +153,7 @@ export default function Navbar({ session }) {
     >
       <div className="w-full flex items-center justify-between gap-4">
         {/* Left: Hamburger & Logo */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0 z-10">
           <button
             type="button"
             onClick={() => {
@@ -123,43 +184,88 @@ export default function Navbar({ session }) {
           </Link>
         </div>
 
-        {/* Center: Search Bar (YouTube PC Style) */}
-        {isDesktop ? (
-          <div className="flex items-center justify-center flex-1 max-w-[620px] mx-auto">
-            <form onSubmit={handleSearch} className="flex items-center w-full">
-              <div className="flex items-center flex-1 relative rounded-l-full border border-[#EFECE6] dark:border-white/15 focus-within:border-[#FF7A00] bg-white dark:bg-[#121212] overflow-hidden shadow-2xs transition-colors">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="ค้นหาใน TubeLock"
-                  className="w-full py-2 pl-4 pr-3 text-md text-[#212529] dark:text-[#F1F1F1] placeholder:text-[#8C857B] dark:placeholder:text-[#777777] focus:outline-none bg-transparent"
+        {/* Center: Search Bar (True 50% Viewport Center - YouTube PC Style) */}
+        {isDesktop && (
+          <div className="absolute left-1/2 -translate-x-1/2 w-full max-w-[500px] lg:max-w-[580px] xl:max-w-[640px] px-4 flex items-center justify-center z-20 pointer-events-none">
+            <div ref={searchContainerRef} className="relative flex items-center justify-center w-full pointer-events-auto">
+              <div className="relative flex-1">
+                <form onSubmit={handleSearch} className="flex items-center w-full h-10">
+                  <div
+                    className={`h-10 flex items-center flex-1 relative rounded-l-full border bg-white dark:bg-[#121212] overflow-hidden shadow-2xs transition-all duration-200 ${
+                      isSearchFocused
+                        ? 'border-[#FF7A00] pl-3.5 z-10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]'
+                        : 'border-[#EFECE6] dark:border-white/15 pl-4'
+                    }`}
+                  >
+                    {/* Search Icon inside input when focused (YouTube Style) */}
+                    {isSearchFocused && (
+                      <Search className="w-4 h-4 text-[#8C857B] dark:text-[#AAAAAA] mr-2 shrink-0 animate-in fade-in duration-150" />
+                    )}
+
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                      onFocus={() => setIsSearchFocused(true)}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          setIsSearchFocused(false);
+                          searchInputRef.current?.blur();
+                        }
+                      }}
+                      placeholder="ค้นหาใน TubeLock"
+                      className="w-full h-full pr-2 text-md text-[#212529] dark:text-[#F1F1F1] placeholder:text-[#8C857B] dark:placeholder:text-[#777777] focus:outline-none bg-transparent"
+                    />
+
+                    {/* Clear "X" button when input has text */}
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('');
+                          searchInputRef.current?.focus();
+                        }}
+                        className="p-1 mr-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/15 text-[#8C857B] hover:text-[#212529] dark:text-[#AAAAAA] dark:hover:text-white transition cursor-pointer shrink-0"
+                        title="ล้างข้อความค้นหา"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="submit"
+                    className="h-10 px-6 rounded-r-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] border-y border-r border-[#EFECE6] dark:border-white/15 -ml-[1px] text-[#212529] dark:text-[#F1F1F1] flex items-center justify-center cursor-pointer transition active:bg-[#E5E0D8] shrink-0"
+                    title="ค้นหา"
+                  >
+                    <Search className="w-4.5 h-4.5" />
+                  </button>
+                </form>
+
+                {/* 🔍 YouTube-style Search History & Autocomplete Dropdown */}
+                <SearchDropdown
+                  isOpen={isSearchFocused}
+                  searchQuery={searchQuery}
+                  onSelectQuery={handleSelectQuery}
+                  onClose={() => setIsSearchFocused(false)}
+                  searchContainerRef={searchContainerRef}
                 />
               </div>
-              <button
-                type="submit"
-                className="h-[34px] px-5 rounded-r-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] border-y border-r border-[#EFECE6] dark:border-white/15 text-[#212529] dark:text-[#F1F1F1] flex items-center justify-center cursor-pointer transition active:bg-[#E5E0D8]"
-                title="ค้นหา"
-              >
-                <Search className="w-4 h-4" />
-              </button>
-            </form>
 
-            {/* Voice Search Button */}
-            <button
-              type="button"
-              className="ml-2.5 w-9 h-9 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] flex items-center justify-center text-[#212529] dark:text-[#F1F1F1] transition cursor-pointer"
-              title="ค้นหาด้วยเสียง"
-            >
-              <Mic className="w-4 h-4" />
-            </button>
+              {/* Voice Search Button */}
+              <button
+                type="button"
+                className="ml-3 w-10 h-10 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] flex items-center justify-center text-[#212529] dark:text-[#F1F1F1] transition cursor-pointer shrink-0"
+                title="ค้นหาด้วยเสียง"
+              >
+                <Mic className="w-4.5 h-4.5" />
+              </button>
+            </div>
           </div>
-        ) : (
-          <div className="flex-1" />
         )}
 
         {/* Right: Actions & Gravatar Avatar */}
-        <div className="flex items-center gap-2 sm:gap-0.5">
+        <div className="flex items-center gap-2 sm:gap-0.5 ml-auto shrink-0 z-10">
           {/* Mobile Search Icon */}
           {!isDesktop && (
             <button
