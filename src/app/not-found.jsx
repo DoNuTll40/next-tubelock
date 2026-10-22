@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Home, ArrowLeft, VideoOff } from 'lucide-react';
+import { APP_VERSION } from '@/lib/version';
 
 export default function NotFound() {
     const router = useRouter();
@@ -59,7 +60,7 @@ export default function NotFound() {
 
             {/* Footer Hint */}
             <div className="mt-14 text-[11px] text-neutral-400 dark:text-[#717171] flex items-center gap-2 font-normal">
-                <span>TubeLock v1.0</span>
+                <span>TubeLock v{APP_VERSION}</span>
                 <span>•</span>
                 <span>$0 Cost Cloud Streaming</span>
             </div>

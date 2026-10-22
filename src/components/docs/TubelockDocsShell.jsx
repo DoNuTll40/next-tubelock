@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Menu, X, ExternalLink, ArrowLeft, Lock, FileText,
-  HelpCircle, Shield, BookOpen
+  HelpCircle, Shield, BookOpen, History
 } from 'lucide-react';
+import Image from 'next/image';
 
 function GitHubIcon({ className = "w-3.5 h-3.5" }) {
   return (
@@ -20,6 +21,7 @@ function getIconForDoc(slug) {
   if (slug === 'faq') return HelpCircle;
   if (slug === 'policy') return Shield;
   if (slug === 'terms') return FileText;
+  if (slug === 'patchnote' || slug === 'patchnotes' || slug === 'changelog') return History;
   return BookOpen;
 }
 
@@ -43,9 +45,7 @@ export default function TubelockDocsShell({ nav = [], children }) {
           </button>
 
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-7 h-7 rounded-lg bg-[#FF7A00] flex items-center justify-center text-white shadow-2xs">
-              <Lock className="w-4 h-4" />
-            </div>
+            <Image src="/images/TubeLock.png" alt="TubeLock" width={24} height={24} className="rounded-lg object-contain shadow-[0_2px_8px_rgba(255,122,0,0.3)] shrink-0" />
             <span className="font-black text-sm tracking-tight text-[#212529] dark:text-[#F1F1F1]">
               TubeLock
             </span>
@@ -96,11 +96,10 @@ export default function TubelockDocsShell({ nav = [], children }) {
                       <Link
                         key={item.href}
                         href={item.href}
-                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition ${
-                          isActive
-                            ? 'bg-black/5 dark:bg-white/10 text-[#1F1E1C] dark:text-white font-bold'
-                            : 'text-[#666666] dark:text-[#AAAAAA] hover:bg-black/5 dark:hover:bg-white/5 hover:text-[#212529] dark:hover:text-white font-medium'
-                        }`}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition ${isActive
+                          ? 'bg-black/5 dark:bg-white/10 text-[#1F1E1C] dark:text-white font-bold'
+                          : 'text-[#666666] dark:text-[#AAAAAA] hover:bg-black/5 dark:hover:bg-white/5 hover:text-[#212529] dark:hover:text-white font-medium'
+                          }`}
                       >
                         <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#1F1E1C] dark:text-white' : 'text-[#8C857B] dark:text-[#777777]'}`} />
                         <span className="truncate">{item.title}</span>
@@ -157,11 +156,10 @@ export default function TubelockDocsShell({ nav = [], children }) {
                             key={item.href}
                             href={item.href}
                             onClick={() => setMobileMenuOpen(false)}
-                            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs transition ${
-                              isActive
-                                ? 'bg-black/5 dark:bg-white/10 text-[#1F1E1C] dark:text-white font-bold'
-                                : 'text-[#666666] dark:text-[#CCCCCC] hover:bg-black/5 dark:hover:bg-white/5 font-medium'
-                            }`}
+                            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs transition ${isActive
+                              ? 'bg-black/5 dark:bg-white/10 text-[#1F1E1C] dark:text-white font-bold'
+                              : 'text-[#666666] dark:text-[#CCCCCC] hover:bg-black/5 dark:hover:bg-white/5 font-medium'
+                              }`}
                           >
                             <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-[#1F1E1C] dark:text-white' : 'text-[#8C857B]'}`} />
                             <span className="truncate">{item.title}</span>

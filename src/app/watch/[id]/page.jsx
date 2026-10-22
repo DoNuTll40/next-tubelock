@@ -10,7 +10,12 @@ export const revalidate = 0;
 export async function generateMetadata({ params }) {
   const { id: rawSlug } = await params;
   const numericId = decodeVideoSlug(rawSlug);
-  if (!numericId) return { title: 'TubeLock' };
+  if (!numericId) {
+    return {
+      title: 'วิดีโอไม่พบ - TubeLock',
+      description: 'ไม่พบวิดีโอที่คุณต้องการรับชมบน TubeLock',
+    };
+  }
 
   try {
     const sql = getDb();
@@ -21,20 +26,77 @@ export async function generateMetadata({ params }) {
       LIMIT 1;
     `;
     if (!rows || rows.length === 0) {
-      return { title: 'TubeLock' };
+      return {
+        title: 'วิดีโอไม่พบ - TubeLock',
+        description: 'ไม่พบวิดีโอที่คุณต้องการรับชมบน TubeLock',
+      };
     }
     const video = rows[0];
+    const canonicalSlug = encodeVideoSlug(video.id, video.category) || rawSlug;
+    const pageTitle = video.title ? `${video.title} - TubeLock` : 'TubeLock';
+
+    // Clean description: remove newlines/tabs and truncate cleanly for previews
+    const rawDesc = (video.description || '')
+      .replace(/\r?\n+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const pageDescription = rawDesc
+      ? (rawDesc.length > 160 ? `${rawDesc.slice(0, 157)}...` : rawDesc)
+      : 'รับชมวิดีโอนี้บน TubeLock แพลตฟอร์มสตรีมมิ่งวิดีโอส่วนตัว ความคมชัดสูง ไร้โฆษณา';
+
+    // Poster image URL
+    let posterUrl = video.thumbnail_url || `/streams/stream_vid_${video.id}/poster.jpg`;
+    if (!posterUrl.startsWith('http://') && !posterUrl.startsWith('https://')) {
+      if (!posterUrl.startsWith('/')) {
+        posterUrl = `/${posterUrl}`;
+      }
+    }
+
+    const canonicalPath = `/watch/${canonicalSlug}`;
+
     return {
-      title: `${video.title} - TubeLock`,
-      description: video.description ? video.description.slice(0, 160) : 'TubeLock Video Streaming',
+      title: pageTitle,
+      description: pageDescription,
+      alternates: {
+        canonical: canonicalPath,
+      },
       openGraph: {
-        title: `${video.title} - TubeLock`,
-        description: video.description ? video.description.slice(0, 160) : 'TubeLock Video Streaming',
-        images: video.thumbnail_url ? [video.thumbnail_url] : [],
+        type: 'video.other',
+        title: pageTitle,
+        description: pageDescription,
+        url: canonicalPath,
+        siteName: 'TubeLock',
+        locale: 'th_TH',
+        images: [
+          {
+            url: posterUrl,
+            width: 1280,
+            height: 720,
+            type: 'image/jpeg',
+            alt: video.title || 'Video Thumbnail',
+          },
+        ],
+      },
+      twitter: {
+        card: 'summary_large_image',
+        title: pageTitle,
+        description: pageDescription,
+        images: [
+          {
+            url: posterUrl,
+            width: 1280,
+            height: 720,
+            alt: video.title || 'Video Thumbnail',
+          },
+        ],
       },
     };
-  } catch {
-    return { title: 'TubeLock' };
+  } catch (err) {
+    console.error('[generateMetadata Error]:', err);
+    return {
+      title: 'TubeLock - Private HLS Streaming',
+      description: 'Private Client-Side HLS Video Streaming Platform on Next.js',
+    };
   }
 }
 

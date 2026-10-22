@@ -18,18 +18,29 @@ export async function proxy(request) {
     pathname.startsWith('/api/auth/facebook') ||
     pathname.startsWith('/api/auth/line');
 
+  // Social media bot / crawler bypass (ให้ crawler อ่าน Open Graph / Twitter meta tags ได้เสมอ ไม่ถูก redirect /login)
+  const userAgent = (request.headers.get('user-agent') || '').toLowerCase();
+  const isBot = /facebookexternalhit|facebot|twitterbot|linkedinbot|whatsapp|telegrambot|discordbot|googlebot|bingbot|applebot|yandex|duckduckbot/i.test(userAgent);
+  if (isBot) return NextResponse.next();
+
   const isPublicPath =
     pathname === '/' ||
+    pathname.startsWith('/watch') ||
     pathname.startsWith('/results') ||
     pathname.startsWith('/api/search') ||
     pathname.startsWith('/api/videos') ||
     pathname.startsWith('/streams') ||
+    pathname.startsWith('/images') ||
     pathname.startsWith('/login') ||
     pathname === '/api/auth/logout' ||
     pathname === '/api/auth/me' ||
     pathname.startsWith('/tubelock') ||
     pathname.startsWith('/_next') ||
-    pathname === '/favicon.ico';
+    pathname.startsWith('/m') ||
+    pathname === '/favicon.ico' ||
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml' ||
+    /\.(png|jpg|jpeg|gif|webp|svg|ico|mp4|webm)$/i.test(pathname);
 
   // OAuth callbacks ข้ามการตรวจ session ทั้งหมด
   if (isOAuthPath) return NextResponse.next();

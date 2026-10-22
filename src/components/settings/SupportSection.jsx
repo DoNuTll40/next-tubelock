@@ -7,10 +7,9 @@ import SettingRow from '@/components/ui/SettingRow';
 import {
   LifeBuoy, ChevronRight, ExternalLink,
   Bug, MessageSquare, GitBranch, Globe, Info, Zap,
-  HelpCircle, Shield, FileText,
+  HelpCircle, Shield, FileText, History,
 } from 'lucide-react';
-
-const APP_VERSION = '1.0.0-beta';
+import { APP_VERSION } from '@/lib/version';
 
 export default function SupportSection() {
   return (
@@ -102,6 +101,27 @@ export default function SupportSection() {
                 </span>
                 <span className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] mt-0.5 line-clamp-1">
                   เงื่อนไขการใช้งานแพลตฟอร์ม และข้อตกลงการใช้งานส่วนบุคคล
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888] shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform" />
+          </Link>
+
+          {/* Patch Notes Link */}
+          <Link
+            href="/tubelock/patchnote"
+            className="flex items-center justify-between p-4 sm:p-5 hover:bg-black/5 dark:hover:bg-white/5 transition cursor-pointer group"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                <History className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1] group-hover:text-amber-500 transition-colors truncate">
+                  บันทึกการอัปเดต (Patch Notes)
+                </span>
+                <span className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] mt-0.5 line-clamp-1">
+                  ประวัติเวอร์ชัน ฟีเจอร์ใหม่ การปรับปรุงเครื่องเล่น และการแก้ไขบั๊กในแต่ละเวอร์ชัน
                 </span>
               </div>
             </div>

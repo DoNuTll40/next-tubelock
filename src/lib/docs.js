@@ -126,16 +126,23 @@ export async function getDocBySlug(slug) {
 
   const currentDoc = allDocs[currentIndex];
   const filePath = path.join(DOCS_DIR, currentDoc.fileName);
-  const rawContent = await fs.readFile(filePath, 'utf-8');
+  const [rawContent, stat] = await Promise.all([
+    fs.readFile(filePath, 'utf-8'),
+    fs.stat(filePath).catch(() => null),
+  ]);
   const { metadata, content } = parseFrontmatter(rawContent);
 
   const prevDoc = currentIndex > 0 ? allDocs[currentIndex - 1] : null;
   const nextDoc = currentIndex < allDocs.length - 1 ? allDocs[currentIndex + 1] : null;
 
+  // Resolve updatedAt: frontmatter takes precedence, fallback to file stat mtime
+  const updatedAt = metadata.updated || metadata.date || (stat?.mtime ? stat.mtime.toISOString() : null);
+
   return {
     ...currentDoc,
     metadata,
     content,
+    updatedAt,
     prevDoc,
     nextDoc,
   };

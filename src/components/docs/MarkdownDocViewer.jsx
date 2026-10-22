@@ -3,7 +3,26 @@ import Link from 'next/link';
 import fs from 'fs/promises';
 import path from 'path';
 import { marked } from 'marked';
-import { Edit3, ChevronRight, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Edit3, ChevronRight, ArrowLeft, ArrowRight, Clock } from 'lucide-react';
+
+function formatThaiDate(dateInput) {
+  if (!dateInput) return null;
+  const str = String(dateInput).trim();
+  if (/ตุลาคม|พฤศจิกายน|ธันวาคม|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน/.test(str)) {
+    return str;
+  }
+  try {
+    const d = new Date(str);
+    if (isNaN(d.getTime())) return str;
+    return d.toLocaleDateString('th-TH', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return str;
+  }
+}
 
 // Configure marked with GFM (GitHub Flavored Markdown)
 marked.setOptions({
@@ -16,16 +35,25 @@ export default async function MarkdownDocViewer({
   docPath,        // e.g. 'docs/policy.md'
   title,          // e.g. 'Privacy Policy'
   category = 'Legal',
+  updatedAt = null,
   prevPage = null,
   nextPage = null,
 }) {
   const fullPath = path.join(process.cwd(), docPath);
   let markdown = '';
+  let fileMtime = null;
   try {
-    markdown = await fs.readFile(fullPath, 'utf-8');
+    const [fileContent, fileStat] = await Promise.all([
+      fs.readFile(fullPath, 'utf-8'),
+      fs.stat(fullPath).catch(() => null),
+    ]);
+    markdown = fileContent;
+    fileMtime = fileStat?.mtime || null;
   } catch (err) {
     markdown = `# Error\n\nCould not load \`${docPath}\`: ${err.message}`;
   }
+
+  const displayDate = formatThaiDate(updatedAt || fileMtime);
 
   // Strip frontmatter metadata (--- ... ---) from display content
   markdown = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
@@ -62,6 +90,21 @@ export default async function MarkdownDocViewer({
     <div className="flex gap-10 xl:gap-14 w-full">
       {/* 📄 Center Main Article */}
       <article className="flex-1 min-w-0 w-full flex flex-col gap-6">
+        {/* 🧭 Top Breadcrumb & Last Updated */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#EFECE6] dark:border-white/10 text-xs text-[#8C857B] dark:text-[#777777]">
+          <div className="flex items-center gap-1.5 font-medium">
+            <span>{category}</span>
+            <ChevronRight className="w-3.5 h-3.5 opacity-60" />
+            <span className="text-[#212529] dark:text-[#F1F1F1] font-semibold">{title}</span>
+          </div>
+          {displayDate && (
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-[#8C857B] dark:text-[#888888]">
+              <Clock className="w-3.5 h-3.5 opacity-75" />
+              <span>อัปเดตเมื่อ: <span className="text-[#212529] dark:text-[#F1F1F1]">{displayDate}</span></span>
+            </div>
+          )}
+        </div>
+
         {/* 📖 Rendered Markdown Prose HTML with clean styles */}
         <div
           className="prose-clean text-[#4A453E] dark:text-[#CCCCCC] text-xs sm:text-sm leading-[1.85]
@@ -79,25 +122,34 @@ export default async function MarkdownDocViewer({
             [&_table]:w-full [&_table]:text-left [&_table]:text-xs [&_table]:border-collapse [&_table]:my-4 [&_table]:rounded-lg [&_table]:border [&_table]:border-[#EFECE6] [&_table]:dark:border-white/10
             [&_th]:py-2.5 [&_th]:px-3.5 [&_th]:bg-black/[0.02] [&_th]:dark:bg-white/[0.04] [&_th]:text-[#1F1E1C] [&_th]:dark:text-[#F1F1F1] [&_th]:font-semibold [&_th]:border-b [&_th]:border-[#EFECE6] [&_th]:dark:border-white/10
             [&_td]:py-2.5 [&_td]:px-3.5 [&_td]:border-b [&_td]:border-[#EFECE6] [&_td]:dark:border-white/5
-            [&_a]:text-[#ec4899] [&_a]:underline"
+            [&_a]:text-[#FF7A00] [&_a]:underline"
           dangerouslySetInnerHTML={{ __html: htmlContent }}
         />
 
-        {/* 🖊️ "Edit this page on GitHub" section (Links directly to the .md file!) */}
+        {/* 🖊️ "Edit this page on GitHub" & "Source / Updated At" section */}
         <div className="pt-6 mt-4 border-t border-[#EFECE6] dark:border-white/10 flex flex-wrap items-center justify-between gap-4">
           <a
             href={githubEditUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 text-xs sm:text-sm font-medium text-[#ec4899] hover:text-[#f472b6] transition group cursor-pointer"
+            className="inline-flex items-center gap-2 text-xs sm:text-sm font-medium text-[#FF7A00] hover:text-[#FF7A00]/80 transition group cursor-pointer"
           >
-            <Edit3 className="w-4 h-4 text-[#ec4899]" />
+            <Edit3 className="w-4 h-4 text-[#FF7A00]" />
             <span>Edit this page on GitHub</span>
           </a>
 
-          <span className="text-xs text-[#8C857B] dark:text-[#777777]">
-            Source: <code className="font-mono text-[11px]">{docPath}</code>
-          </span>
+          <div className="flex flex-wrap items-center gap-2.5 text-xs text-[#8C857B] dark:text-[#777777]">
+            {displayDate && (
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 opacity-70" />
+                <span>อัปเดตเมื่อ: <span className="font-medium text-[#212529] dark:text-[#F1F1F1]">{displayDate}</span></span>
+              </span>
+            )}
+            {displayDate && <span className="opacity-40">•</span>}
+            <span>
+              Source: <code className="font-mono text-[11px]">{docPath}</code>
+            </span>
+          </div>
         </div>
 
         {/* 🧭 Docs Pagination Navigation Cards */}

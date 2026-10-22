@@ -8,6 +8,7 @@ import {
   Menu, Home, PlusSquare,
   History, PlaySquare, Settings, Gauge, ChevronRight, X, ListOrdered
 } from 'lucide-react';
+import { APP_VERSION_LABEL } from '@/lib/version';
 
 export default function SidebarDrawer() {
   const pathname = usePathname();
@@ -193,9 +194,11 @@ export default function SidebarDrawer() {
             <Link href="/tubelock/policy" onClick={closeDrawer} className="hover:text-[#FF7A00] transition">ความเป็นส่วนตัว</Link>
             <span>•</span>
             <Link href="/tubelock/terms" onClick={closeDrawer} className="hover:text-[#FF7A00] transition">ข้อกำหนด</Link>
+            <span>•</span>
+            <Link href="/tubelock/patchnote" onClick={closeDrawer} className="hover:text-[#FF7A00] transition">Patch Notes</Link>
           </div>
           <div>
-            <p className="font-semibold text-[#5A554E] dark:text-[#AAAAAA]">TubeLock v1.0 (HLS)</p>
+            <p className="font-semibold text-[#5A554E] dark:text-[#AAAAAA]">{APP_VERSION_LABEL}</p>
             <p className="text-[9px] text-[#A09A90] dark:text-[#666666] mt-0.5">Private Cloud Streaming</p>
           </div>
         </div>

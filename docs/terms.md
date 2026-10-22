@@ -2,6 +2,7 @@
 title: ข้อกำหนดการใช้งาน
 group: นโยบายและข้อกำหนด (LEGAL)
 order: 3
+updated: 22 ตุลาคม 2026
 ---
 # ข้อกำหนดการใช้งาน (Terms of Service)
 

@@ -8,12 +8,49 @@ import { SidebarProvider } from "@/context/SidebarContext";
 import AppShell from "@/components/AppShell";
 import DevTools from "@/components/DevTools";
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://tubelock.vercel.app';
+
 export const metadata = {
-  title: "TubeLock - Private HLS Streaming",
-  description: "Private Client-Side HLS Video Streaming Platform on Next.js",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "TubeLock - Private HLS Streaming",
+    template: "%s - TubeLock",
+  },
+  description: "Private Client-Side HLS Video Streaming Platform on Next.js - แพลตฟอร์มสตรีมมิ่งวิดีโอส่วนตัว ไร้โฆษณา ความคมชัดสูง",
+  applicationName: "TubeLock",
+  authors: [{ name: "TubeLock" }],
+  creator: "TubeLock",
+  publisher: "TubeLock",
+  alternates: {
+    canonical: '/',
+  },
   icons: {
     icon: "/images/TubeLock.png",
+    shortcut: "/images/TubeLock.png",
     apple: "/images/TubeLock.png",
+  },
+  openGraph: {
+    type: "website",
+    locale: "th_TH",
+    url: SITE_URL,
+    siteName: "TubeLock",
+    title: "TubeLock - Private HLS Streaming",
+    description: "Private Client-Side HLS Video Streaming Platform on Next.js - แพลตฟอร์มสตรีมมิ่งวิดีโอส่วนตัว ไร้โฆษณา ความคมชัดสูง",
+    images: [
+      {
+        url: "/images/TubeLock.png",
+        width: 1000,
+        height: 1000,
+        type: "image/png",
+        alt: "TubeLock - Private HLS Streaming",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "TubeLock - Private HLS Streaming",
+    description: "Private Client-Side HLS Video Streaming Platform on Next.js - แพลตฟอร์มสตรีมมิ่งวิดีโอส่วนตัว ไร้โฆษณา ความคมชัดสูง",
+    images: ["/images/TubeLock.png"],
   },
 };
 
