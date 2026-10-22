@@ -29,6 +29,7 @@ export async function proxy(request) {
     pathname.startsWith('/results') ||
     pathname.startsWith('/api/search') ||
     pathname.startsWith('/api/videos') ||
+    pathname.startsWith('/api/og') ||
     pathname.startsWith('/streams') ||
     pathname.startsWith('/images') ||
     pathname.startsWith('/login') ||

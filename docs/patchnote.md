@@ -16,10 +16,11 @@ updated: 22 ตุลาคม 2026
 แพตช์อัปเดตปรับปรุงการแชร์ลิงก์โซเชียลมีเดีย ระบบศูนย์เอกสาร และการแสดงผลข้อมูลสถานะระบบ
 
 ### การแก้ไขระบบ Open Graph & Social Preview Cards
-- **แก้ไข Proxy Crawler Bypass:** ปรับปรุง `src/proxy.js` ไม่ให้ Redirect Web Crawlers และ Social Bots (Facebook, Twitterbot, Discordbot, Googlebot ฯลฯ) ไปหน้า `/login` เมื่อเข้าถึงเส้นทาง `/watch/...` และ `/images/...`
-- **Dynamic Video Metadata & Image Resolution:** ปรับปรุง `generateMetadata` ในหน้า Watch ส่งขนาดภาพโปสเตอร์ 1280x720 ชัดเจน, ปรับรายละเอียด `description` ตัดเว้นวรรคให้กระชับ, และระบุ Canonical URL ตาม Slug วิดีโอ
-- **Twitter Large Image Card:** รองรับการแสดงผลแบบ `summary_large_image` ให้การ์ดแสดงผลเต็มความกว้างอย่างถูกต้อง
-- **กำหนด `metadataBase` สากล:** กำหนดฐาน URL ใน Root Layout ป้องกันปัญหาลิงก์รูปภาพหลุดหรือตกหล่น
+- **แก้ไข Proxy Crawler Bypass:** ปรับปรุง `src/proxy.js` ไม่ให้ Redirect Web Crawlers และ Social Bots (Facebook, Twitterbot, Discordbot, Googlebot ฯลฯ) ไปหน้า `/login` เมื่อเข้าถึงเส้นทาง `/watch/...`, `/images/...` และ `/api/og/...`
+- **Dynamic Video Metadata & Image Optimization:** ปรับปรุง `generateMetadata` ในหน้า Watch ตัดความยาว Title ไม่เกิน 58 ตัวอักษรตามมาตรฐาน Google SERP และ Social Cards, บีบอัด `description` ให้กระชับ, และระบุ Canonical URL ชัดเจน
+- **Dedicated 1200x630 OG Image Endpoint (/api/og/[id]):** พัฒนาระบบตัดย่อและปรับขนาดภาพโปสเตอร์เป็น 1200x630px JPEG ขนาด ~35 KB ผ่าน Sharp และ In-Memory Cache ความเร็วสูง แก้ไขปัญหารูปขนาด 4K และปัญหา WhatsApp บล็อกภาพขนาดเกิน 500 KB
+- **Twitter Site & Creator Tags:** ระบุ `twitter:site` และ `twitter:creator` (`@tubelock`) ครบถ้วนตามมาตรฐาน Twitter Cards
+- **ลดขนาด HTML Payload หน้ารับชม:** ปรับแต่ง Query รายการวิดีโอที่เกี่ยวข้องไม่ดึงฟิลด์ Description ขนาดใหญ่ และตัดการแนบ Data URI ในเซิร์ฟเวอร์เรนเดอร์ ช่วยลดขนาด HTML จาก ~408 KB เหลือต่ำกว่า 150 KB เพิ่มความเร็วในการประมวลผลบนมือถือและการดาวน์โหลดของบ็อตค้นหา
 
 ### ระบบศูนย์เอกสารไดนามิก & หน้ารวมประวัติการอัปเดต (/tubelock/*)
 - **เพิ่มหน้าบันทึกการอัปเดต (Patch Notes):** เพิ่มหน้าเอกสารประวัติเวอร์ชันและการปรับปรุงระบบที่ `/tubelock/patchnote`

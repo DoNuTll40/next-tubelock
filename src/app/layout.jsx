@@ -48,6 +48,8 @@ export const metadata = {
   },
   twitter: {
     card: "summary_large_image",
+    site: "@tubelock",
+    creator: "@tubelock",
     title: "TubeLock - Private HLS Streaming",
     description: "Private Client-Side HLS Video Streaming Platform on Next.js - แพลตฟอร์มสตรีมมิ่งวิดีโอส่วนตัว ไร้โฆษณา ความคมชัดสูง",
     images: ["/images/TubeLock.png"],
