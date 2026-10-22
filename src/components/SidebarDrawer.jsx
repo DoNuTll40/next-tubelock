@@ -185,10 +185,19 @@ export default function SidebarDrawer() {
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-[#EFECE6] dark:border-white/10 shrink-0 text-[10px] text-[#8C857B] dark:text-[#888888]">
-          <p className="font-semibold text-[#5A554E] dark:text-[#AAAAAA]">TubeLock v1.0 (HLS)</p>
-          <p className="text-[9px] text-[#A09A90] dark:text-[#666666] mt-0.5">Private Cloud Streaming</p>
+        {/* Footer & Legal */}
+        <div className="p-4 border-t border-[#EFECE6] dark:border-white/10 shrink-0 text-[10px] text-[#8C857B] dark:text-[#888888] flex flex-col gap-1.5">
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5 font-medium text-[10px]">
+            <Link href="/tubelock/faq" onClick={closeDrawer} className="hover:text-[#FF7A00] transition">FAQ</Link>
+            <span>•</span>
+            <Link href="/tubelock/policy" onClick={closeDrawer} className="hover:text-[#FF7A00] transition">ความเป็นส่วนตัว</Link>
+            <span>•</span>
+            <Link href="/tubelock/terms" onClick={closeDrawer} className="hover:text-[#FF7A00] transition">ข้อกำหนด</Link>
+          </div>
+          <div>
+            <p className="font-semibold text-[#5A554E] dark:text-[#AAAAAA]">TubeLock v1.0 (HLS)</p>
+            <p className="text-[9px] text-[#A09A90] dark:text-[#666666] mt-0.5">Private Cloud Streaming</p>
+          </div>
         </div>
       </aside>
     </div>

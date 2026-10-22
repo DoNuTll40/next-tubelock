@@ -1,64 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
+import Link from 'next/link';
 import SettingCard from '@/components/ui/SettingCard';
 import SettingRow from '@/components/ui/SettingRow';
 import {
-  LifeBuoy, ChevronDown, ChevronUp, ExternalLink,
+  LifeBuoy, ChevronRight, ExternalLink,
   Bug, MessageSquare, GitBranch, Globe, Info, Zap,
+  HelpCircle, Shield, FileText,
 } from 'lucide-react';
 
 const APP_VERSION = '1.0.0-beta';
-
-const FAQ_ITEMS = [
-  {
-    q: 'TubeLock คืออะไร?',
-    a: 'TubeLock เป็นแพลตฟอร์ม Streaming วิดีโอส่วนตัวที่ใช้ HLS (HTTP Live Streaming) โดยไฟล์วิดีโอจัดเก็บบน OneDrive ของคุณเอง ไม่มีการเก็บข้อมูลบน Server ของเรา',
-  },
-  {
-    q: 'วิดีโอของฉันปลอดภัยแค่ไหน?',
-    a: 'วิดีโอถูกสตรีมผ่าน Signed URL ที่หมดอายุแบบชั่วคราว และระบบ Authentication ใช้ OAuth 2.0 ผ่าน Google / LINE ทุก request ต้องผ่านการตรวจสอบ session ก่อนเสมอ',
-  },
-  {
-    q: 'ทำไม Gravatar ไม่แสดงรูป?',
-    a: 'Gravatar ใช้ SHA-256 hash ของอีเมล ตรวจสอบว่าอีเมลที่ระบุในหน้า "บัญชีและโปรไฟล์" ถูกต้อง และบัญชี Gravatar ของคุณมีรูปที่ผูกกับอีเมลนั้นแล้ว',
-  },
-  {
-    q: 'วิดีโอโหลดช้า หรือ Buffering บ่อย',
-    a: 'ลอง: (1) ตรวจสอบ OneDrive Token ยังไม่หมดอายุ (2) ลองเปลี่ยน Quality ใน Player (3) หากใช้ VPN ให้ลองปิด แล้วโหลดใหม่',
-  },
-  {
-    q: 'การ Logout แล้วข้อมูลหายไปไหม?',
-    a: 'ไม่หาย — การ Logout จะล้างเฉพาะ Session Cookie เท่านั้น การตั้งค่าทั้งหมดยังคงอยู่ใน Neon DB และ Local Storage จนกว่าจะทำ Factory Reset',
-  },
-  {
-    q: 'ใช้ TubeLock บนมือถือได้ไหม?',
-    a: 'ได้ครับ! TubeLock รองรับ Responsive Design ทั้ง Desktop และ Mobile ผ่าน Browser มาตรฐาน รวมถึง Progressive Web App (PWA) ในอนาคต',
-  },
-];
-
-function FaqItem({ item }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="border-b border-[#EFECE6] dark:border-white/10 last:border-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-3 p-4 text-left hover:bg-zinc-50 dark:hover:bg-white/5 transition cursor-pointer"
-      >
-        <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] pr-2">{item.q}</span>
-        {open
-          ? <ChevronUp className="w-4 h-4 text-[#8C857B] dark:text-[#888888] shrink-0" />
-          : <ChevronDown className="w-4 h-4 text-[#8C857B] dark:text-[#888888] shrink-0" />}
-      </button>
-      {open && (
-        <div className="px-4 pb-4 mt-1">
-          <p className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] leading-relaxed">{item.a}</p>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function SupportSection() {
   return (
@@ -67,7 +19,7 @@ export default function SupportSection() {
       <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
         <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">ช่วยเหลือและติดต่อ</h2>
         <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
-          FAQ, รายงานปัญหา และข้อมูลเวอร์ชัน TubeLock
+          ศูนย์ช่วยเหลือ, นโยบายความเป็นส่วนตัว, รายงานปัญหา และข้อมูลเวอร์ชัน
         </p>
       </div>
 
@@ -90,12 +42,71 @@ export default function SupportSection() {
         </div>
       </div>
 
-      {/* FAQ Section */}
-      <SettingCard title="คำถามที่พบบ่อย (FAQ)" subtitle="ตอบคำถามทั่วไปเกี่ยวกับการใช้งาน TubeLock">
+      {/* Help & Standalone Documentation Cards */}
+      <SettingCard title="คู่มือและความช่วยเหลือ" subtitle="ศูนย์ช่วยเหลือ นโยบาย และข้อกำหนดการใช้งาน">
         <div className="divide-y divide-[#EFECE6] dark:divide-white/10">
-          {FAQ_ITEMS.map((item, i) => (
-            <FaqItem key={i} item={item} />
-          ))}
+          {/* FAQ Link */}
+          <Link
+            href="/tubelock/faq"
+            className="flex items-center justify-between p-4 sm:p-5 hover:bg-black/5 dark:hover:bg-white/5 transition cursor-pointer group"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[#FF7A00]/10 text-[#FF7A00] flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                <HelpCircle className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1] group-hover:text-[#FF7A00] transition-colors truncate">
+                  คำถามที่พบบ่อย (FAQ)
+                </span>
+                <span className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] mt-0.5 line-clamp-1">
+                  รวมคำตอบเกี่ยวกับการใช้งาน TubeLock, ระบบตัวกลางสตรีม และการแก้ปัญหาทั่วไป
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888] shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform" />
+          </Link>
+
+          {/* Privacy Policy Link */}
+          <Link
+            href="/tubelock/policy"
+            className="flex items-center justify-between p-4 sm:p-5 hover:bg-black/5 dark:hover:bg-white/5 transition cursor-pointer group"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                <Shield className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1] group-hover:text-emerald-500 transition-colors truncate">
+                  นโยบายความเป็นส่วนตัว (Privacy Policy)
+                </span>
+                <span className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] mt-0.5 line-clamp-1">
+                  OneDrive ตัวกลางจัดเก็บ ไม่เก็บไฟล์คลิปเต็มต้นฉบับ ต้นฉบับอยู่กับเจ้าของงาน 100%
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888] shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform" />
+          </Link>
+
+          {/* Terms of Service Link */}
+          <Link
+            href="/tubelock/terms"
+            className="flex items-center justify-between p-4 sm:p-5 hover:bg-black/5 dark:hover:bg-white/5 transition cursor-pointer group"
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1] group-hover:text-violet-500 transition-colors truncate">
+                  ข้อกำหนดการใช้งาน (Terms of Service)
+                </span>
+                <span className="text-[11px] text-[#8C857B] dark:text-[#AAAAAA] mt-0.5 line-clamp-1">
+                  เงื่อนไขการใช้งานแพลตฟอร์ม และข้อตกลงการใช้งานส่วนบุคคล
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888] shrink-0 ml-2 group-hover:translate-x-0.5 transition-transform" />
+          </Link>
         </div>
       </SettingCard>
 
@@ -158,7 +169,7 @@ export default function SupportSection() {
         <div className="p-4 sm:p-5 flex flex-col gap-2.5">
           {[
             { label: 'App Version', value: `v${APP_VERSION}` },
-            { label: 'Framework', value: 'Next.js 15 (App Router)' },
+            { label: 'Framework', value: 'Next.js 16 (App Router)' },
             { label: 'Database', value: 'Neon (PostgreSQL Serverless)' },
             { label: 'Storage', value: 'Microsoft OneDrive via Graph API' },
             { label: 'Auth', value: 'OAuth 2.0 · Google + LINE' },
@@ -174,21 +185,21 @@ export default function SupportSection() {
 
       {/* Legal Footer */}
       <div className="flex items-center justify-center gap-4 py-2">
-        <a
-          href="#"
+        <Link
+          href="/tubelock/policy"
           className="flex items-center gap-1 text-[11px] text-[#8C857B] dark:text-[#888888] hover:text-[#FF7A00] transition"
         >
           <Globe className="w-3 h-3" />
           <span>Privacy Policy</span>
-        </a>
+        </Link>
         <span className="text-[#D5CFC5] dark:text-white/20">·</span>
-        <a
-          href="#"
+        <Link
+          href="/tubelock/terms"
           className="flex items-center gap-1 text-[11px] text-[#8C857B] dark:text-[#888888] hover:text-[#FF7A00] transition"
         >
           <Info className="w-3 h-3" />
           <span>Terms of Service</span>
-        </a>
+        </Link>
         <span className="text-[#D5CFC5] dark:text-white/20">·</span>
         <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">© 2026 TubeLock</span>
       </div>

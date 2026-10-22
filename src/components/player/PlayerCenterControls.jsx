@@ -1,7 +1,8 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Play, Pause, ChevronLeft, ChevronRight, RotateCcw, RotateCw } from 'lucide-react';
+import { Play, Pause, RotateCcw, RotateCw } from 'lucide-react';
+import DoubleTapArrows from './DoubleTapArrows';
 
 export default function PlayerCenterControls({
   toastMessage,
@@ -39,7 +40,7 @@ export default function PlayerCenterControls({
         )}
       </AnimatePresence>
 
-      {/* Double Tap Arc — slide in/out only, chevron wave ย้ายเป็น CSS keyframe (ไม่ blocking JS thread) */}
+      {/* Double Tap Arc */}
       <AnimatePresence>
         {doubleTapSide && (
           <motion.div
@@ -59,22 +60,8 @@ export default function PlayerCenterControls({
               } from-black/60 via-black/20 to-transparent`}
           >
             <div className="flex flex-col items-center gap-1.5 drop-shadow-[0_4px_14px_rgba(0,0,0,0.9)]">
-              {/* Chevron wave — CSS keyframe แทน Framer repeat (ไม่กิน JS thread) */}
-              <div className="flex items-center gap-0.5">
-                {doubleTapSide === 'left' ? (
-                  <>
-                    <ChevronLeft className="w-6 h-6 text-[#FF7A00] [animation:chevwave_0.55s_ease-in-out_0.28s_infinite]" />
-                    <ChevronLeft className="w-6 h-6 text-white    [animation:chevwave_0.55s_ease-in-out_0.14s_infinite]" />
-                    <ChevronLeft className="w-6 h-6 text-white/50  [animation:chevwave_0.55s_ease-in-out_0s_infinite]" />
-                  </>
-                ) : (
-                  <>
-                    <ChevronRight className="w-6 h-6 text-white/50  [animation:chevwave_0.55s_ease-in-out_0s_infinite]" />
-                    <ChevronRight className="w-6 h-6 text-white    [animation:chevwave_0.55s_ease-in-out_0.14s_infinite]" />
-                    <ChevronRight className="w-6 h-6 text-[#FF7A00] [animation:chevwave_0.55s_ease-in-out_0.28s_infinite]" />
-                  </>
-                )}
-              </div>
+              {/* Chevron wave ด้วย GSAP — เฉพาะอนิเมชันลูกศรเท่านั้น ไม่กระทบ UI เดิม */}
+              <DoubleTapArrows side={doubleTapSide} />
               <span className="text-sm sm:text-base font-bold text-white tracking-wide">
                 {accumulatedSeconds > 0 ? `+${accumulatedSeconds}` : `${accumulatedSeconds}`} วินาที
               </span>

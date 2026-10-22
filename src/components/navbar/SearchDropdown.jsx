@@ -4,28 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { History, Search, X } from 'lucide-react';
 
 // Default initial search history matching YouTube style & local database videos
-const DEFAULT_HISTORY = [
-  { id: 'h1', query: 'มีผู้สาวงามงามเข้ามาในใจ', thumbnail: '/streams/stream_vid_826/poster.jpg' },
-  { id: 'h2', query: 'วัดปะล่ะ', thumbnail: '/streams/stream_vid_839/poster.jpg' },
-  { id: 'h3', query: 'เนื้อคู่ ทีเร็กซ์', thumbnail: '/streams/stream_vid_850/poster.jpg' },
-  { id: 'h4', query: 'ขั้นว่ามื้อนึง', thumbnail: '/streams/stream_vid_834/poster.jpg' },
-  { id: 'h5', query: 'ananped', thumbnail: '/streams/stream_vid_830/poster.jpg' },
-  { id: 'h6', query: 'จำบ่เป็น', thumbnail: '/streams/stream_vid_850/poster.jpg' },
-  { id: 'h7', query: 'ยิ้มอันตราย porzax', thumbnail: '/streams/stream_vid_837/poster.jpg' },
-  { id: 'h8', query: '4k hdr 60', thumbnail: '/streams/stream_vid_847/poster.jpg' },
-  { id: 'h9', query: 'lofi', thumbnail: '/streams/stream_vid_831/poster.jpg' },
-  { id: 'h10', query: 'ozrealman', thumbnail: '/streams/stream_vid_851/poster.jpg' },
-  { id: 'h11', query: 'bay riffer', thumbnail: '/streams/stream_vid_827/poster.jpg' },
-  { id: 'h12', query: 'กกน', thumbnail: '/streams/stream_vid_837/poster.jpg' },
-  { id: 'h13', query: 'ขยี้', thumbnail: '/streams/stream_vid_830/poster.jpg' },
-  { id: 'h14', query: 'photoshop glitch effect', thumbnail: '/streams/stream_vid_847/poster.jpg' },
-  { id: 'h15', query: 'call of duty modern warfare', thumbnail: '/streams/stream_vid_851/poster.jpg' },
-  { id: 'h16', query: 'แพ้ความอ่อนแอ Silly Fools', thumbnail: '/streams/stream_vid_827/poster.jpg' },
-  { id: 'h17', query: 'เหนื่อยเกินไป LITTLE JOHN', thumbnail: '/streams/stream_vid_815/poster.jpg' },
-  { id: 'h18', query: 'ภวังค์จิต ปราง ปรางทิพย์', thumbnail: '/streams/stream_vid_831/poster.jpg' },
-  { id: 'h19', query: 'บ่เป็นหยัง เค้าเข้าใจ กวาง จิรพรรณ', thumbnail: '/streams/stream_vid_834/poster.jpg' },
-  { id: 'h20', query: 'เพลงฮิตติดหู 2026', thumbnail: '/streams/stream_vid_839/poster.jpg' },
-];
+const DEFAULT_HISTORY = [];
 
 export default function SearchDropdown({
   isOpen,
@@ -113,10 +92,10 @@ export default function SearchDropdown({
           setHistory(merged);
           try {
             localStorage.setItem('tubelock_search_history', JSON.stringify(merged));
-          } catch (_) {}
+          } catch (_) { }
         }
       })
-      .catch(() => {});
+      .catch(() => { });
 
     return () => {
       cancelled = true;
@@ -166,7 +145,7 @@ export default function SearchDropdown({
       const deleteParams = new URLSearchParams();
       if (itemToRemove.dbId) deleteParams.set('id', String(itemToRemove.dbId));
       deleteParams.set('query', itemToRemove.query);
-      fetch(`/api/search/history?${deleteParams.toString()}`, { method: 'DELETE' }).catch(() => {});
+      fetch(`/api/search/history?${deleteParams.toString()}`, { method: 'DELETE' }).catch(() => { });
     }
   };
 

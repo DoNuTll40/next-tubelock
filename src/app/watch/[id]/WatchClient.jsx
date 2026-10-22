@@ -363,7 +363,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   }
 
   return (
-    <div className="w-full max-w-[1720px] mx-auto px-0 sm:px-4 md:px-6 lg:px-3 pt-0 lg:pt-3 sm:py-5">
+    <div className="w-full max-w-[2560px] mx-auto px-0 sm:px-4 md:px-6 lg:px-3 pt-0 lg:pt-3 sm:py-5">
       {/* ⚠️ Alert Banner */}
       {error && (
         <div className="bg-rose-500/10 border-b border-rose-500/20 px-4 py-3 text-rose-500 dark:text-rose-400 text-xs sm:text-sm flex items-center justify-between z-30 relative mb-3 rounded-xl">

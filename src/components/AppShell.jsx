@@ -19,9 +19,18 @@ export default function AppShell({ session, children }) {
   const isExcludedPage = pathname?.startsWith('/watch') || pathname?.startsWith('/settings');
 
   const isLoginPage = pathname?.startsWith('/login');
+  const isTubelockDoc = pathname?.startsWith('/tubelock');
 
   if (isLoginPage) {
     return <main className="min-h-screen w-full relative bg-[#0F0F0F]">{children}</main>;
+  }
+
+  if (isTubelockDoc) {
+    return (
+      <main className="min-h-screen w-full relative bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1]">
+        {children}
+      </main>
+    );
   }
 
   return (

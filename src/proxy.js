@@ -15,6 +15,7 @@ export async function proxy(request) {
   // OAuth callbacks และ static assets ไม่ต้องตรวจ session
   const isOAuthPath =
     pathname.startsWith('/api/auth/google') ||
+    pathname.startsWith('/api/auth/facebook') ||
     pathname.startsWith('/api/auth/line');
 
   const isPublicPath =
@@ -26,6 +27,7 @@ export async function proxy(request) {
     pathname.startsWith('/login') ||
     pathname === '/api/auth/logout' ||
     pathname === '/api/auth/me' ||
+    pathname.startsWith('/tubelock') ||
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico';
 

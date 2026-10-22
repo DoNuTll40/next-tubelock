@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VideoCard from '@/components/VideoCard';
 import CategoryChips from '@/components/CategoryChips';
+import FeedSkeleton from '@/components/FeedSkeleton';
 import { Film, Loader2 } from 'lucide-react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
 
@@ -160,23 +161,10 @@ export default function FeedPage() {
       </AnimatePresence>
 
       {/* Main Grid View */}
-      <div className="px-1 sm:px-6 pt-2 flex-1">
+      <div className="px-1 sm:px-6 py-2 flex-1">
         {loading ? (
-          /* SKELETON LOADING GRID */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-x-4 gap-y-6 animate-pulse select-none">
-            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-              <div key={i} className="flex flex-col gap-2.5">
-                <div className="aspect-video w-full bg-[#EFECE6] dark:bg-white/10 rounded-2xl" />
-                <div className="flex gap-3 pt-1">
-                  <div className="w-9 h-9 rounded-full bg-[#EFECE6] dark:bg-white/10 shrink-0" />
-                  <div className="flex-1 space-y-2">
-                    <div className="h-3.5 w-4/5 bg-[#EFECE6] dark:bg-white/10 rounded" />
-                    <div className="h-3 w-1/2 bg-[#EFECE6] dark:bg-white/10 rounded" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          /* SKELETON LOADING GRID with GSAP Shimmer Wave */
+          <FeedSkeleton count={8} />
         ) : filteredVideos.length === 0 ? (
           <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-12 text-center flex flex-col items-center gap-3 text-[#6C757D] dark:text-[#AAAAAA] select-none my-8 max-w-lg mx-auto">
             <Film className="w-10 h-10 text-[#C4BEB4] dark:text-[#666666] stroke-[1.5]" />
@@ -193,7 +181,7 @@ export default function FeedPage() {
           </div>
         ) : (
           /* YOUTUBE PC & MOBILE RESPONSIVE VIDEO GRID */
-          <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-y-7 "}>
+          <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-y-4 "}>
             {filteredVideos.map((vid) => (
               <div key={vid.id}>
                 <VideoCard
