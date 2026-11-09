@@ -88,7 +88,6 @@ export function parseSubtitleCues(rawText) {
     const textEnd = i + 1 < matches.length ? matches[i + 1].index : cleaned.length;
 
     let rawCueText = cleaned.slice(textStart, textEnd);
-    // Strip trailing cue index number belonging to the next cue (e.g. "\n2\n" or " 2 ")
     if (i + 1 < matches.length) {
       rawCueText = rawCueText.replace(/(?:\n|\s+)\d+\s*$/, '');
     }
@@ -115,3 +114,102 @@ export const ASPECT_OPTIONS = [
   { id: 'crop', label: 'ตัดขอบให้เต็ม (Crop)', desc: 'ซูมเล็กน้อย ตัดแถบดำออกอย่างนุ่มนวล' },
   { id: 'fill', label: 'ยืดเต็มหน้าจอ (Stretch)', desc: 'ขยายยืดเต็มพื้นที่ไม่มีขอบดำ' },
 ];
+
+// ============================================================================
+// 💬 YOUTUBE-STYLE SUBTITLE (CC) CUSTOMIZATION OPTIONS & HELPERS
+// ============================================================================
+export const DEFAULT_SUBTITLE_STYLE = {
+  fontFamily: 'prop-sans',
+  fontColor: 'white',
+  fontSize: 100,
+  bgColor: 'black',
+  bgOpacity: 75,
+  windowColor: 'black',
+  windowOpacity: 0,
+  charEdgeStyle: 'none',
+  fontOpacity: 100,
+};
+
+export const SUBTITLE_FONT_FAMILIES = [
+  { id: 'mono-sans', label: 'Sans-Serif แบบความกว้างคงที่', css: '"Courier New", Courier, monospace' },
+  { id: 'prop-sans', label: 'Sans-Serif แบบปรับไปตามเนื้อที่ที่มี', css: 'Roboto, "Noto Sans Thai", Arial, Helvetica, sans-serif' },
+  { id: 'mono-serif', label: 'Serif แบบความกว้างคงที่', css: 'Georgia, "Times New Roman", monospace' },
+  { id: 'prop-serif', label: 'Serif แบบปรับไปตามเนื้อที่ที่มี', css: '"Times New Roman", Times, Georgia, serif' },
+  { id: 'casual', label: 'ตัวเขียนแบบเป็นกันเอง', css: '"Comic Sans MS", "Chalkboard SE", cursive, sans-serif' },
+  { id: 'cursive', label: 'ตัวเขียนติดกัน', css: '"Monotype Corsiva", "Apple Chancery", cursive' },
+  { id: 'small-caps', label: 'ตัวพิมพ์เล็กขนาดเท่ากัน', css: 'Arial, Helvetica, sans-serif', smallCaps: true },
+];
+
+export const SUBTITLE_COLORS = [
+  { id: 'white', label: 'สีขาว', rgb: '255, 255, 255', hex: '#FFFFFF' },
+  { id: 'yellow', label: 'สีเหลือง', rgb: '255, 255, 0', hex: '#FFFF00' },
+  { id: 'green', label: 'สีเขียว', rgb: '0, 255, 0', hex: '#00FF00' },
+  { id: 'cyan', label: 'สีฟ้า', rgb: '0, 255, 255', hex: '#00FFFF' },
+  { id: 'blue', label: 'สีน้ำเงิน', rgb: '0, 0, 255', hex: '#0000FF' },
+  { id: 'magenta', label: 'สีม่วงแดง', rgb: '255, 0, 255', hex: '#FF00FF' },
+  { id: 'red', label: 'สีแดง', rgb: '255, 0, 0', hex: '#FF0000' },
+  { id: 'black', label: 'สีดำ', rgb: '8, 8, 8', hex: '#080808' },
+];
+
+export const SUBTITLE_FONT_SIZES = [50, 75, 100, 150, 200, 300, 400];
+
+export const SUBTITLE_OPACITIES = [0, 25, 50, 75, 100];
+
+export const SUBTITLE_FONT_OPACITIES = [25, 50, 75, 100];
+
+export const SUBTITLE_EDGE_STYLES = [
+  { id: 'none', label: 'ไม่มี' },
+  { id: 'drop-shadow', label: 'เงาตกกระทบ' },
+  { id: 'raised', label: 'นูน' },
+  { id: 'depressed', label: 'บุ๋ม' },
+  { id: 'outline', label: 'ขอบเส้น' },
+];
+
+export function computeSubtitleStyles(style = DEFAULT_SUBTITLE_STYLE, isMobile = false) {
+  const s = { ...DEFAULT_SUBTITLE_STYLE, ...style };
+  const fontObj = SUBTITLE_FONT_FAMILIES.find((f) => f.id === s.fontFamily) || SUBTITLE_FONT_FAMILIES[1];
+  const fontColorObj = SUBTITLE_COLORS.find((c) => c.id === s.fontColor) || SUBTITLE_COLORS[0];
+  const bgColorObj = SUBTITLE_COLORS.find((c) => c.id === s.bgColor) || SUBTITLE_COLORS[7];
+  const winColorObj = SUBTITLE_COLORS.find((c) => c.id === s.windowColor) || SUBTITLE_COLORS[7];
+
+  const scale = (Number(s.fontSize) || 100) / 100;
+  const basePx = isMobile ? 14 : 20;
+  const fontSizePx = Math.max(10, Math.round(basePx * scale));
+
+  const fontAlpha = (Number(s.fontOpacity ?? 100)) / 100;
+  const bgAlpha = (Number(s.bgOpacity ?? 75)) / 100;
+  const winAlpha = (Number(s.windowOpacity ?? 0)) / 100;
+
+  let textShadow = 'none';
+  if (s.charEdgeStyle === 'drop-shadow') {
+    textShadow = '2px 2px 3px rgba(0, 0, 0, 0.9)';
+  } else if (s.charEdgeStyle === 'raised') {
+    textShadow = '-1px -1px 0px rgba(255, 255, 255, 0.7), 1px 1px 2px rgba(0, 0, 0, 0.9)';
+  } else if (s.charEdgeStyle === 'depressed') {
+    textShadow = '1px 1px 0px rgba(255, 255, 255, 0.7), -1px -1px 2px rgba(0, 0, 0, 0.9)';
+  } else if (s.charEdgeStyle === 'outline') {
+    textShadow =
+      '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0px 0px 3px rgba(0,0,0,0.85)';
+  }
+
+  return {
+    windowStyle: {
+      backgroundColor: `rgba(${winColorObj.rgb}, ${winAlpha})`,
+      padding: winAlpha > 0 ? '4px 8px' : '0px',
+      borderRadius: '6px',
+    },
+    textStyle: {
+      fontFamily: fontObj.css,
+      fontVariant: fontObj.smallCaps ? 'small-caps' : 'normal',
+      color: `rgba(${fontColorObj.rgb}, ${fontAlpha})`,
+      backgroundColor: `rgba(${bgColorObj.rgb}, ${bgAlpha})`,
+      fontSize: `${fontSizePx}px`,
+      lineHeight: 1.38,
+      textShadow,
+      padding: bgAlpha > 0 ? '2px 8px' : '0px 4px',
+      borderRadius: '4px',
+      boxDecorationBreak: 'clone',
+      WebkitBoxDecorationBreak: 'clone',
+    },
+  };
+}

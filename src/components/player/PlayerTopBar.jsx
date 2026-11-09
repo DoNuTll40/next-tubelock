@@ -1,8 +1,9 @@
 'use client';
 
 import {
-  ChevronRight, ArrowLeft, Play, Pause, Cast, Subtitles, Settings
+  ChevronRight, ArrowLeft, Play, Pause, Cast, Settings
 } from 'lucide-react';
+import CcSubtitleIcon from '../icons/CcSubtitleIcon';
 import { getGearBadge } from '@/lib/videoUtils';
 
 export default function PlayerTopBar({
@@ -109,16 +110,16 @@ export default function PlayerTopBar({
               }
               const next = !isCcActive;
               setIsCcActive(next);
-              showToast?.(next ? 'เปิดคำบรรยาย (CC)' : 'ปิดคำบรรยาย');
+              showToast?.(next ? 'เปิดคำบรรยาย: ไทย (สร้างอัตโนมัติ)' : 'ปิดคำบรรยาย');
               resetControlsTimer?.();
             }}
             className={`p-2 rounded-xl border backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs ${
               isCcActive && hasSubtitles
-                ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50'
+                ? 'text-white bg-white/25 border-white/40'
                 : 'bg-black/40 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'
             }`}
           >
-            <Subtitles className="w-4.5 h-4.5" />
+            <CcSubtitleIcon active={Boolean(isCcActive && hasSubtitles)} className="w-4.5 h-4.5" />
           </button>
 
           {/* Settings */}

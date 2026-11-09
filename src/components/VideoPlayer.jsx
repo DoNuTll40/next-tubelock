@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
-import { formatTime, formatTimePair, parseSubtitleCues } from './player/playerUtils';
+import { formatTime, formatTimePair, parseSubtitleCues, DEFAULT_SUBTITLE_STYLE, computeSubtitleStyles } from './player/playerUtils';
 import PlayerTopBar from './player/PlayerTopBar';
 import PlayerCenterControls from './player/PlayerCenterControls';
 import PlayerBottomBar from './player/PlayerBottomBar';
@@ -267,8 +267,49 @@ export default function VideoPlayer({
   // YouTube Mobile UI states & Subtitles (Direct from DB)
   const [isAutoplay, setIsAutoplay] = useState(defaultAutoplay);
   const [isCcActive, setIsCcActive] = useState(false);
+  const [subtitleStyle, setSubtitleStyle] = useState(DEFAULT_SUBTITLE_STYLE);
   const [activeCueText, setActiveCueText] = useState('');
   const lastCueTextRef = useRef('');
+  const subPrefsHydratedRef = useRef(false);
+
+  // Load saved CC preference & Subtitle style from localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const savedStyle = localStorage.getItem('tubelock_subtitle_style');
+      if (savedStyle) {
+        const parsed = JSON.parse(savedStyle);
+        if (parsed && typeof parsed === 'object') {
+          setSubtitleStyle({ ...DEFAULT_SUBTITLE_STYLE, ...parsed });
+        }
+      }
+      const savedCc = localStorage.getItem('tubelock_cc_active');
+      if (savedCc === '1') {
+        setIsCcActive(true);
+      }
+    } catch (_) { }
+    subPrefsHydratedRef.current = true;
+  }, []);
+
+  // Persist subtitleStyle & isCcActive to localStorage after hydration
+  useEffect(() => {
+    if (typeof window === 'undefined' || !subPrefsHydratedRef.current) return;
+    try {
+      localStorage.setItem('tubelock_subtitle_style', JSON.stringify(subtitleStyle));
+    } catch (_) { }
+  }, [subtitleStyle]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !subPrefsHydratedRef.current) return;
+    try {
+      localStorage.setItem('tubelock_cc_active', isCcActive ? '1' : '0');
+    } catch (_) { }
+  }, [isCcActive]);
+
+  const computedSubStyles = useMemo(
+    () => computeSubtitleStyles(subtitleStyle, isMobileView),
+    [subtitleStyle, isMobileView]
+  );
 
   const subtitleCues = useMemo(() => {
     const rawSub = currentVideo?.subtitle_srt || currentVideo?.subtitle_vtt || '';
@@ -2160,24 +2201,43 @@ export default function VideoPlayer({
         resetControlsTimer={resetControlsTimer}
         ambientMode={ambientMode}
         setAmbientMode={setAmbientMode}
+        isCcActive={isCcActive}
+        setIsCcActive={setIsCcActive}
+        hasSubtitles={hasSubtitles}
+        subtitleStyle={subtitleStyle}
+        setSubtitleStyle={setSubtitleStyle}
       />
 
       {/* 💬 YouTube-Style Subtitle (CC) Overlay */}
-      {isCcActive && hasSubtitles && activeCueText && !isEnded && (
-        <div
-          className={`absolute left-4 right-4 z-25 flex justify-center pointer-events-none transition-all duration-200 ${
-            showControls || !isPlaying
-              ? isMobileView
-                ? 'bottom-14 sm:bottom-20'
-                : 'bottom-16 sm:bottom-20'
-              : 'bottom-4 sm:bottom-6'
-          }`}
-        >
-          <div className="max-w-[90%] sm:max-w-[78%] px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-black/75 backdrop-blur-xs text-white text-center font-medium text-xs sm:text-base md:text-lg leading-snug whitespace-pre-line shadow-lg">
-            {activeCueText}
+      {(() => {
+        const isEditingSubStyle = showSettingsMenu && activeMenuTab?.startsWith('subtitle_opt');
+        const displayCue = (isCcActive && hasSubtitles && activeCueText)
+          ? activeCueText
+          : isEditingSubStyle
+            ? (activeCueText || 'ตัวอย่างคำบรรยาย TubeLock (CC)')
+            : '';
+        if (!displayCue || isEnded) return null;
+        return (
+          <div
+            className={`absolute left-4 right-4 z-25 flex justify-center pointer-events-none transition-all duration-200 ${
+              showControls || !isPlaying
+                ? isMobileView
+                  ? 'bottom-14 sm:bottom-20'
+                  : 'bottom-16 sm:bottom-20'
+                : 'bottom-4 sm:bottom-6'
+            }`}
+          >
+            <div
+              className="max-w-[92%] sm:max-w-[80%] text-center transition-all duration-150"
+              style={computedSubStyles.windowStyle}
+            >
+              <span style={computedSubStyles.textStyle}>
+                {displayCue}
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Modern High-Performance Bottom Controls Bar */}
       <PlayerBottomBar

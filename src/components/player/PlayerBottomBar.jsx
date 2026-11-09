@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import PlayerScrubber from './PlayerScrubber';
 import PlayerTooltip from './PlayerTooltip';
+import CcSubtitleIcon from '../icons/CcSubtitleIcon';
 import { getGearBadge } from '@/lib/videoUtils';
 
 export default function PlayerBottomBar({
@@ -293,8 +294,8 @@ export default function PlayerBottomBar({
               </button>
             </PlayerTooltip>
 
-            {/* CC (Subtitles) */}
-            <PlayerTooltip text={isCcActive ? 'ปิดคำบรรยาย' : hasSubtitles ? 'เปิดคำบรรยาย (AI CC)' : 'ไม่มีคำบรรยาย'} hotkey="c" align="center">
+            {/* CC (Subtitles) — Exact YouTube Outlined (OFF) / Solid Filled (ON) Style */}
+            <PlayerTooltip text={isCcActive ? 'คำบรรยาย (c)' : hasSubtitles ? 'คำบรรยาย (c)' : 'ไม่มีคำบรรยาย'} hotkey="c" align="center">
               <button
                 type="button"
                 onClick={() => {
@@ -304,20 +305,17 @@ export default function PlayerBottomBar({
                   }
                   const next = !isCcActive;
                   setIsCcActive(next);
-                  showToast?.(next ? 'เปิดคำบรรยาย (CC)' : 'ปิดคำบรรยาย');
+                  showToast?.(next ? 'เปิดคำบรรยาย: ไทย (สร้างอัตโนมัติ)' : 'ปิดคำบรรยาย');
                 }}
-                className={`relative p-2 rounded-xl hover:bg-white/15 transition cursor-pointer ${
+                className={`relative p-2 rounded-full transition cursor-pointer ${
                   isCcActive && hasSubtitles
-                    ? 'text-[#FF7A00] bg-white/15'
+                    ? 'text-white bg-white/15 hover:bg-white/25'
                     : hasSubtitles
-                    ? 'text-white hover:text-white'
-                    : 'text-zinc-400/60 hover:text-zinc-200'
+                    ? 'text-white hover:bg-white/15'
+                    : 'text-zinc-400/50 hover:bg-white/10 hover:text-zinc-200'
                 }`}
               >
-                <Subtitles className="w-5.5 h-5.5" />
-                {isCcActive && hasSubtitles && (
-                  <span className="absolute bottom-1 left-2 right-2 h-0.5 rounded-full bg-[#FF7A00]" />
-                )}
+                <CcSubtitleIcon active={Boolean(isCcActive && hasSubtitles)} className="w-5.5 h-5.5" />
               </button>
             </PlayerTooltip>
 
