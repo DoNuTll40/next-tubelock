@@ -12,7 +12,7 @@ import {
   Film, Bookmark, UploadCloud,
   AlertCircle, ArrowLeft
 } from 'lucide-react';
-import { resolveClientPlaybackSource } from '@/lib/playbackResolver';
+import { resolveClientPlaybackSource, fetchVideoSourceClient, prewarmVideoSourceClient } from '@/lib/playbackResolver';
 import { formatResolutionBadge, parseTimestamp, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
 
 // ============================================================================
@@ -178,14 +178,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         const prevBlobUrls = [...activeBlobUrlsRef.current];
         activeBlobUrlsRef.current = [];
 
-        // ⚡ Step: Fetch Stream Source from OneDrive
-        const sourceRes = await fetch(`/api/videos/${id}/source`, { cache: 'no-store' });
-        if (!sourceRes.ok) {
-          const errData = await sourceRes.json().catch(() => ({}));
-          throw new Error(errData.error || `ไม่สามารถโหลดวิดีโอได้ (รหัส ${sourceRes.status})`);
-        }
-
-        const sourceData = await sourceRes.json();
+        // ⚡ Step: Fetch Stream Source from OneDrive (uses client in-memory/in-flight cache if pre-warmed!)
+        const sourceData = await fetchVideoSourceClient(id);
         if (cancelled) return;
 
         if (sourceData.video) {
@@ -204,9 +198,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           resolved = await resolveClientPlaybackSource(sourceData);
         } catch (resolveErr) {
           console.warn('[WatchPage] Token expired or fetch failed, auto-recovering with fresh tokens...', resolveErr);
-          const freshRes = await fetch(`/api/videos/${id}/source?fresh=1`, { cache: 'no-store' });
-          if (!freshRes.ok) throw resolveErr;
-          const freshSourceData = await freshRes.json();
+          const freshSourceData = await fetchVideoSourceClient(id, { forceFresh: true });
           resolved = await resolveClientPlaybackSource(freshSourceData);
         }
 
@@ -256,6 +248,17 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
       activeBlobUrlsRef.current = [];
     };
   }, [id]);
+
+  // เมื่อวิดีโอหลักเริ่มเล่นแล้ว ให้แอบอุ่นวิดีโอแนะนำ 2 อันดับแรกใน background
+  useEffect(() => {
+    if (!streamUrl || !Array.isArray(relatedVideos) || relatedVideos.length === 0) return;
+    const timer = setTimeout(() => {
+      relatedVideos.slice(0, 2).forEach((rv) => {
+        if (rv?.id) prewarmVideoSourceClient(rv.id, { immediate: false });
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [streamUrl, relatedVideos]);
 
   const handleCopyLink = () => {
     if (typeof window !== 'undefined') {

@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import { cache } from 'react';
 import { getDb } from '@/lib/db';
 import { parseTimestamp, isMusicVideo, decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
+import { prewarmVideoSourceServer } from '@/lib/videoSourceService';
 import WatchClient from './WatchClient';
 
 export const dynamic = 'force-dynamic';
@@ -122,6 +123,10 @@ export default async function WatchPage({ params, searchParams }) {
   if (!numericId) {
     notFound();
   }
+
+  // ⚡ Kick off server-side source resolution immediately during SSR (non-blocking)
+  // Shares inFlightRequests & sourceCache with /api/videos/[id]/source
+  prewarmVideoSourceServer(numericId);
 
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const initialTime = parseTimestamp(resolvedSearchParams?.t);

@@ -726,7 +726,7 @@ async function main() {
                 '-c:v', 'libx264', '-preset', 'ultrafast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
-                '-c:a', 'aac', '-b:a', '64k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_144p_%03d.ts'),
@@ -755,7 +755,7 @@ async function main() {
                 '-c:v', 'libx264', '-preset', 'ultrafast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
-                '-c:a', 'aac', '-b:a', '64k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_144p_%03d.ts'),
@@ -821,7 +821,7 @@ async function main() {
                 '-c:v', 'libx264', '-preset', 'veryfast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
-                '-c:a', 'aac', '-b:a', '96k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_360p_%03d.ts'),
@@ -831,7 +831,7 @@ async function main() {
                 '-c:v', 'libx264', '-preset', 'veryfast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
-                '-c:a', 'aac', '-b:a', '96k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_480p_%03d.ts'),
@@ -866,7 +866,7 @@ async function main() {
                 '-c:v', 'libx264', '-preset', 'veryfast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
-                '-c:a', 'aac', '-b:a', '96k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_360p_%03d.ts'),
@@ -890,7 +890,7 @@ async function main() {
                 '-profile:v', 'high', '-level', '3.1',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '3500k', '-maxrate', '4500k', '-bufsize', '6000k',
-                '-c:a', 'aac', '-b:a', '128k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_720p_%03d.ts'),
@@ -928,7 +928,7 @@ async function main() {
                 '-profile:v', 'high', '-level', '4.2',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '8500k', '-maxrate', '11000k', '-bufsize', '16000k',
-                '-c:a', 'aac', '-b:a', '192k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_1080p_%03d.ts'),
@@ -966,7 +966,7 @@ async function main() {
                 '-profile:v', 'high', '-level', '5.1',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '12000k', '-maxrate', '16000k', '-bufsize', '24000k',
-                '-c:a', 'aac', '-b:a', '192k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_1440p_%03d.ts'),
@@ -1004,7 +1004,7 @@ async function main() {
                 '-profile:v', 'high', '-level', '5.2',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '20000k', '-maxrate', '24000k', '-bufsize', '36000k',
-                '-c:a', 'aac', '-b:a', '192k',
+                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_2160p_%03d.ts'),
@@ -1031,15 +1031,33 @@ async function main() {
         }
 
         // =========================================================================
-        // FINAL PASS: Cleanup raw file & Mark 100% complete
+        // FINAL PASS: Cleanup raw file (only if other AI workers are not extracting) & Mark 100% complete
         // =========================================================================
         try {
-            console.log(`🗑️ Deleting raw file /raw/${RAW_FILE_NAME}...`);
-            await fetchWithRetry(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${rawItemId}`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${await getGraphToken()}` },
-            });
-            console.log('✅ Raw file deleted.');
+            const checkRows = await sql`
+                SELECT audio_status, sprite_status, rating_check_status
+                FROM videos
+                WHERE id = ${Number(VIDEO_ID)}
+                LIMIT 1;
+            `.catch(() => []);
+            const st = checkRows?.[0] || {};
+            const otherWorkersBusy =
+                st.audio_status === 'extracting' ||
+                st.audio_status === 'queued' ||
+                st.sprite_status === 'generating' ||
+                st.sprite_status === 'queued' ||
+                st.rating_check_status === 'analyzing';
+
+            if (otherWorkersBusy) {
+                console.log(`ℹ️ Keeping /raw/${RAW_FILE_NAME} temporarily because AI Audio/Vision worker is still active.`);
+            } else {
+                console.log(`🗑️ Deleting raw file /raw/${RAW_FILE_NAME}...`);
+                await fetchWithRetry(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${rawItemId}`, {
+                    method: 'DELETE',
+                    headers: { Authorization: `Bearer ${await getGraphToken()}` },
+                });
+                console.log('✅ Raw file deleted.');
+            }
         } catch (delErr) {
             console.warn('⚠️ Could not delete raw file:', delErr.message);
         }

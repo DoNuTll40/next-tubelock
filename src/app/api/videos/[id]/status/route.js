@@ -3,7 +3,7 @@ import { getDb } from '@/lib/db';
 
 /**
  * GET /api/videos/[id]/status
- * Lightweight real-time polling endpoint for video transcoding lifecycle
+ * Lightweight real-time polling endpoint for video transcoding & AI workflows lifecycle
  */
 export async function GET(request, context) {
   try {
@@ -32,6 +32,16 @@ export async function GET(request, context) {
 
     const video = rows[0];
 
+    const parseJsonSafe = (val) => {
+      if (!val) return null;
+      if (typeof val === 'object') return val;
+      try {
+        return JSON.parse(val);
+      } catch (_) {
+        return null;
+      }
+    };
+
     return NextResponse.json({
       success: true,
       video: {
@@ -51,9 +61,20 @@ export async function GET(request, context) {
         bitrate: video.bitrate || 0,
         thumbnailUrl: video.thumbnail_url || '',
         fileSizeBytes: video.file_size_bytes || 0,
-        runnerSpecs: typeof video.runner_specs === 'string'
-          ? (() => { try { return JSON.parse(video.runner_specs); } catch (_) { return null; } })()
-          : (video.runner_specs || null),
+        runnerSpecs: parseJsonSafe(video.runner_specs),
+        // AI Workflows Real-time Fields
+        audioStatus: video.audio_status || 'waiting',
+        subtitleStatus: video.subtitle_status || 'waiting',
+        subtitleSrt: video.subtitle_srt || '',
+        subtitleVtt: video.subtitle_vtt || '',
+        subtitleModel: video.subtitle_model || '',
+        spriteStatus: video.sprite_status || 'waiting',
+        spritePreviewUrl: video.sprite_preview_url || '',
+        contentRating: video.content_rating || 'all',
+        userSelectedRating: video.user_selected_rating || 'all',
+        aiSuggestedRating: video.ai_suggested_rating || '',
+        ratingCheckStatus: video.rating_check_status || 'pending',
+        visionAnalysis: parseJsonSafe(video.vision_analysis),
         createdAt: video.created_at,
         updatedAt: video.updated_at,
       },

@@ -2,10 +2,13 @@
  * Playback Resolver for OneDrive Streams (MP4 and HLS with nested ABR Blob URLs)
  */
 
-async function rewriteSubPlaylistToBlobUrl(subPlaylistUrl, segmentUrlMap) {
-  const res = await fetch(subPlaylistUrl);
-  if (!res.ok) throw new Error(`ไม่สามารถโหลด Sub-Playlist จาก URL: ${subPlaylistUrl}`);
-  const text = await res.text();
+async function rewriteSubPlaylistToBlobUrl(subPlaylistUrl, segmentUrlMap, preloadedText = null) {
+  let text = preloadedText;
+  if (!text) {
+    const res = await fetch(subPlaylistUrl);
+    if (!res.ok) throw new Error(`ไม่สามารถโหลด Sub-Playlist จาก URL: ${subPlaylistUrl}`);
+    text = await res.text();
+  }
 
   const rewritten = text
     .split('\n')
@@ -216,10 +219,19 @@ export async function resolveClientPlaybackSource(sourceData) {
       const subPlaylistBlobUrlMap = {};
       const subPlaylistEntries = Object.entries(subPlaylistItems);
 
+      // ⚡ โหลด master.m3u8 ขนานกับ sub-playlist ทั้งหมด (ถ้ามี content แคชมาแล้วจาก server ใช้ทันที 0ms!)
+      const masterTextPromise = masterPlaylistItem.content
+        ? Promise.resolve(masterPlaylistItem.content)
+        : fetch(masterPlaylistItem.downloadUrl).then((res) => {
+            if (!res.ok) throw new Error('ดาวน์โหลด master.m3u8 ไม่สำเร็จ');
+            return res.text();
+          });
+      masterTextPromise.catch(() => {});
+
       await Promise.all(
         subPlaylistEntries.map(async ([fileName, item]) => {
           try {
-            const blobUrl = await rewriteSubPlaylistToBlobUrl(item.downloadUrl, segmentUrlMap);
+            const blobUrl = await rewriteSubPlaylistToBlobUrl(item.downloadUrl, segmentUrlMap, item.content);
             createdBlobUrls.push(blobUrl);
             subPlaylistBlobUrlMap[fileName] = blobUrl;
             subPlaylistBlobUrlMap[fileName.toLowerCase()] = blobUrl;
@@ -230,9 +242,7 @@ export async function resolveClientPlaybackSource(sourceData) {
         })
       );
 
-      const masterRes = await fetch(masterPlaylistItem.downloadUrl);
-      if (!masterRes.ok) throw new Error('ดาวน์โหลด master.m3u8 ไม่สำเร็จ');
-      const masterText = await masterRes.text();
+      const masterText = await masterTextPromise;
 
       let detectedAspect = null;
       const resMatch = masterText.match(/RESOLUTION=(\d+)x(\d+)/i);
@@ -312,7 +322,7 @@ export async function resolveClientPlaybackSource(sourceData) {
       throw new Error('ไม่พบไฟล์ playlist (.m3u8) ในชุดสตรีม HLS');
     }
 
-    const singleBlobUrl = await rewriteSubPlaylistToBlobUrl(singlePlaylist.downloadUrl, segmentUrlMap);
+    const singleBlobUrl = await rewriteSubPlaylistToBlobUrl(singlePlaylist.downloadUrl, segmentUrlMap, singlePlaylist.content);
     createdBlobUrls.push(singleBlobUrl);
 
     return {
@@ -324,4 +334,58 @@ export async function resolveClientPlaybackSource(sourceData) {
   }
 
   throw new Error('รูปแบบของแหล่งวิดีโอไม่ถูกต้อง');
+}
+
+
+// ⚡ Client-side In-Memory & In-Flight Source Cache
+// แชร์ผลลัพธ์ระหว่างการ pre-warm บน VideoCard (hover / touch / mousedown) กับหน้า WatchClient
+// ทำให้ไม่ต้องยิง fetch('/api/videos/[id]/source') ซ้ำเป็นรอบที่ 2 เมื่อกดเข้าหน้าดูวิดีโอ
+const clientSourceCache = new Map();
+const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 นาที
+
+export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriority = false } = {}) {
+  const key = String(videoId);
+  const now = Date.now();
+
+  if (forceFresh) {
+    clientSourceCache.delete(key);
+  } else {
+    const existing = clientSourceCache.get(key);
+    if (existing && existing.expiresAt > now) {
+      return existing.promise;
+    }
+  }
+
+  const url = `/api/videos/${videoId}/source${forceFresh ? '?fresh=1' : ''}`;
+  const promise = fetch(url, {
+    method: 'GET',
+    cache: 'no-store',
+    ...(lowPriority ? { priority: 'low' } : {}),
+  }).then(async (res) => {
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `ไม่สามารถโหลดวิดีโอได้ (รหัส ${res.status})`);
+    }
+    return res.json();
+  });
+
+  // ถ้ายิงล้มเหลว ให้ลบออกจาก cache ทันที ताकिครั้งถัดไปลองใหม่ได้
+  promise.catch(() => {
+    const cur = clientSourceCache.get(key);
+    if (cur && cur.promise === promise) {
+      clientSourceCache.delete(key);
+    }
+  });
+
+  clientSourceCache.set(key, {
+    promise,
+    expiresAt: now + CLIENT_CACHE_TTL_MS,
+  });
+
+  return promise;
+}
+
+export function prewarmVideoSourceClient(videoId, { immediate = false } = {}) {
+  if (!videoId) return;
+  fetchVideoSourceClient(videoId, { lowPriority: !immediate }).catch(() => {});
 }

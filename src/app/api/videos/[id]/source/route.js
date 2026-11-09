@@ -1,25 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
-import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { decodeVideoSlug } from '@/lib/videoUtils';
+import { resolveVideoSourceServer } from '@/lib/videoSourceService';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
-
-// 🔥 1. URL ของ Cloudflare Worker ที่สร้างไว้
-const CF_WORKER_URL = 'https://tubelock-cache.iinter731.workers.dev'; //[span_1](start_span)[span_1](end_span)
-
-// 🔥 ฟังก์ชันแปลงให้ไฟล์ .ts วิ่งผ่าน Cloudflare Worker Cache
-function wrapWithWorkerCache(name, downloadUrl) {
-  if (name && name.toLowerCase().endsWith('.ts')) {
-    return `${CF_WORKER_URL}/?url=${encodeURIComponent(downloadUrl)}`;
-  }
-  return downloadUrl;
-}
-
-// High-speed In-Memory Cache (Global across server restarts/HMR in dev)
-const sourceCache = globalThis.__tubelock_source_cache || (globalThis.__tubelock_source_cache = new Map());
-const inFlightRequests = globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
 
 // Prevent Vercel CDN from caching expiring OneDrive tempauth tokens
 const EDGE_CACHE_HEADERS = {
@@ -28,39 +12,17 @@ const EDGE_CACHE_HEADERS = {
   'Vercel-CDN-Cache-Control': 'no-store',
 };
 
-function isTempauthValid(url) {
-  if (!url || typeof url !== 'string') return false;
-  try {
-    const urlObj = new URL(url);
-    const tempauth = urlObj.searchParams.get('tempauth');
-    if (!tempauth) return true;
-    const parts = tempauth.split('.');
-    if (parts.length < 2) return true;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-    const expSeconds = Number(payload.exp);
-    if (!expSeconds) return true;
-    // Require at least 5 minutes remaining before token expiry
-    return (expSeconds * 1000) > (Date.now() + 5 * 60 * 1000);
-  } catch (_) {
-    return true;
-  }
-}
-
-let columnsChecked = false;
-async function ensureSourceCacheColumns(sql) {
-  if (columnsChecked) return;
-  try {
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache JSONB;`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_expires_at BIGINT DEFAULT 0;`;
-    columnsChecked = true;
-  } catch (_) {}
-}
-
 /**
  * GET /api/videos/[id]/source
  * Resolves direct playback URL from OneDrive via Azure Client Secret with 0ms in-memory cache & request coalescing
  */
 export async function GET(request, context) {
+  const t0 = performance.now();
+  const timing = (path) => ({
+    ...EDGE_CACHE_HEADERS,
+    'Server-Timing': `total;dur=${(performance.now() - t0).toFixed(1)}, path;desc="${path}"`,
+  });
+
   try {
     const { id: rawId } = await context.params;
     const numericId = decodeVideoSlug(rawId) || parseInt(rawId, 10);
@@ -69,288 +31,16 @@ export async function GET(request, context) {
       return NextResponse.json({ success: false, error: 'Video ID is required' }, { status: 400 });
     }
 
-    const cacheKey = String(id);
     const { searchParams } = new URL(request.url);
     const forceFresh = searchParams.get('fresh') === '1' || searchParams.get('refresh') === '1';
 
-    if (forceFresh) {
-      sourceCache.delete(cacheKey);
-    } else {
-      // ⚡ 1. Ultra-fast Cache Hit (<1ms) with Token Expiry Validation
-      const cached = sourceCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now() && cached.data?.items?.length > 0 && cached.data?.video?.author_picture) {
-        const sampleUrl = cached.data.items[0]?.downloadUrl || cached.data.url;
-        if (isTempauthValid(sampleUrl)) {
-          // ดัดแปลง URL ก่อนส่งคืน Client
-          const clientData = {
-            ...cached.data,
-            items: cached.data.items?.map(i => ({
-              ...i,
-              downloadUrl: wrapWithWorkerCache(i.name, i.downloadUrl)
-            }))
-          };
-          return NextResponse.json(clientData, { headers: EDGE_CACHE_HEADERS });
-        } else {
-          sourceCache.delete(cacheKey);
-        }
-      }
+    const { data, path, notReady } = await resolveVideoSourceServer(id, { forceFresh });
+
+    if (notReady) {
+      return NextResponse.json(data, { status: 422, headers: timing(path) });
     }
 
-    // ⚡ 2. In-Flight Request Deduplication
-    if (!forceFresh && inFlightRequests.has(cacheKey)) {
-      const data = await inFlightRequests.get(cacheKey);
-      if (data?.status && data.status !== 'READY' && !data.success) {
-        return NextResponse.json(data, { status: 422 });
-      }
-      const clientData = {
-        ...data,
-        items: data.items?.map(i => ({
-          ...i,
-          downloadUrl: wrapWithWorkerCache(i.name, i.downloadUrl)
-        }))
-      };
-      return NextResponse.json(clientData, { headers: EDGE_CACHE_HEADERS });
-    }
-
-    // ⚡ 3. Cold Fetch with Promise Coalescing & Database Persistent Cache
-    const fetchPromise = (async () => {
-      const sql = getDb();
-      await ensureSourceCacheColumns(sql);
-
-      const rows = await sql`
-        SELECT 
-          v.*,
-          u.name AS author_name,
-          u.email AS author_email,
-          u.picture AS author_picture
-        FROM videos v
-        LEFT JOIN users u ON v.user_id = u.id
-        WHERE v.id = ${id} 
-        LIMIT 1;
-      `;
-      if (!rows || rows.length === 0) {
-        throw new Error('Video not found');
-      }
-
-      const video = rows[0];
-
-      // Check if video is still being processed
-      if (video.status && video.status !== 'READY') {
-        return {
-          success: false,
-          status: video.status,
-          progress: video.transcode_progress || 0,
-          stageDetail: video.stage_detail || '',
-          errorMessage: video.error_message || '',
-          video,
-          error: video.status === 'FAILED'
-            ? `การแปลงวิดีโอล้มเหลว: ${video.error_message || 'ไม่ทราบสาเหตุ'}`
-            : `วิดีโอนี้อยู่ในสถานะ "${video.status}" (${video.stage_detail || 'กำลังประมวลผล'}) กรุณารอสักครู่`,
-        };
-      }
-
-      // ⚡⚡⚡ PERSISTENT DB CACHE HIT (<30ms) ⚡⚡⚡
-      const now = Date.now();
-      if (!forceFresh && video.source_cache) {
-        const parsedCache = typeof video.source_cache === 'string'
-          ? JSON.parse(video.source_cache)
-          : video.source_cache;
-
-        const sampleUrl = parsedCache?.items?.[0]?.downloadUrl || parsedCache?.url;
-        const isTokenValid = isTempauthValid(sampleUrl);
-
-        const cachedM3u8Count = parsedCache?.items?.filter((i) => i.name?.endsWith('.m3u8')).length || 0;
-        const isStaleEarlySnapshot = (video.transcode_progress === 100 || video.status === 'READY') && cachedM3u8Count <= 2 && (parsedCache?.items?.length || 0) < 150;
-
-        if (isTokenValid && !isStaleEarlySnapshot && parsedCache && (parsedCache.items?.length > 0 || parsedCache.url)) {
-          const resultData = {
-            ...parsedCache,
-            video,
-          };
-          const expTime = Number(video.source_cache_expires_at || 0);
-          sourceCache.set(cacheKey, {
-            data: resultData,
-            expiresAt: expTime > now ? expTime : now + 5 * 60 * 1000,
-          });
-
-          // ⚡ Background SWR: Revalidate quietly
-          if (expTime <= now) {
-            console.log(`[SWR Background] Revalidating OneDrive URLs in background for video ${id}...`);
-            Promise.resolve().then(async () => {
-              try {
-                const token = await getGraphToken();
-                const driveId = await getUserDriveId(token);
-                if (video.source_type === 'hls' || video.onedrive_folder_id) {
-                  const folderId = video.onedrive_folder_id || video.onedrive_item_id;
-                  let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$top=1000`;
-                  const allItems = [];
-                  while (nextUrl) {
-                    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
-                    if (!res.ok) break;
-                    const data = await res.json();
-                    if (Array.isArray(data.value)) allItems.push(...data.value);
-                    nextUrl = data['@odata.nextLink'] || null;
-                  }
-                  const freshValid = allItems
-                    .filter(i => i.name && i['@microsoft.graph.downloadUrl'])
-                    .map(i => ({ name: i.name, downloadUrl: i['@microsoft.graph.downloadUrl'] }));
-                  if (freshValid.length > 0) {
-                    const newExp = Date.now() + 40 * 60 * 1000;
-                    await sql`
-                      UPDATE videos 
-                      SET source_cache = ${JSON.stringify({ success: true, type: 'hls', items: freshValid })}::jsonb,
-                          source_cache_expires_at = ${newExp}
-                      WHERE id = ${id};
-                    `;
-                    console.log(`[SWR Background] Updated source_cache in DB for video ${id}`);
-                  }
-                }
-              } catch (bgErr) {
-                console.warn('[SWR Background Warning]:', bgErr.message);
-              }
-            });
-          }
-
-          return resultData;
-        }
-      }
-
-      // If not in DB cache or expired, fetch fresh download URLs from OneDrive
-      const token = await getGraphToken();
-      const driveId = await getUserDriveId(token);
-
-      // Case 1: HLS Stream Folder
-      if (video.source_type === 'hls' || video.onedrive_folder_id) {
-        const folderId = video.onedrive_folder_id || video.onedrive_item_id;
-        let nextUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}/children?$top=1000`;
-        const allItems = [];
-
-        while (nextUrl) {
-          const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
-          if (!res.ok) {
-            throw new Error(`Failed to read HLS folder from OneDrive (${res.status})`);
-          }
-          const data = await res.json();
-          if (Array.isArray(data.value)) {
-            allItems.push(...data.value);
-          }
-          nextUrl = data['@odata.nextLink'] || null;
-        }
-
-        // ในฐานข้อมูลเรายังเก็บ Original OneDrive URL ไว้อยู่เพื่อตรวจ tempauth
-        const validItems = allItems
-          .filter(i => i.name && i['@microsoft.graph.downloadUrl'])
-          .map(i => ({
-            name: i.name,
-            downloadUrl: i['@microsoft.graph.downloadUrl'],
-          }));
-
-        if (validItems.length === 0) {
-          throw new Error('ไม่พบไฟล์ที่พร้อมเล่นในโฟลเดอร์ HLS จาก OneDrive');
-        }
-
-        const resultData = {
-          success: true,
-          type: 'hls',
-          video,
-          items: validItems,
-        };
-
-        const isCompleted = Number(video.transcode_progress || 0) >= 100;
-        const expiresAt = Date.now() + (isCompleted ? 40 * 60 * 1000 : 15 * 1000);
-
-        sourceCache.set(cacheKey, {
-          data: resultData,
-          expiresAt,
-        });
-
-        try {
-          const cachePayload = JSON.stringify({
-            success: true,
-            type: 'hls',
-            items: validItems,
-          });
-          await sql`
-            UPDATE videos 
-            SET source_cache = ${cachePayload}::jsonb,
-                source_cache_expires_at = ${expiresAt}
-            WHERE id = ${id};
-          `;
-        } catch (dbErr) {
-          console.warn('[DB source_cache save warning]:', dbErr.message);
-        }
-
-        return resultData;
-      }
-
-      // Case 2: Standalone Video File (MP4, MKV, etc.)
-      const itemId = video.onedrive_item_id;
-      const res = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}?select=id,@microsoft.graph.downloadUrl`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch video download link from OneDrive (${res.status})`);
-      }
-
-      const data = await res.json();
-      const downloadUrl = data['@microsoft.graph.downloadUrl'];
-
-      const resultData = {
-        success: true,
-        type: 'mp4',
-        url: downloadUrl,
-        video,
-      };
-
-      const expiresAt = Date.now() + 90 * 60 * 1000;
-
-      sourceCache.set(cacheKey, {
-        data: resultData,
-        expiresAt,
-      });
-
-      try {
-        const cachePayload = JSON.stringify({
-          success: true,
-          type: 'mp4',
-          url: downloadUrl,
-        });
-        await sql`
-          UPDATE videos 
-          SET source_cache = ${cachePayload}::jsonb,
-              source_cache_expires_at = ${expiresAt}
-          WHERE id = ${id};
-        `;
-      } catch (dbErr) {
-        console.warn('[DB source_cache save warning]:', dbErr.message);
-      }
-
-      return resultData;
-    })();
-
-    inFlightRequests.set(cacheKey, fetchPromise);
-
-    try {
-      const data = await fetchPromise;
-      if (data?.status && data.status !== 'READY' && !data.success) {
-        return NextResponse.json(data, { status: 422 });
-      }
-
-      // 🔥 ก่อนส่งข้อมูลให้หน้าบ้าน: แปลง URL ของไฟล์ .ts ทั้งหมดให้ครอบด้วย Worker
-      const responseData = {
-        ...data,
-        items: data.items?.map(i => ({
-          ...i,
-          downloadUrl: wrapWithWorkerCache(i.name, i.downloadUrl)
-        }))
-      };
-
-      return NextResponse.json(responseData, { headers: EDGE_CACHE_HEADERS });
-    } finally {
-      inFlightRequests.delete(cacheKey);
-    }
+    return NextResponse.json(data, { headers: timing(path) });
   } catch (err) {
     console.error('[API_VIDEO_SOURCE_ERROR]:', err);
     return NextResponse.json(

@@ -16,6 +16,7 @@ import {
 import { useState, useRef, useEffect } from 'react';
 import { formatResolutionBadge, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
+import { prewarmVideoSourceClient } from '@/lib/playbackResolver';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
 const preWarmedIds = new Set();
@@ -36,22 +37,22 @@ export default function VideoCard({
   const imgRef = useRef(null);
   const hoverTimerRef = useRef(null);
 
-  // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ เมื่อ user hover card
-  // ทำให้ server cache warm → พอกด play จะโหลดแค่ ~30ms แทน ~11s
+  // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ และเก็บใน Client Memory Cache
+  // รองรับทั้ง hover (80ms debounce) และ mousedown/touchstart (0ms ทันทีที่แตะ/คลิก)
   const handlePreWarm = () => {
     if (!video?.id || preWarmedIds.has(video.id)) return;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
       preWarmedIds.add(video.id);
-      fetch(`/api/videos/${video.id}/source`, {
-        method: 'GET',
-        priority: 'low',
-        cache: 'no-store',
-      }).catch(() => {
-        // Silent fail — pre-warm เป็นแค่ optimization ไม่ใช่ critical path
-        preWarmedIds.delete(video.id);
-      });
-    }, 120); // debounce 120ms กันยิง hover แวบเดียว
+      prewarmVideoSourceClient(video.id, { immediate: false });
+    }, 80);
+  };
+
+  const handlePreWarmImmediate = () => {
+    if (!video?.id) return;
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    preWarmedIds.add(video.id);
+    prewarmVideoSourceClient(video.id, { immediate: true });
   };
 
   const handlePreWarmCancel = () => {
@@ -161,6 +162,8 @@ export default function VideoCard({
         className="flex gap-3 group relative select-none items-stretch p-1.5 -m-1.5 rounded-xl yt-card-hover cursor-pointer"
         onMouseEnter={handlePreWarm}
         onMouseLeave={handlePreWarmCancel}
+        onMouseDown={handlePreWarmImmediate}
+        onTouchStart={handlePreWarmImmediate}
         onFocus={handlePreWarm}
         style={cardHoverStyle}
       >
@@ -269,6 +272,8 @@ export default function VideoCard({
         className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl yt-card-hover cursor-pointer"
         onMouseEnter={handlePreWarm}
         onMouseLeave={handlePreWarmCancel}
+        onMouseDown={handlePreWarmImmediate}
+        onTouchStart={handlePreWarmImmediate}
         onFocus={handlePreWarm}
         style={cardHoverStyle}
       >
