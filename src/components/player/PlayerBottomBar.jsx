@@ -36,6 +36,7 @@ export default function PlayerBottomBar({
   setIsAutoplay,
   isCcActive,
   setIsCcActive,
+  hasSubtitles = false,
   showSettingsMenu,
   setShowSettingsMenu,
   setSettingsPlacement,
@@ -293,17 +294,30 @@ export default function PlayerBottomBar({
             </PlayerTooltip>
 
             {/* CC (Subtitles) */}
-            <PlayerTooltip text={isCcActive ? 'ปิดคำบรรยาย' : 'คำบรรยาย'} hotkey="c" align="center">
+            <PlayerTooltip text={isCcActive ? 'ปิดคำบรรยาย' : hasSubtitles ? 'เปิดคำบรรยาย (AI CC)' : 'ไม่มีคำบรรยาย'} hotkey="c" align="center">
               <button
                 type="button"
                 onClick={() => {
-                  setIsCcActive(!isCcActive);
-                  showToast?.(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
+                  if (!hasSubtitles) {
+                    showToast?.('วิดีโอนี้ยังไม่มีคำบรรยาย (CC)');
+                    return;
+                  }
+                  const next = !isCcActive;
+                  setIsCcActive(next);
+                  showToast?.(next ? 'เปิดคำบรรยาย (CC)' : 'ปิดคำบรรยาย');
                 }}
-                className={`p-2 rounded-xl hover:bg-white/15 transition cursor-pointer ${isCcActive ? 'text-[#FF7A00] bg-white/15' : 'text-zinc-200 hover:text-white'
-                  }`}
+                className={`relative p-2 rounded-xl hover:bg-white/15 transition cursor-pointer ${
+                  isCcActive && hasSubtitles
+                    ? 'text-[#FF7A00] bg-white/15'
+                    : hasSubtitles
+                    ? 'text-white hover:text-white'
+                    : 'text-zinc-400/60 hover:text-zinc-200'
+                }`}
               >
                 <Subtitles className="w-5.5 h-5.5" />
+                {isCcActive && hasSubtitles && (
+                  <span className="absolute bottom-1 left-2 right-2 h-0.5 rounded-full bg-[#FF7A00]" />
+                )}
               </button>
             </PlayerTooltip>
 

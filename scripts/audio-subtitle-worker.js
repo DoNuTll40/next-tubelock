@@ -244,7 +244,7 @@ function convertSrtToVtt(srtText) {
     .replace(/```/g, '')
     .trim();
   if (cleaned.startsWith('WEBVTT')) return cleaned;
-  const vttBody = cleaned.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  const vttBody = cleaned.replace(/(\d{1,2}:\d{2}(?::\d{2})?),(\d{1,3})/g, '$1.$2');
   return `WEBVTT\n\n${vttBody}\n`;
 }
 

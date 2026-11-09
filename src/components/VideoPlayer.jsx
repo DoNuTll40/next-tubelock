@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
-import { formatTime, formatTimePair } from './player/playerUtils';
+import { formatTime, formatTimePair, parseSubtitleCues } from './player/playerUtils';
 import PlayerTopBar from './player/PlayerTopBar';
 import PlayerCenterControls from './player/PlayerCenterControls';
 import PlayerBottomBar from './player/PlayerBottomBar';
@@ -264,9 +264,18 @@ export default function VideoPlayer({
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
 
-  // YouTube Mobile UI states
+  // YouTube Mobile UI states & Subtitles (Direct from DB)
   const [isAutoplay, setIsAutoplay] = useState(defaultAutoplay);
   const [isCcActive, setIsCcActive] = useState(false);
+  const [activeCueText, setActiveCueText] = useState('');
+  const lastCueTextRef = useRef('');
+
+  const subtitleCues = useMemo(() => {
+    const rawSub = currentVideo?.subtitle_srt || currentVideo?.subtitle_vtt || '';
+    return parseSubtitleCues(rawSub);
+  }, [currentVideo?.subtitle_srt, currentVideo?.subtitle_vtt]);
+
+  const hasSubtitles = subtitleCues.length > 0;
   const [isLiked, setIsLiked] = useState(false);
   const [isDisliked, setIsDisliked] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -481,6 +490,19 @@ export default function VideoPlayer({
     const cur = e.target.currentTime;
     const rawDur = e.target.duration || duration || 0;
     const dur = Math.max(rawDur, cur);
+
+    // Update active subtitle cue text with millisecond accuracy (only re-renders when cue text changes)
+    if (isCcActive && subtitleCues.length > 0) {
+      const matchedCue = subtitleCues.find((cue) => cur >= cue.start && cur <= cue.end);
+      const nextText = matchedCue ? matchedCue.text : '';
+      if (nextText !== lastCueTextRef.current) {
+        lastCueTextRef.current = nextText;
+        setActiveCueText(nextText);
+      }
+    } else if (lastCueTextRef.current !== '') {
+      lastCueTextRef.current = '';
+      setActiveCueText('');
+    }
 
     // Sync state duration if it drifts (e.g. initial metadata vs decoded fragments)
     if (dur > 0 && Math.abs(dur - duration) > 0.5) {
@@ -1653,9 +1675,13 @@ export default function VideoPlayer({
         showToast('+10 วินาที');
       } else if (code === 'KeyC' || key === 'c') {
         e.preventDefault();
+        if (!hasSubtitles) {
+          showToast('วิดีโอนี้ยังไม่มีคำบรรยาย (CC)');
+          return;
+        }
         setIsCcActive((prev) => {
           const next = !prev;
-          showToast(next ? 'เปิดคำบรรยาย' : 'ปิดคำบรรยาย');
+          showToast(next ? 'เปิดคำบรรยาย (CC)' : 'ปิดคำบรรยาย');
           return next;
         });
       } else if (code === 'KeyP' || key === 'p') {
@@ -2039,6 +2065,7 @@ export default function VideoPlayer({
         setIsAutoplay={setIsAutoplay}
         isCcActive={isCcActive}
         setIsCcActive={setIsCcActive}
+        hasSubtitles={hasSubtitles}
         showSettingsMenu={showSettingsMenu}
         setShowSettingsMenu={setShowSettingsMenu}
         setSettingsPlacement={setSettingsPlacement}
@@ -2135,6 +2162,23 @@ export default function VideoPlayer({
         setAmbientMode={setAmbientMode}
       />
 
+      {/* 💬 YouTube-Style Subtitle (CC) Overlay */}
+      {isCcActive && hasSubtitles && activeCueText && !isEnded && (
+        <div
+          className={`absolute left-4 right-4 z-25 flex justify-center pointer-events-none transition-all duration-200 ${
+            showControls || !isPlaying
+              ? isMobileView
+                ? 'bottom-14 sm:bottom-20'
+                : 'bottom-16 sm:bottom-20'
+              : 'bottom-4 sm:bottom-6'
+          }`}
+        >
+          <div className="max-w-[90%] sm:max-w-[78%] px-3 sm:px-4 py-1 sm:py-1.5 rounded-lg bg-black/75 backdrop-blur-xs text-white text-center font-medium text-xs sm:text-base md:text-lg leading-snug whitespace-pre-line shadow-lg">
+            {activeCueText}
+          </div>
+        </div>
+      )}
+
       {/* Modern High-Performance Bottom Controls Bar */}
       <PlayerBottomBar
         showControls={showControls}
@@ -2162,6 +2206,7 @@ export default function VideoPlayer({
         setIsAutoplay={setIsAutoplay}
         isCcActive={isCcActive}
         setIsCcActive={setIsCcActive}
+        hasSubtitles={hasSubtitles}
         showSettingsMenu={showSettingsMenu}
         setShowSettingsMenu={setShowSettingsMenu}
         setSettingsPlacement={setSettingsPlacement}

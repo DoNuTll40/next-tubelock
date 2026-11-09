@@ -17,6 +17,7 @@ export default function PlayerTopBar({
   setIsAutoplay,
   isCcActive,
   setIsCcActive,
+  hasSubtitles = false,
   showSettingsMenu,
   setShowSettingsMenu,
   setSettingsPlacement,
@@ -101,11 +102,21 @@ export default function PlayerTopBar({
           <button
             type="button"
             onClick={() => {
-              setIsCcActive(!isCcActive);
-              showToast?.(isCcActive ? 'ปิดคำบรรยาย' : 'ยังไม่มีไฟล์คำบรรยาย (CC)');
+              if (!hasSubtitles) {
+                showToast?.('วิดีโอนี้ยังไม่มีคำบรรยาย (CC)');
+                resetControlsTimer?.();
+                return;
+              }
+              const next = !isCcActive;
+              setIsCcActive(next);
+              showToast?.(next ? 'เปิดคำบรรยาย (CC)' : 'ปิดคำบรรยาย');
               resetControlsTimer?.();
             }}
-            className={`p-2 rounded-xl border backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs ${isCcActive ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50' : 'bg-black/40 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'}`}
+            className={`p-2 rounded-xl border backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs ${
+              isCcActive && hasSubtitles
+                ? 'text-[#FF7A00] bg-white/20 border-[#FF7A00]/50'
+                : 'bg-black/40 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'
+            }`}
           >
             <Subtitles className="w-4.5 h-4.5" />
           </button>

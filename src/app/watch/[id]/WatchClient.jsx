@@ -186,6 +186,9 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           setVideo((prev) => ({
             ...prev,
             ...sourceData.video,
+            subtitle_srt: sourceData.video.subtitle_srt || prev?.subtitle_srt || '',
+            subtitle_vtt: sourceData.video.subtitle_vtt || prev?.subtitle_vtt || '',
+            subtitle_status: sourceData.video.subtitle_status || prev?.subtitle_status || 'waiting',
             author_name: sourceData.video.author_name || prev?.author_name,
             author_email: sourceData.video.author_email || prev?.author_email,
             author_picture: sourceData.video.author_picture || prev?.author_picture,

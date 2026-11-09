@@ -26,6 +26,7 @@ export async function GET(request, context) {
         v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, 
         v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
         v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
+        v.subtitle_status, v.subtitle_srt, v.subtitle_vtt, v.content_rating,
         v.user_id,
         u.name AS author_name,
         u.email AS author_email,

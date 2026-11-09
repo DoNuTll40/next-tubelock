@@ -18,6 +18,7 @@ const getVideoById = cache(async (numericId) => {
       v.id, v.title, v.description, v.duration, v.file_size_bytes, v.resolution,
       v.fps, v.codec, v.bitrate, v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at,
       v.status, v.source_type, v.user_id, v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name,
+      v.subtitle_status, v.subtitle_srt, v.subtitle_vtt, v.content_rating,
       u.name AS author_name, u.email AS author_email, u.picture AS author_picture
     FROM videos v
     LEFT JOIN users u ON v.user_id = u.id
