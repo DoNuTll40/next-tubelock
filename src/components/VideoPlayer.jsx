@@ -271,10 +271,14 @@ export default function VideoPlayer({
   const [activeCueText, setActiveCueText] = useState('');
   const lastCueTextRef = useRef('');
   const subPrefsHydratedRef = useRef(false);
+  const skipNextDbSyncRef = useRef(false);
+  const dbSyncTimerRef = useRef(null);
 
-  // Load saved CC preference & Subtitle style from localStorage
+  // Load saved CC preference & Subtitle style from localStorage + users table in DB
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    let isCancelled = false;
+
     try {
       const savedStyle = localStorage.getItem('tubelock_subtitle_style');
       if (savedStyle) {
@@ -289,22 +293,68 @@ export default function VideoPlayer({
       }
     } catch (_) { }
     subPrefsHydratedRef.current = true;
+
+    // Fetch per-user subtitle settings from DB (`users.subtitle_settings`)
+    fetch('/api/user/subtitle-settings', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isCancelled || !data?.authenticated || !data?.subtitleSettings) return;
+        const { style: dbStyle, ccActive: dbCcActive } = data.subtitleSettings;
+        skipNextDbSyncRef.current = true;
+        if (dbStyle && typeof dbStyle === 'object') {
+          const merged = { ...DEFAULT_SUBTITLE_STYLE, ...dbStyle };
+          setSubtitleStyle(merged);
+          try {
+            localStorage.setItem('tubelock_subtitle_style', JSON.stringify(merged));
+          } catch (_) { }
+        }
+        if (typeof dbCcActive === 'boolean') {
+          setIsCcActive(dbCcActive);
+          try {
+            localStorage.setItem('tubelock_cc_active', dbCcActive ? '1' : '0');
+          } catch (_) { }
+        }
+        setTimeout(() => {
+          skipNextDbSyncRef.current = false;
+        }, 100);
+      })
+      .catch(() => { });
+
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
-  // Persist subtitleStyle & isCcActive to localStorage after hydration
+  // Persist subtitleStyle & isCcActive to localStorage + users table in DB after hydration
   useEffect(() => {
     if (typeof window === 'undefined' || !subPrefsHydratedRef.current) return;
     try {
       localStorage.setItem('tubelock_subtitle_style', JSON.stringify(subtitleStyle));
-    } catch (_) { }
-  }, [subtitleStyle]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !subPrefsHydratedRef.current) return;
-    try {
       localStorage.setItem('tubelock_cc_active', isCcActive ? '1' : '0');
     } catch (_) { }
-  }, [isCcActive]);
+
+    if (skipNextDbSyncRef.current) return;
+
+    if (dbSyncTimerRef.current) {
+      clearTimeout(dbSyncTimerRef.current);
+    }
+    dbSyncTimerRef.current = setTimeout(() => {
+      fetch('/api/user/subtitle-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          style: subtitleStyle,
+          ccActive: isCcActive,
+        }),
+      }).catch(() => { });
+    }, 350);
+
+    return () => {
+      if (dbSyncTimerRef.current) {
+        clearTimeout(dbSyncTimerRef.current);
+      }
+    };
+  }, [subtitleStyle, isCcActive]);
 
   const computedSubStyles = useMemo(
     () => computeSubtitleStyles(subtitleStyle, isMobileView),

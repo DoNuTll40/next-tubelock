@@ -10,16 +10,22 @@ export async function initTables() {
   // ── users: one row per unique social identity ─────────────────
   await sql`
     CREATE TABLE IF NOT EXISTS users (
-      id         SERIAL PRIMARY KEY,
-      provider   VARCHAR(20)  NOT NULL,
-      sub        VARCHAR(255) NOT NULL,
-      name       TEXT,
-      email      TEXT,
-      picture    TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      id                SERIAL PRIMARY KEY,
+      provider          VARCHAR(20)  NOT NULL,
+      sub               VARCHAR(255) NOT NULL,
+      name              TEXT,
+      email             TEXT,
+      picture           TEXT,
+      subtitle_settings JSONB DEFAULT NULL,
+      created_at        TIMESTAMPTZ DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE(provider, sub)
     )
+  `;
+
+  await sql`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS subtitle_settings JSONB DEFAULT NULL
   `;
 
   // ── user_sessions: one row per active login ───────────────────

@@ -119,7 +119,7 @@ export const ASPECT_OPTIONS = [
 // 💬 YOUTUBE-STYLE SUBTITLE (CC) CUSTOMIZATION OPTIONS & HELPERS
 // ============================================================================
 export const DEFAULT_SUBTITLE_STYLE = {
-  fontFamily: 'prop-sans',
+  fontFamily: 'tubelock-system',
   fontColor: 'white',
   fontSize: 100,
   bgColor: 'black',
@@ -131,6 +131,7 @@ export const DEFAULT_SUBTITLE_STYLE = {
 };
 
 export const SUBTITLE_FONT_FAMILIES = [
+  { id: 'tubelock-system', label: 'Graphik Thai Loop (ฟอนต์ระบบ)', css: "'Graphik Thai Loop', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" },
   { id: 'mono-sans', label: 'Sans-Serif แบบความกว้างคงที่', css: '"Courier New", Courier, monospace' },
   { id: 'prop-sans', label: 'Sans-Serif แบบปรับไปตามเนื้อที่ที่มี', css: 'Roboto, "Noto Sans Thai", Arial, Helvetica, sans-serif' },
   { id: 'mono-serif', label: 'Serif แบบความกว้างคงที่', css: 'Georgia, "Times New Roman", monospace' },
@@ -167,7 +168,7 @@ export const SUBTITLE_EDGE_STYLES = [
 
 export function computeSubtitleStyles(style = DEFAULT_SUBTITLE_STYLE, isMobile = false) {
   const s = { ...DEFAULT_SUBTITLE_STYLE, ...style };
-  const fontObj = SUBTITLE_FONT_FAMILIES.find((f) => f.id === s.fontFamily) || SUBTITLE_FONT_FAMILIES[1];
+  const fontObj = SUBTITLE_FONT_FAMILIES.find((f) => f.id === s.fontFamily) || SUBTITLE_FONT_FAMILIES[0];
   const fontColorObj = SUBTITLE_COLORS.find((c) => c.id === s.fontColor) || SUBTITLE_COLORS[0];
   const bgColorObj = SUBTITLE_COLORS.find((c) => c.id === s.bgColor) || SUBTITLE_COLORS[7];
   const winColorObj = SUBTITLE_COLORS.find((c) => c.id === s.windowColor) || SUBTITLE_COLORS[7];
@@ -195,19 +196,20 @@ export function computeSubtitleStyles(style = DEFAULT_SUBTITLE_STYLE, isMobile =
   return {
     windowStyle: {
       backgroundColor: `rgba(${winColorObj.rgb}, ${winAlpha})`,
-      padding: winAlpha > 0 ? '4px 8px' : '0px',
+      padding: winAlpha > 0 ? '6px 10px' : '0px',
       borderRadius: '6px',
     },
     textStyle: {
+      display: 'inline',
       fontFamily: fontObj.css,
       fontVariant: fontObj.smallCaps ? 'small-caps' : 'normal',
       color: `rgba(${fontColorObj.rgb}, ${fontAlpha})`,
       backgroundColor: `rgba(${bgColorObj.rgb}, ${bgAlpha})`,
       fontSize: `${fontSizePx}px`,
-      lineHeight: 1.38,
+      lineHeight: 1.75,
       textShadow,
-      padding: bgAlpha > 0 ? '2px 8px' : '0px 4px',
-      borderRadius: '4px',
+      padding: bgAlpha > 0 ? '0.32em 0.55em' : '0px 4px',
+      borderRadius: '5px',
       boxDecorationBreak: 'clone',
       WebkitBoxDecorationBreak: 'clone',
     },
