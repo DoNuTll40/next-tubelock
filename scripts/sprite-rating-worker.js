@@ -267,39 +267,70 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
   "summary": "สรุปสิ่งที่เห็นในเฟรมวิดีโอและเหตุผลของการจัดเรตเป็นภาษาไทยอย่างชัดเจน"
 }`;
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL_NAME)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-
-  const res = await fetchWithRetry(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: 'image/jpeg',
-                data: base64Image,
-              },
+  const requestBody = JSON.stringify({
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64Image,
             },
-            { text: prompt },
-          ],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.1,
-        responseMimeType: 'application/json',
+          },
+          { text: prompt },
+        ],
       },
-    }),
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+    },
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini Vision API Error (${res.status}): ${errText.slice(0, 400)}`);
+  const cleanedModel = String(GEMINI_MODEL_NAME || 'gemini-2.5-flash-lite')
+    .replace(/^models\//i, '')
+    .replace(/flesh/gi, 'flash')
+    .trim();
+  const candidates = Array.from(
+    new Set([
+      cleanedModel,
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-2.0-flash',
+    ])
+  );
+
+  let data = null;
+  let lastStatus = 0;
+  let lastErrText = '';
+
+  for (const candidateModel of candidates) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidateModel)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const res = await fetchWithRetry(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: requestBody,
+    });
+
+    if (res.ok) {
+      data = await res.json();
+      break;
+    }
+
+    lastStatus = res.status;
+    lastErrText = await res.text();
+    if (res.status === 404) {
+      console.warn(`⚠️ Vision Model "${candidateModel}" not found (404), trying next fallback model...`);
+      continue;
+    }
+    throw new Error(`Gemini Vision API Error (${res.status}): ${lastErrText.slice(0, 400)}`);
   }
 
-  const data = await res.json();
+  if (!data) {
+    throw new Error(`Gemini Vision API Error (${lastStatus}): ${lastErrText.slice(0, 400)}`);
+  }
   const rawText = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim() || '{}';
   const cleanedJson = rawText.replace(/```json\n?/gi, '').replace(/```/g, '').trim();
   const parsed = JSON.parse(cleanedJson);

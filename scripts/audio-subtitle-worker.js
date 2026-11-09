@@ -248,6 +248,44 @@ function convertSrtToVtt(srtText) {
   return `WEBVTT\n\n${vttBody}\n`;
 }
 
+function normalizeModelCandidates(rawModel) {
+  const cleaned = String(rawModel || 'gemini-2.5-flash-lite')
+    .replace(/^models\//i, '')
+    .replace(/flesh/gi, 'flash')
+    .trim();
+
+  const candidates = [
+    cleaned,
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash',
+  ];
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+async function discoverAvailableGeminiModel() {
+  try {
+    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const res = await fetch(listUrl);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const models = Array.isArray(data?.models) ? data.models : [];
+    const supported = models.filter(
+      (m) =>
+        Array.isArray(m.supportedGenerationMethods) &&
+        m.supportedGenerationMethods.includes('generateContent') &&
+        String(m.name || '').includes('gemini')
+    );
+    const flashLite = supported.find((m) => m.name.includes('flash-lite'));
+    const flash = supported.find((m) => m.name.includes('flash'));
+    const chosen = flashLite || flash || supported[0];
+    return chosen ? String(chosen.name).replace(/^models\//i, '') : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName, customPrompt) {
   if (!GEMINI_API_KEY) {
     throw new Error('ไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ Environment / GitHub Secrets');
@@ -267,44 +305,76 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
     ? `${systemInstruction}\n\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nกรุณาถอดเสียงจากไฟล์เสียงนี้เป็น .SRT:`
     : `${systemInstruction}\n\nกรุณาถอดเสียงจากไฟล์เสียงนี้เป็น .SRT:`;
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-
-  const res = await fetchWithRetry(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: 'audio/mp3',
-                data: base64Audio,
-              },
+  const requestBody = JSON.stringify({
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'audio/mp3',
+              data: base64Audio,
             },
-            { text: userPrompt },
-          ],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.2,
+          },
+          { text: userPrompt },
+        ],
       },
-    }),
+    ],
+    generationConfig: {
+      temperature: 0.2,
+    },
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini API Error (${res.status}): ${errText.slice(0, 400)}`);
+  const candidates = normalizeModelCandidates(modelName);
+  let lastErrorText = '';
+  let lastStatus = 0;
+
+  for (const candidateModel of candidates) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidateModel)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const res = await fetchWithRetry(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: requestBody,
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
+      if (!text) {
+        throw new Error('Gemini API ไม่ได้ส่งเนื้อหาคำบรรยายกลับมา');
+      }
+      return text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+    }
+
+    lastStatus = res.status;
+    lastErrorText = await res.text();
+    if (res.status === 404) {
+      console.warn(`⚠️ Model "${candidateModel}" not found (404), trying next fallback model...`);
+      continue;
+    }
+    throw new Error(`Gemini API Error (${res.status}): ${lastErrorText.slice(0, 400)}`);
   }
 
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
-  if (!text) {
-    throw new Error('Gemini API ไม่ได้ส่งเนื้อหาคำบรรยายกลับมา');
+  // Dynamic fallback via ListModels if all static candidates returned 404
+  const discoveredModel = await discoverAvailableGeminiModel();
+  if (discoveredModel) {
+    console.log(`🔄 Discovered available model from ListModels: ${discoveredModel}`);
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(discoveredModel)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+    const res = await fetchWithRetry(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: requestBody,
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
+      if (text) {
+        return text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+      }
+    }
   }
 
-  return text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+  throw new Error(`Gemini API Error (${lastStatus}): ${lastErrorText.slice(0, 400)}`);
 }
 
 async function main() {

@@ -27,8 +27,12 @@ export async function POST(request) {
       clientMeta = {},
     } = body;
 
-    const envModelName = (process.env.GEMINI_MODEL_NAME || 'gemini-2.5-flash').replace(/['"]/g, '').trim();
-    const resolvedModel = (selectedModel && selectedModel.trim()) ? selectedModel.trim() : envModelName;
+    const envModelName = (process.env.GEMINI_MODEL_NAME || 'gemini-2.5-flash-lite')
+      .replace(/['"]/g, '')
+      .replace(/flesh/gi, 'flash')
+      .trim();
+    const resolvedModel =
+      selectedModel && selectedModel.trim() ? selectedModel.replace(/flesh/gi, 'flash').trim() : envModelName;
 
     if (!videoId) {
       return NextResponse.json(
