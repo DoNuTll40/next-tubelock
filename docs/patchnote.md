@@ -2,12 +2,34 @@
 title: บันทึกการอัปเดต (Patch Notes)
 group: ข้อมูลระบบและการอัปเดต
 order: 4
-updated: 22 ตุลาคม 2026
+updated: 9 พฤศจิกายน 2026
 ---
 
 # บันทึกการอัปเดตระบบ (Patch Notes & Changelog)
 
 > **สาระสำคัญ:** รายละเอียดการพัฒนา การปรับปรุงความเสถียร และการแก้ไขข้อผิดพลาดของระบบ TubeLock อย่างเป็นทางการ
+
+---
+
+## เวอร์ชัน 1.2.2 (Build 1.2.2.20261109 — 9 พฤศจิกายน 2026) — Fast Cold-Start Playback, 3-Workflow GitHub Actions Studio & Uniform HLS Audio
+
+แพตช์อัปเดตยกระดับความเร็วในการเปิดดูวิดีโอครั้งแรก (Cold-Start), แยกสถาปัตยกรรม GitHub Actions ออกเป็น 3 ระบบอิสระ, อัปโหลดขึ้น OneDrive ทันทีเมื่อเลือกไฟล์พร้อมปุ่มยกเลิก และล็อกคุณภาพเสียง HLS ให้เท่ากันทุกความละเอียด
+
+### การเร่งความเร็วการเปิดดูวิดีโอ (Fast Cold-Start & Zero-Roundtrip HLS)
+- **แก้ไขพารามิเตอร์ Microsoft Graph API (`select` vs `$select`):** แก้ไขบั๊กใน `src/lib/videoSourceService.js` จากการใช้ `&$select=name,@microsoft.graph.downloadUrl` (ซึ่งทำให้ Graph API ตัด `@microsoft.graph.downloadUrl` ทิ้งและต้องดึงข้อมูลซ้ำใหม่ทั้งหมด) เป็น `&select=id,name,@microsoft.graph.downloadUrl` ลดเวลาโหลดโฟลเดอร์ OneDrive ครั้งแรกจาก **15.7 วินาที (3.55 MB)** เหลือเพียง **~2.2 วินาที (1.2 MB)**
+- **Server-Side `.m3u8` Content Preloading:** ดึงและแคชเนื้อหาไฟล์ `.m3u8` ทุกความละเอียดพร้อมกันตั้งแต่ฝั่งเซิร์ฟเวอร์ (`item.content`) และส่งต่อให้เบราว์เซอร์สร้าง Blob URL ได้ทันที (0ms) โดยไม่ต้องยิง HTTP Request เพิ่มไปยัง OneDrive อีก 6–8 รอบ
+- **ลดขนาด JSON Payload ของ `/api/videos/[id]/source` ลง 50%:** ตัดฟิลด์ `source_cache` ซ้ำซ้อนออกจาก `resultData.video` ลดขนาดข้อมูลจาก 2.36 MB เหลือ 1.26 MB
+- **SSR + Hover + Feed Pre-warming:** เพิ่มระบบเตรียมแคชล่วงหน้าทั้งตอนโหลดหน้าฟีด (`after()`), ตอนชี้เมาส์หรือแตะการ์ดวิดีโอ (`onMouseEnter` / `onTouchStart`), และระหว่างเรนเดอร์หน้า Watch บนเซิร์ฟเวอร์ ทำให้การเปิดดูวิดีโอตอบสนองในระดับ **23–58 มิลลิวินาที**
+
+### สถาปัตยกรรม 3 GitHub Actions แยกอิสระ & ระบบ AI ผ่าน `.env`
+- **Action ตัวที่ 1 — ถอดไฟล์เสียง & สร้างซับไตเติลด้วย AI (`extract-audio-subtitles.yml`):** ดึงวิดีโอจาก OneDrive มาสกัดแทร็กเสียงด้วย FFmpeg แล้วส่งให้โมเดล Gemini AI ถอดเสียงเป็นไฟล์ `.srt` และ `.vtt` อัปโหลดเก็บเข้า OneDrive และบันทึกลงฐานข้อมูล Neon DB
+- **Action ตัวที่ 2 — Detailed Sprite Sheet Grid (5x5 • 25 เฟรม) & AI ตรวจเรตเนื้อหา (`sprite-content-rating.yml`):** สร้างตารางภาพ Sprite Sheet 25 เฟรมความละเอียดสูงพร้อม Timestamp ครอบคลุมทั้งวิดีโอ ส่งให้ Gemini Vision AI ประเมินความปลอดภัยและตรวจสอบเปรียบเทียบกับเรตเนื้อหาที่ผู้ใช้เลือก (`VERIFIED_MATCH` / `MISMATCH_WARNING`) หรือให้ AI เลือกเรตเนื้อหาให้อัตโนมัติ (`AI AUTO`)
+- **Action ตัวที่ 3 — หั่น HLS Multi-bitrate คุณภาพเสียงเดียวกันทุกความชัด (`transcode.yml`):** ปรับการเข้ารหัสเสียงของทุกความละเอียด (`144p` ถึง `4K`) ให้ใช้สเปกเสียงเดียวกันทั้งหมดคือ **AAC 192kbps, 48kHz, Stereo (`-c:a aac -b:a 192k -ar 48000 -ac 2`)** แปลงเฉพาะความละเอียดภาพ เพื่อป้องกันปัญหาเสียงดรอปหรือสะดุดเมื่อสลับความชัดระหว่างรับชม
+- **ตั้งค่า AI Key และชื่อรุ่นโมเดลผ่าน `.env` (`GEMINI_API_KEY` & `GEMINI_MODEL_NAME`):** รองรับการกำหนดคีย์และรุ่นโมเดล AI (เช่น `GEMINI_MODEL_NAME=gemini-3.5-flesh-lite`) จากไฟล์ `.env` โดยตรง ไม่ต้องกรอก API Key ในหน้าเว็บ
+
+### ระบบอัปโหลดขึ้น OneDrive ทันทีเมื่อเลือกไฟล์ & ปุ่มยกเลิกการอัปโหลด
+- **Immediate OneDrive Background Upload:** ทันทีที่เลือกไฟล์วิดีโอในหน้า `/upload` ระบบจะเริ่มอัปโหลดไฟล์ต้นฉบับขึ้น OneDrive (`/raw/`) ทันทีโดยอัตโนมัติ เพื่อให้ GitHub Actions สามารถดึงไฟล์ไปประมวลผลได้ทันที
+- **ปุ่มยกเลิกการอัปโหลดและลบไฟล์จาก OneDrive (`handleCancelUpload`):** เพิ่มปุ่มยกเลิกการอัปโหลดที่สามารถหยุดการส่งไฟล์ (`XHR abort`), ยกเลิก Upload Session ของ Microsoft Graph และลบไฟล์ต้นฉบับรวมถึงข้อมูลออกจาก OneDrive และฐานข้อมูลได้ทันทีหากเลือกไฟล์ผิด
 
 ---
 
