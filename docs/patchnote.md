@@ -42,6 +42,14 @@ updated: 10 พฤศจิกายน 2026
   - เพิ่มระบบ Auto-Cleaning ใน `decodeVideoSlug` หากมีลิงก์หรือไคลเอนต์ส่งรหัสที่มี `undefined` ต่อท้าย (เช่น `v_ekhuJ3wundefined` หรือ `855undefined`) ระบบจะตัดคำว่า `undefined` ออกอัตโนมัติและถอดรหัสวิดีโอจริงกลับมา พร้อม Canonical Redirect ไปยัง URL ที่ถูกต้อง
   - ปรับปรุง `VideoCard.jsx`, `ResultsClient.jsx`, `HistoryClient.jsx`, `WatchClient.jsx`, `StepPublish.jsx`, `PlayerStatsModal.jsx` และ `src/proxy.js` ให้ตรวจสอบความถูกต้องของ ID/Slug และหากมีการเข้าเส้นทาง `/watch/undefined` หรือ `/watch/null` จะถูก Redirect กลับหน้าแรกทันที ไม่ติดหน้า 404
 
+### 5. ปรับปรุง UI แผงการตั้งค่า & ปุ่มเปิด/ปิดคำบรรยาย (Settings Menu Layout & CC Button Shape)
+- **ปรับรูปทรงปุ่มเปิดซับไตเติล (CC) ให้เป็นสี่เหลี่ยมโค้งมน (`rounded-xl`):** แก้ไขคลาสของปุ่ม CC ใน `PlayerBottomBar.jsx` จากเดิมที่เป็นวงกลม (`rounded-full`) ให้เปลี่ยนเป็น `rounded-xl` เหมือนกับปุ่มการตั้งค่า (Settings), หน้าต่างลอย (PiP) และปุ่มเต็มจอ (Fullscreen) ทำให้เมื่อเปิดใช้งานหรือนำเมาส์ไปชี้ พื้นหลังจะไม่แสดงเป็นวงกลมโดดเดี่ยวอีกต่อไป
+- **ปรับขนาดและเลย์เอาต์เมนูการตั้งค่า (Settings Menu Width & Clean Single-Line Alignment):**
+  - ขยายความกว้างของหน้าต่างป๊อปอัปการตั้งค่าบน Desktop จาก `w-72` (288px) เป็น `w-80 sm:w-[325px]` เพื่อให้มีพื้นที่เพียงพอสำหรับแสดงข้อความภาษาและตัวเลือกต่างๆ
+  - ปรับชื่อหัวข้อในเมนูจาก `คำบรรยาย (CC)` ให้เหลือเพียง `คำบรรยาย` ตามมาตรฐาน YouTube และป้องกันข้อความตัดตกบรรทัดด้วย `whitespace-nowrap`
+  - กำหนดค่า `truncate max-w-[155px]` ให้กับชื่อแทร็กภาษาซับไตเติล เพื่อไม่ให้ข้อความยาวๆ เช่น `ไทย (สร้างอัตโนมัติ)` เบียดจนดันแถวขยายสูงผิดปกติ
+  - ปรับไอคอนคำบรรยายภายในเมนูป๊อปอัปให้แสดงเป็นไอคอนเส้นโครงร่าง (Outlined) สม่ำเสมอเท่ากันทุกหมวดหมู่ ไม่กลายเป็นไอคอนทึบแสงเฉพาะแถว
+
 ---
 
 ## เวอร์ชัน 1.2.2 (Build 1.2.2.20261109 — 9 พฤศจิกายน 2026) — Fast Cold-Start Playback, 3-Workflow GitHub Actions Studio, YouTube-Style Subtitle (CC) Settings & Uniform HLS Audio

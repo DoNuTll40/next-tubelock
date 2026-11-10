@@ -307,7 +307,7 @@ export default function PlayerBottomBar({
                   setIsCcActive(next);
                   showToast?.(next ? 'เปิดคำบรรยาย: ไทย (สร้างอัตโนมัติ)' : 'ปิดคำบรรยาย');
                 }}
-                className={`relative p-2 rounded-full transition cursor-pointer ${
+                className={`relative p-2 rounded-xl transition cursor-pointer ${
                   isCcActive && hasSubtitles
                     ? 'text-white bg-white/15 hover:bg-white/25'
                     : hasSubtitles
