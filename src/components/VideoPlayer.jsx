@@ -1887,7 +1887,7 @@ export default function VideoPlayer({
         if (e?.nativeEvent?.pointerType === 'touch') return;
         resetControlsTimer();
       }}
-      className={`relative bg-transparent select-none overflow-hidden group/player ${isFullscreen
+      className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
         ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
         : (videoRatio && videoRatio < 0.98)
           ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
@@ -2320,18 +2320,23 @@ export default function VideoPlayer({
             className={`absolute left-4 right-4 z-25 flex justify-center pointer-events-none transition-all duration-200 ${
               showControls || !isPlaying
                 ? isMobileView
-                  ? 'bottom-14 sm:bottom-20'
-                  : 'bottom-16 sm:bottom-20'
-                : 'bottom-4 sm:bottom-6'
+                  ? 'bottom-12 sm:bottom-14'
+                  : 'bottom-13 sm:bottom-14'
+                : 'bottom-3 sm:bottom-4'
             }`}
           >
             <div
-              className="max-w-[92%] sm:max-w-[80%] text-center transition-all duration-150"
+              className="max-w-[92%] sm:max-w-[80%] text-center transition-all duration-150 flex flex-col items-center gap-1.5"
               style={computedSubStyles.windowStyle}
             >
-              <span style={computedSubStyles.textStyle}>
-                {displayCue}
-              </span>
+              {displayCue.split('\n').map((line, idx) => (
+                <span
+                  key={idx}
+                  style={computedSubStyles.textStyle}
+                >
+                  {line}
+                </span>
+              ))}
             </div>
           </div>
         );

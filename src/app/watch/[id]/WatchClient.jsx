@@ -404,7 +404,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           {/* 🎯 Video Player: Sticky on mobile across entire page / Static in Left Col on desktop */}
           <div
             ref={playerWrapperRef}
-            className={`relative sticky top-0 z-20 w-full bg-black md:bg-transparent lg:relative lg:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] lg:h-auto flex justify-center items-center lg:block' : ''
+            className={`relative sticky top-0 z-20 w-full bg-black lg:bg-transparent lg:relative lg:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] lg:h-auto flex justify-center items-center lg:block' : ''
               }`}
           >
             {/* YouTube-style Storyboard Ambient Mode Light */}
