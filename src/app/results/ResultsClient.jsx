@@ -47,7 +47,7 @@ export default function ResultsClient({ initialQuery = '' }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch('/api/videos')
+    fetch('/api/videos', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
         if (!cancelled && data?.data && Array.isArray(data.data)) {

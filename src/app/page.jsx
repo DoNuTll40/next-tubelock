@@ -29,7 +29,7 @@ export default function FeedPage() {
       if (showSkeleton) {
         setLoading(true);
       }
-      const res = await fetch('/api/videos');
+      const res = await fetch('/api/videos', { cache: 'no-store' });
       const json = await res.json();
       setVideos(json?.data || []);
     } catch (err) {

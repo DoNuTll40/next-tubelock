@@ -66,6 +66,13 @@ updated: 10 พฤศจิกายน 2026
   - กำหนดพื้นหลังของ Video Player Canvas ใน `VideoPlayer.jsx` ให้เป็นสีดำทึบ `bg-black` เพื่อป้องกันแสงหรือข้อความด้านหลังลอดเข้ามา
   - เพิ่มความทึบของแถบไล่เฉดสีดำด้านล่าง (`PlayerBottomBar.jsx`) เป็น `from-black/85 via-black/40` เพื่อให้ปุ่มควบคุมและแถบเลื่อนเวลาคมชัดโดดเด่น อ่านง่าย และป้องกันภาพพื้นหลังรบกวน 100%
 
+### 7. แก้ไขข้อผิดพลาดการดึงข้อมูลเรตติ้ง 18+ และแคชของ Feed (18+ Content Rating & Realtime Cache Synchronization)
+- **บังคับส่งข้อมูล `content_rating` บนทุก API ฟีด (`/api/videos` & `/api/history`):**
+  - แก้ไขปัญหาฝั่งไคลเอนต์ไม่ได้รับฟิลด์ `content_rating` ทำให้ฟังก์ชัน `isMatureVideo` ตีความเป็น `false` เสมอ และไม่ทำการเบลอภาพปกแม้จะสั่งปิดการแสดงผลภาพ 18+ ในหน้าตั้งค่าแล้วก็ตาม
+  - เพิ่ม `v.content_rating` ลงใน SQL Query ของ `/api/history` ทั้งโหมดค้นหาและโหมดปกติ เพื่อให้ภาพปกในหน้าประวัติการรับชมเบลอตามการตั้งค่าความปลอดภัยอย่างถูกต้อง
+  - กำหนด Header `Cache-Control: no-cache, no-store, max-age=0, must-revalidate` ให้กับ `/api/videos` ป้องกันเบราว์เซอร์นำผลลัพธ์เก่าที่ไม่มีเรตติ้งมาแสดง
+  - เพิ่มตัวเลือก `{ cache: 'no-store' }` ให้กับการเรียก `fetch('/api/videos')` ใน `src/app/page.jsx` และ `src/app/results/ResultsClient.jsx` เพื่อให้หน้าแรกและหน้าผลการค้นหาได้รับข้อมูลเรตติ้งล่าสุดจากเซิร์ฟเวอร์แบบเรียลไทม์เสมอ ไม่ค้างแคชในเบราว์เซอร์
+
 ---
 
 ## เวอร์ชัน 1.2.2 (Build 1.2.2.20261109 — 9 พฤศจิกายน 2026) — Fast Cold-Start Playback, 3-Workflow GitHub Actions Studio, YouTube-Style Subtitle (CC) Settings & Uniform HLS Audio

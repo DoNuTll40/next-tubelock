@@ -136,13 +136,11 @@ export async function GET(request) {
       }
     }
 
-    const headers = userId
-      ? { 'Cache-Control': 'private, no-cache, no-store, must-revalidate' }
-      : {
-          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-          'CDN-Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-          'Vercel-CDN-Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
-        };
+    const headers = {
+      'Cache-Control': 'no-cache, no-store, max-age=0, must-revalidate',
+      'CDN-Cache-Control': 'no-cache, no-store',
+      'Vercel-CDN-Cache-Control': 'no-cache, no-store',
+    };
 
     const now = Date.now();
     const expiredVideoIds = [];
