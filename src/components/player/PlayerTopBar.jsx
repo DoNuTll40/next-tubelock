@@ -113,13 +113,16 @@ export default function PlayerTopBar({
               showToast?.(next ? 'เปิดคำบรรยาย: ไทย (สร้างอัตโนมัติ)' : 'ปิดคำบรรยาย');
               resetControlsTimer?.();
             }}
-            className={`p-2 rounded-xl border backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs ${
+            className={`relative p-2 rounded-xl border backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs ${
               isCcActive && hasSubtitles
                 ? 'text-white bg-white/25 border-white/40'
-                : 'bg-black/40 hover:bg-white/15 border-white/15 text-zinc-300 hover:text-white'
+                : 'bg-black/40 hover:bg-white/15 border-white/15 text-zinc-200 hover:text-white'
             }`}
           >
             <CcSubtitleIcon active={Boolean(isCcActive && hasSubtitles)} className="w-4.5 h-4.5" />
+            {isCcActive && hasSubtitles && (
+              <span className="absolute bottom-1 left-2.5 right-2.5 h-0.5 bg-[#FF7A00] rounded-full shadow-xs" />
+            )}
           </button>
 
           {/* Settings */}

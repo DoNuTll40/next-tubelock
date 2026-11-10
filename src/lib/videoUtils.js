@@ -354,7 +354,8 @@ export function isMusicVideo(video) {
 // Format: v_[categoryPrefix][6-char-hash]
 // Example: 851 (gaming) -> v_gX22NFW
 // ============================================================================
-const B62_ALPHABET = 'kX8mZ3vL9bQ2pW7aN1cF6sY0dG5tH4eJqRiuwzAMBKOSTCUVDEIPojyhlgfnx';
+// 62-character alphabet (0-9, a-z, A-Z scrambled)
+const B62_ALPHABET = 'kX8mZ3vL9bQ2pW7aN1cF6sY0dG5tH4eJqRiuwzAMBKOSTCUVDEIPojyhlgfnxr';
 
 function roundFunction(val, key) {
   val = Math.imul(val ^ key, 0xcc9e2d51);
@@ -449,10 +450,10 @@ export function decodeVideoSlug(slugOrId) {
   let str = String(slugOrId).trim();
   if (!str || str === 'undefined' || str === 'null') return null;
 
-  // Auto-clean accidental 'undefined' suffix if passed from broken client concatenation
-  if (str.endsWith('undefined')) {
-    str = str.replace(/undefined$/i, '').trim();
-    if (!str) return null;
+  // Auto-clean: restore 'r' if 'undefined' appeared due to previous 61-char alphabet missing index 61
+  if (str.includes('undefined')) {
+    str = str.replace(/undefined/gi, 'r').trim();
+    if (!str || str === 'r') return null;
   }
 
   if (/^\d+$/.test(str)) {

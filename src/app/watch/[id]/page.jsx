@@ -240,7 +240,7 @@ export default async function WatchPage({ params, searchParams }) {
     };
 
     // Canonical URL redirection: if accessed with numeric ID or dirty slug (e.g. /watch/851 or /watch/...undefined)
-    if (/^\d+$/.test(rawSlug) || rawSlug.endsWith('undefined')) {
+    if (/^\d+$/.test(rawSlug) || rawSlug.includes('undefined') || (canonicalSlug && canonicalSlug !== rawSlug)) {
       if (canonicalSlug && canonicalSlug !== rawSlug) {
         const urlT = resolvedSearchParams?.t;
         redirect(`/watch/${canonicalSlug}${urlT ? `?t=${urlT}` : ''}`);

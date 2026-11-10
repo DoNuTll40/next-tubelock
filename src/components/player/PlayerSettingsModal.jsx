@@ -702,8 +702,8 @@ export default function PlayerSettingsModal({
             settingsPlacement === 'top'
               ? 'top-14 right-3 sm:right-6'
               : 'bottom-18 right-3 sm:right-6'
-          } bg-black/65 border border-white/15 rounded-2xl py-1.5 ${
-            isWideSubtitlePanel ? 'w-96 sm:w-[420px]' : 'w-80 sm:w-[325px]'
+          } bg-black/65 border border-white/15 rounded-2xl py-2 ${
+            isWideSubtitlePanel ? 'w-[420px] sm:w-[460px]' : 'w-[330px] sm:w-[350px]'
           } text-zinc-200 z-40 shadow-[0_16px_40px_rgba(0,0,0,0.65)] backdrop-blur-md overflow-hidden select-none will-change-transform transition-[width] duration-150`}
           onClick={(e) => e.stopPropagation()}
         >
@@ -715,14 +715,14 @@ export default function PlayerSettingsModal({
                 type="button"
                 disabled={levels.length <= 1}
                 onClick={() => setActiveMenuTab?.('quality')}
-                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer group"
+                className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer group"
               >
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3.5 shrink-0">
                   <Sliders className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition shrink-0" />
                   <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">คุณภาพ</span>
                 </div>
-                <div className="flex items-center gap-1.5 font-mono min-w-0">
-                  <span className="text-[13px] text-[#FF7A00] font-semibold truncate max-w-[155px] text-right whitespace-nowrap">
+                <div className="flex items-center gap-2 font-mono min-w-0">
+                  <span className="text-[13px] text-[#FF7A00] font-semibold truncate max-w-[160px] text-right whitespace-nowrap">
                     {currentLevelIndex === -1 ? `อัตโนมัติ (${activeLevelLabel})` : activeLevelLabel}
                   </span>
                   {levels.length > 1 && <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />}
@@ -733,17 +733,17 @@ export default function PlayerSettingsModal({
               <button
                 type="button"
                 onClick={() => setActiveMenuTab?.('subtitles')}
-                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
+                className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
               >
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3.5 shrink-0">
                   <CcSubtitleIcon
                     active={false}
                     className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition shrink-0"
                   />
                   <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">คำบรรยาย</span>
                 </div>
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-[13px] text-[#FF7A00] font-semibold truncate max-w-[155px] text-right whitespace-nowrap">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[13px] text-[#FF7A00] font-semibold truncate max-w-[160px] text-right whitespace-nowrap">
                     {isCcActive && hasSubtitles ? (activeSubTrack?.label || 'ไทย (สร้างอัตโนมัติ)') : 'ปิด'}
                   </span>
                   <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
@@ -754,13 +754,13 @@ export default function PlayerSettingsModal({
               <button
                 type="button"
                 onClick={() => setActiveMenuTab?.('speed')}
-                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
+                className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
               >
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3.5 shrink-0">
                   <Gauge className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition shrink-0" />
                   <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">ความเร็ว</span>
                 </div>
-                <div className="flex items-center gap-1.5 font-mono">
+                <div className="flex items-center gap-2 font-mono">
                   <span className="text-[13px] text-[#FF7A00] font-semibold whitespace-nowrap">
                     {playbackRate === 1 ? 'ปกติ' : `${playbackRate}x`}
                   </span>
@@ -772,13 +772,13 @@ export default function PlayerSettingsModal({
               <button
                 type="button"
                 onClick={() => setActiveMenuTab?.('aspect')}
-                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
+                className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
               >
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3.5 shrink-0">
                   <Maximize2 className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition shrink-0" />
                   <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">สัดส่วนวิดีโอ</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   <span className="text-[13px] text-[#FF7A00] font-semibold whitespace-nowrap">
                     {aspectMode === 'crop' ? 'ตัดขอบดำ' : aspectMode === 'fill' ? 'เต็มจอ' : 'พอดี'}
                   </span>
@@ -794,13 +794,13 @@ export default function PlayerSettingsModal({
                   setAmbientMode?.(nextVal);
                   showToast?.(nextVal ? 'เปิดโหมด Ambient แล้ว' : 'ปิดโหมด Ambient แล้ว');
                 }}
-                className="w-full flex items-center justify-between px-4.5 py-3 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
+                className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
               >
-                <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-3.5 shrink-0">
                   <AmbientModeIcon className="w-5 h-5 text-zinc-400 group-hover:text-white transition shrink-0" />
                   <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">โหมด Ambient</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2.5">
                   <span className="text-[12.5px] text-zinc-400 font-medium whitespace-nowrap">
                     {ambientMode ? 'เปิด' : 'ปิด'}
                   </span>

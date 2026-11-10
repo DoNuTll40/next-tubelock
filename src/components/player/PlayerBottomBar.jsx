@@ -295,7 +295,7 @@ export default function PlayerBottomBar({
             </PlayerTooltip>
 
             {/* CC (Subtitles) — Exact YouTube Outlined (OFF) / Solid Filled (ON) Style */}
-            <PlayerTooltip text={isCcActive ? 'คำบรรยาย (c)' : hasSubtitles ? 'คำบรรยาย (c)' : 'ไม่มีคำบรรยาย'} hotkey="c" align="center">
+            <PlayerTooltip text={isCcActive ? 'ปิดคำบรรยาย (c)' : hasSubtitles ? 'เปิดคำบรรยาย (c)' : 'ไม่มีคำบรรยาย'} hotkey="c" align="center">
               <button
                 type="button"
                 onClick={() => {
@@ -311,11 +311,14 @@ export default function PlayerBottomBar({
                   isCcActive && hasSubtitles
                     ? 'text-white bg-white/15 hover:bg-white/25'
                     : hasSubtitles
-                    ? 'text-white hover:bg-white/15'
-                    : 'text-zinc-400/50 hover:bg-white/10 hover:text-zinc-200'
+                    ? 'text-zinc-100 hover:text-white hover:bg-white/15'
+                    : 'text-zinc-300/80 hover:text-white hover:bg-white/15'
                 }`}
               >
                 <CcSubtitleIcon active={Boolean(isCcActive && hasSubtitles)} className="w-5.5 h-5.5" />
+                {isCcActive && hasSubtitles && (
+                  <span className="absolute bottom-1 left-2.5 right-2.5 h-0.5 bg-[#FF7A00] rounded-full shadow-xs" />
+                )}
               </button>
             </PlayerTooltip>
 

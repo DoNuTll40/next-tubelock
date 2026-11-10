@@ -32,17 +32,17 @@ export default function CcSubtitleIcon({ active = false, className = 'w-5.5 h-5.
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth="2.2"
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
       aria-hidden="true"
     >
       <rect x="2.5" y="4.5" width="19" height="15" rx="2.5" />
-      <path d="M6.5 11H9" />
-      <path d="M12 11H17.5" />
-      <path d="M6.5 15H12" />
-      <path d="M15 15H17.5" />
+      <path d="M6.5 11H9" strokeWidth="2.2" />
+      <path d="M12 11H17.5" strokeWidth="2.2" />
+      <path d="M6.5 15H12" strokeWidth="2.2" />
+      <path d="M15 15H17.5" strokeWidth="2.2" />
     </svg>
   );
 }
