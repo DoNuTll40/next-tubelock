@@ -462,6 +462,24 @@ export function decodeVideoSlug(slugOrId) {
   return null;
 }
 
+/**
+ * Checks whether a video is classified as 18+, mature, or adult content
+ */
+export function isMatureVideo(video) {
+  if (!video) return false;
+  const rating = String(video.content_rating || '').toLowerCase().trim();
+  const cat = String(video.category || '').toLowerCase().trim();
+  return (
+    rating === '18+' ||
+    rating === 'mature' ||
+    rating === 'restricted' ||
+    cat === 'adult' ||
+    cat === '18+' ||
+    cat === 'mature'
+  );
+}
+
+
 
 
 

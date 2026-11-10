@@ -4,7 +4,8 @@ import React from 'react';
 import { useTheme } from '@/context/ThemeContext';
 import SettingCard from '@/components/ui/SettingCard';
 import SettingRow from '@/components/ui/SettingRow';
-import { Sun, Moon, Monitor, CheckCircle2, ShieldCheck } from 'lucide-react';
+import Switch from '@/components/ui/Switch';
+import { Sun, Moon, Monitor, CheckCircle2, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 const THEME_OPTIONS = [
   {
@@ -45,8 +46,37 @@ const THEME_OPTIONS = [
   },
 ];
 
-export default function GeneralSection() {
+export default function GeneralSection({
+  allow18Plus,
+  setAllow18Plus,
+  onToggle18Plus,
+}) {
   const { theme, resolvedTheme, setTheme } = useTheme();
+
+  const [local18Plus, setLocal18Plus] = React.useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem('tubelock_allow_18plus') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const current18Plus = allow18Plus !== undefined ? allow18Plus : local18Plus;
+
+  const handle18PlusChange = (checked) => {
+    if (onToggle18Plus) {
+      onToggle18Plus(checked);
+    } else if (setAllow18Plus) {
+      setAllow18Plus(checked);
+    } else {
+      setLocal18Plus(checked);
+    }
+    try {
+      localStorage.setItem('tubelock_allow_18plus', checked ? '1' : '0');
+      window.dispatchEvent(new Event('tubelock_18plus_changed'));
+    } catch (_) { }
+  };
 
   return (
     <div className="flex flex-col gap-6 animate-fadeIn px-4">
@@ -152,6 +182,29 @@ export default function GeneralSection() {
               <span>ตรวจเช็คก่อน Render (No Flash)</span>
             </div> */}
           </div>
+        </div>
+      </SettingCard>
+
+      {/* 🔞 Content Safety & 18+ Filter Card */}
+      <SettingCard
+        title="ความปลอดภัยและการควบคุมเนื้อหา (Content Safety & Age Verification)"
+        subtitle="จัดการการแสดงผลวิดีโอที่มีเรตติ้ง 18+ หรือเนื้อหาเฉพาะผู้ใหญ่ (Restricted / Mature)"
+      >
+        <SettingRow
+          title="แสดงภาพปกเนื้อหา 18+ และหมวดผู้ใหญ่ (Adult Content Display)"
+          description="เมื่อเปิดใช้งาน ภาพปกของวิดีโอเรต 18+ จะแสดงตามปกติโดยไม่เบลอ (ค่าเริ่มต้น: ปิด - เบลอภาพปกเพื่อความปลอดภัยและความเป็นส่วนตัว)"
+        >
+          <Switch
+            checked={current18Plus}
+            onChange={handle18PlusChange}
+          />
+        </SettingRow>
+
+        <div className="p-3.5 bg-[#FFF8F2] dark:bg-[#FF7A00]/10 border-t border-[#EFECE6] dark:border-white/10 flex items-start gap-2.5 text-xs">
+          <ShieldAlert className="w-4 h-4 text-[#FF7A00] shrink-0 mt-0.5" />
+          <span className="text-[#8C857B] dark:text-[#CCCCCC] leading-relaxed">
+            หากปิดใช้งาน ระบบจะเบลอภาพปกของวิดีโอ 18+ ในทุกหน้าฟีด (หน้าแรก, แนะนำ, ค้นหา) โดยคุณยังสามารถกดแตะที่ตัวการ์ดเพื่อดูภาพปกเป็นรายคลิปได้ตลอดเวลา
+          </span>
         </div>
       </SettingCard>
 

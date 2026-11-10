@@ -44,6 +44,8 @@ async function ensureTable(sql) {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS raw_file_name TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS master_playlist_path TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'general';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS content_rating VARCHAR(50) DEFAULT 'all';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_tracks JSONB DEFAULT '[]'::jsonb;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE SET NULL;`;
     await sql`CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id);`;
     try {
@@ -92,7 +94,7 @@ export async function GET(request) {
         return sql`
           SELECT 
             v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
-            v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, v.source_type,
+            v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
             v.user_id, v.source_cache_expires_at,
             h.last_position_seconds,
             (h.id IS NOT NULL) AS has_watched,
@@ -109,7 +111,7 @@ export async function GET(request) {
       return sql`
         SELECT 
           v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
-          v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, v.source_type,
+          v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
           v.user_id, v.source_cache_expires_at,
           NULL AS last_position_seconds,
           FALSE AS has_watched,

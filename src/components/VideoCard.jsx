@@ -11,10 +11,11 @@ import {
   Copy,
   ListPlus,
   Bookmark,
-  Share2
+  Share2,
+  ShieldAlert
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { formatResolutionBadge, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
+import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { prewarmVideoSourceClient } from '@/lib/playbackResolver';
 
@@ -36,6 +37,35 @@ export default function VideoCard({
   const [dominantColor, setDominantColor] = useState(null);
   const imgRef = useRef(null);
   const hoverTimerRef = useRef(null);
+
+  // 18+ / Mature Content Filter preference (Global settings + per-card reveal)
+  const [allow18Plus, setAllow18Plus] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem('tubelock_allow_18plus') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [isTemporarilyRevealed, setIsTemporarilyRevealed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handle18PlusUpdate = () => {
+      try {
+        setAllow18Plus(localStorage.getItem('tubelock_allow_18plus') === '1');
+      } catch (_) { }
+    };
+    window.addEventListener('tubelock_18plus_changed', handle18PlusUpdate);
+    window.addEventListener('storage', handle18PlusUpdate);
+    return () => {
+      window.removeEventListener('tubelock_18plus_changed', handle18PlusUpdate);
+      window.removeEventListener('storage', handle18PlusUpdate);
+    };
+  }, []);
+
+  const isMature = isMatureVideo(video);
+  const shouldBlur = isMature && !allow18Plus && !isTemporarilyRevealed;
 
   // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ และเก็บใน Client Memory Cache
   // รองรับทั้ง hover (80ms debounce) และ mousedown/touchstart (0ms ทันทีที่แตะ/คลิก)
@@ -181,12 +211,40 @@ export default function VideoCard({
               crossOrigin="anonymous"
               onError={() => setImgError(true)}
               onLoad={handleImageLoad}
-              className="w-full h-full object-cover transition-transform duration-300"
+              className={`w-full h-full object-cover transition-all duration-300 ${shouldBlur ? 'blur-2xl scale-125 brightness-50' : ''}`}
               loading="lazy"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-zinc-500">
               <Play className="w-6 h-6 fill-current opacity-60" />
+            </div>
+          )}
+
+          {/* 18+ Warning Overlay (Half) */}
+          {shouldBlur && (
+            <div
+              className="absolute inset-0 z-15 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md p-2 text-center select-none"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsTemporarilyRevealed(true);
+              }}
+            >
+              <div className="flex items-center gap-1 text-rose-500 font-bold text-xs mb-1">
+                <ShieldAlert className="w-4 h-4 shrink-0" />
+                <span>18+ ผู้ใหญ่</span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsTemporarilyRevealed(true);
+                }}
+                className="px-2.5 py-0.5 rounded-full bg-white/20 hover:bg-white/30 text-white text-[10px] font-medium transition border border-white/20 cursor-pointer backdrop-blur-sm"
+              >
+                แตะเพื่อดูภาพ
+              </button>
             </div>
           )}
 
@@ -233,6 +291,11 @@ export default function VideoCard({
 
           {/* 3. ยอดวิว / สตรีม (อยู่ติดด้านล่างต่อลงมาทันที) */}
           <div className="flex items-center gap-1.5 text-[#606060] dark:text-[#888888] text-[12px] mt-1 truncate">
+            {isMature && (
+              <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
+                18+
+              </span>
+            )}
             <span>{`${Number(video.views_count || 0).toLocaleString()} ครั้ง`}</span>
             <span>•</span>
             <span>HLS</span>
@@ -290,12 +353,40 @@ export default function VideoCard({
               crossOrigin="anonymous"
               onError={() => setImgError(true)}
               onLoad={handleImageLoad}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              className={`w-full h-full object-cover group-hover:scale-105 transition-all duration-300 ${shouldBlur ? 'blur-2xl scale-125 brightness-50' : ''}`}
               loading="lazy"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-zinc-500">
               <Play className="w-6 h-6 fill-current opacity-60" />
+            </div>
+          )}
+
+          {/* 18+ Warning Overlay (Compact) */}
+          {shouldBlur && (
+            <div
+              className="absolute inset-0 z-15 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md p-1.5 text-center select-none"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsTemporarilyRevealed(true);
+              }}
+            >
+              <div className="flex items-center gap-1 text-rose-500 font-bold text-[11px] mb-1">
+                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                <span>18+</span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsTemporarilyRevealed(true);
+                }}
+                className="px-2 py-0.5 rounded-full bg-white/20 hover:bg-white/30 text-white text-[9.5px] font-medium transition border border-white/20 cursor-pointer backdrop-blur-sm"
+              >
+                ดูภาพปก
+              </button>
             </div>
           )}
 
@@ -386,7 +477,7 @@ export default function VideoCard({
                 aria-hidden="true"
                 crossOrigin="anonymous"
                 onError={() => setImgError(true)}
-                className="absolute inset-0 w-full h-full object-cover blur-sm scale-110 opacity-30 select-none pointer-events-none"
+                className={`absolute inset-0 w-full h-full object-cover select-none pointer-events-none ${shouldBlur ? 'blur-3xl scale-150 opacity-50' : 'blur-sm scale-110 opacity-30'}`}
               />
               <img
                 ref={imgRef}
@@ -395,13 +486,46 @@ export default function VideoCard({
                 crossOrigin="anonymous"
                 onError={() => setImgError(true)}
                 onLoad={handleImageLoad}
-                className="relative z-10 w-full h-full object-contain drop-shadow-sm"
+                className={`relative z-10 w-full h-full object-contain drop-shadow-sm transition-all duration-300 ${shouldBlur ? 'blur-2xl scale-125 brightness-50' : ''}`}
                 loading="lazy"
               />
             </>
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-[#151413]">
               <Play className="w-8 h-8 text-[#C4BEB4] stroke-[1.5]" />
+            </div>
+          )}
+
+          {/* 18+ Mature Warning Overlay (Grid) */}
+          {shouldBlur && (
+            <div
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/65 backdrop-blur-md p-3 text-center select-none"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsTemporarilyRevealed(true);
+              }}
+            >
+              <div className="w-9 h-9 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-500 mb-2 shadow-lg animate-pulse">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <span className="text-white text-xs sm:text-sm font-bold tracking-wide">
+                🔞 18+ เนื้อหาสำหรับผู้ใหญ่
+              </span>
+              <span className="text-zinc-300 text-[10px] sm:text-[11px] mt-0.5 line-clamp-1">
+                ตรวจพบเนื้อหาเฉพาะผู้ใหญ่ (Restricted)
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsTemporarilyRevealed(true);
+                }}
+                className="mt-2.5 px-3 py-1 rounded-full bg-white/20 hover:bg-white/30 text-white text-[11px] font-semibold transition active:scale-95 border border-white/25 cursor-pointer backdrop-blur-sm shadow-sm"
+              >
+                แตะเพื่อแสดงภาพปก
+              </button>
             </div>
           )}
 
@@ -473,6 +597,11 @@ export default function VideoCard({
               {video.author_name || 'DONUŤ'}
             </span>
             <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
+              {isMature && (
+                <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
+                  18+
+                </span>
+              )}
               <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px]">
                 {video.codec ? video.codec.toUpperCase() : 'H264'}
               </span>

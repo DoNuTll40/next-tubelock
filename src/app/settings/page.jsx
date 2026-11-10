@@ -113,6 +113,7 @@ function SettingsContent() {
   const [defaultFit, setDefaultFit] = useState('fit');
   const [seekStep, setSeekStep] = useState(10);
   const [autoStats, setAutoStats] = useState(false);
+  const [allow18Plus, setAllow18Plus] = useState(false);
 
   // Profile States
   const [gravatarEmail, setGravatarEmail] = useState('');
@@ -176,9 +177,11 @@ function SettingsContent() {
         if (typeof window !== 'undefined') {
           const storedEmail = localStorage.getItem('pt_gravatar_email') || '';
           const storedFallback = localStorage.getItem('pt_fallback_avatar') || 'mp';
+          const stored18Plus = localStorage.getItem('tubelock_allow_18plus') === '1';
           if (isMounted) {
             setGravatarEmail(storedEmail);
             setFallbackAvatar(storedFallback);
+            setAllow18Plus(stored18Plus);
             if (storedEmail.trim()) {
               sha256(storedEmail).then((h) => { if (isMounted) setGravatarHash(h); });
             }
@@ -191,7 +194,7 @@ function SettingsContent() {
         ]);
 
         if (settingsRes?.success && settingsRes.data && isMounted) {
-          const { onedrive_config, player_defaults } = settingsRes.data;
+          const { onedrive_config, player_defaults, content_safety } = settingsRes.data;
           if (onedrive_config) {
             setTargetFolder(onedrive_config.target_folder || '/Videos');
             setScanSubfolders(onedrive_config.scan_subfolders ?? true);
@@ -203,6 +206,12 @@ function SettingsContent() {
             setDefaultFit(player_defaults.fit ?? player_defaults.default_fit ?? 'fit');
             setSeekStep(player_defaults.seekStep ?? player_defaults.seek_step ?? 10);
             setAutoStats(player_defaults.statsForNerds ?? player_defaults.auto_stats ?? false);
+          }
+          if (content_safety && typeof content_safety.allow_18plus === 'boolean') {
+            setAllow18Plus(content_safety.allow_18plus);
+            try {
+              localStorage.setItem('tubelock_allow_18plus', content_safety.allow_18plus ? '1' : '0');
+            } catch (_) {}
           }
         }
 
@@ -244,7 +253,7 @@ function SettingsContent() {
   }, [
     targetFolder, scanSubfolders,
     volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats,
-    gravatarEmail, fallbackAvatar,
+    gravatarEmail, fallbackAvatar, allow18Plus,
   ]);
 
   // ─── Save all to Neon ─────────────────────────────────────────────────────
@@ -268,11 +277,21 @@ function SettingsContent() {
             value: { target_folder: targetFolder, scan_subfolders: scanSubfolders },
           }),
         }),
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            key: 'content_safety',
+            value: { allow_18plus: allow18Plus },
+          }),
+        }),
       ]);
 
       localStorage.setItem('pt_gravatar_email', gravatarEmail.trim());
       localStorage.setItem('pt_fallback_avatar', fallbackAvatar);
+      localStorage.setItem('tubelock_allow_18plus', allow18Plus ? '1' : '0');
       window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new Event('tubelock_18plus_changed'));
 
       setSaveStatus('saved');
       setIsDirty(false);
@@ -282,7 +301,7 @@ function SettingsContent() {
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 4000);
     }
-  }, [volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats, targetFolder, scanSubfolders, gravatarEmail, fallbackAvatar]);
+  }, [volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats, targetFolder, scanSubfolders, gravatarEmail, fallbackAvatar, allow18Plus]);
 
   // ─── Other actions ────────────────────────────────────────────────────────
   const handleClearHistory = async () => {
@@ -309,7 +328,12 @@ function SettingsContent() {
   const renderCurrentSection = (tabKey) => {
     switch (tabKey) {
       case 'general':
-        return <GeneralSection />;
+        return (
+          <GeneralSection
+            allow18Plus={allow18Plus}
+            setAllow18Plus={setAllow18Plus}
+          />
+        );
       case 'account':
         return (
           <AccountSection
@@ -361,7 +385,12 @@ function SettingsContent() {
       case 'support':
         return <SupportSection />;
       default:
-        return <GeneralSection />;
+        return (
+          <GeneralSection
+            allow18Plus={allow18Plus}
+            setAllow18Plus={setAllow18Plus}
+          />
+        );
     }
   };
 

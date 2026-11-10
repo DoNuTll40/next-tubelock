@@ -45,6 +45,10 @@ export default function PlayerSettingsModal({
   hasSubtitles = false,
   subtitleStyle = DEFAULT_SUBTITLE_STYLE,
   setSubtitleStyle,
+  subtitleTracks = [],
+  selectedSubTrackId = 'th',
+  setSelectedSubTrackId,
+  activeSubTrack = null,
 }) {
   const [mounted, setMounted] = useState(false);
   const [isClientSmall, setIsClientSmall] = useState(false);
@@ -309,7 +313,7 @@ export default function PlayerSettingsModal({
                       </div>
                       <div className="flex items-center gap-1.5 text-zinc-400">
                         <span className="text-[13px] text-[#FF7A00] font-semibold">
-                          {isCcActive && hasSubtitles ? 'ไทย (สร้างอัตโนมัติ)' : 'ปิด'}
+                          {isCcActive && hasSubtitles ? (activeSubTrack?.label || 'ไทย (สร้างอัตโนมัติ)') : 'ปิด'}
                         </span>
                         <ChevronRight className="w-4 h-4 text-zinc-400" />
                       </div>
@@ -404,28 +408,52 @@ export default function PlayerSettingsModal({
                       {!isCcActive && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
                     </button>
 
-                    {/* Thai AI Track */}
-                    <button
-                      type="button"
-                      disabled={!hasSubtitles}
-                      onClick={() => {
-                        setIsCcActive?.(true);
-                        showToast?.('เปิดคำบรรยาย: ไทย (สร้างอัตโนมัติ)');
-                        setShowSettingsMenu?.(false);
-                        resetControlsTimer?.();
-                      }}
-                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer border-t border-white/5 disabled:opacity-40"
-                    >
-                      <div className="flex flex-col">
-                        <span className={`text-[14px] ${isCcActive && hasSubtitles ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
-                          ไทย (สร้างอัตโนมัติ)
-                        </span>
-                        {!hasSubtitles && (
-                          <span className="text-[11px] text-zinc-400">วิดีโอนี้ยังไม่มีคำบรรยายในระบบ</span>
-                        )}
-                      </div>
-                      {isCcActive && hasSubtitles && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
-                    </button>
+                    {/* Subtitle Tracks (Dynamic: Thai AI + Original Language) */}
+                    {subtitleTracks.length > 0 ? (
+                      subtitleTracks.map((track) => {
+                        const isTrackActive = isCcActive && (selectedSubTrackId === track.id || (subtitleTracks.length === 1 && isCcActive));
+                        return (
+                          <button
+                            key={track.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedSubTrackId?.(track.id);
+                              setIsCcActive?.(true);
+                              showToast?.(`เปิดคำบรรยาย: ${track.label}`);
+                              setShowSettingsMenu?.(false);
+                              resetControlsTimer?.();
+                            }}
+                            className="w-full flex items-center justify-between px-5 py-3 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer border-t border-white/5"
+                          >
+                            <div className="flex flex-col">
+                              <span className={`text-[14px] ${isTrackActive ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
+                                {track.label}
+                              </span>
+                              {track.isOriginal && track.lang !== 'th' && (
+                                <span className="text-[11px] text-zinc-400">ภาษาต้นฉบับของวิดีโอ (ถอดเสียง AI)</span>
+                              )}
+                              {track.isAutoTranslate && (
+                                <span className="text-[11px] text-zinc-400">แปลภาษาไทยอัตโนมัติ</span>
+                              )}
+                            </div>
+                            {isTrackActive && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <button
+                        type="button"
+                        disabled
+                        className="w-full flex items-center justify-between px-5 py-3.5 text-left border-t border-white/5 opacity-40"
+                      >
+                        <div className="flex flex-col">
+                          <span className="text-[14px] text-zinc-400">
+                            ไทย (สร้างอัตโนมัติ)
+                          </span>
+                          <span className="text-[11px] text-zinc-500">วิดีโอนี้ยังไม่มีคำบรรยายในระบบ</span>
+                        </div>
+                      </button>
+                    )}
 
                     {/* Customize Subtitle Style Row */}
                     <button
@@ -716,7 +744,7 @@ export default function PlayerSettingsModal({
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[13px] text-[#FF7A00] font-semibold">
-                    {isCcActive && hasSubtitles ? 'ไทย (AI)' : 'ปิด'}
+                    {isCcActive && hasSubtitles ? (activeSubTrack?.label || 'เปิด') : 'ปิด'}
                   </span>
                   <ChevronRight className="w-4 h-4 text-zinc-400" />
                 </div>
@@ -826,28 +854,52 @@ export default function PlayerSettingsModal({
                   {!isCcActive && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
                 </button>
 
-                {/* ไทย (สร้างอัตโนมัติ) */}
-                <button
-                  type="button"
-                  disabled={!hasSubtitles}
-                  onClick={() => {
-                    setIsCcActive?.(true);
-                    showToast?.('เปิดคำบรรยาย: ไทย (สร้างอัตโนมัติ)');
-                    setShowSettingsMenu?.(false);
-                    resetControlsTimer?.();
-                  }}
-                  className="w-full flex items-center justify-between px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <div className="flex flex-col">
-                    <span className={`text-[13.5px] ${isCcActive && hasSubtitles ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
-                      ไทย (สร้างอัตโนมัติ)
-                    </span>
-                    {!hasSubtitles && (
-                      <span className="text-[11px] text-zinc-400">วิดีโอนี้ยังไม่มีคำบรรยาย</span>
-                    )}
-                  </div>
-                  {isCcActive && hasSubtitles && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
-                </button>
+                {/* Subtitle Tracks (Dynamic: Thai AI + Original Language) */}
+                {subtitleTracks.length > 0 ? (
+                  subtitleTracks.map((track) => {
+                    const isTrackActive = isCcActive && (selectedSubTrackId === track.id || (subtitleTracks.length === 1 && isCcActive));
+                    return (
+                      <button
+                        key={track.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSubTrackId?.(track.id);
+                          setIsCcActive?.(true);
+                          showToast?.(`เปิดคำบรรยาย: ${track.label}`);
+                          setShowSettingsMenu?.(false);
+                          resetControlsTimer?.();
+                        }}
+                        className="w-full flex items-center justify-between px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5"
+                      >
+                        <div className="flex flex-col">
+                          <span className={`text-[13.5px] ${isTrackActive ? 'text-[#FF7A00] font-bold' : 'text-zinc-200'}`}>
+                            {track.label}
+                          </span>
+                          {track.isOriginal && track.lang !== 'th' && (
+                            <span className="text-[11px] text-zinc-400">ภาษาต้นฉบับของวิดีโอ (ถอดเสียง AI)</span>
+                          )}
+                          {track.isAutoTranslate && (
+                            <span className="text-[11px] text-zinc-400">แปลภาษาไทยอัตโนมัติ</span>
+                          )}
+                        </div>
+                        {isTrackActive && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full flex items-center justify-between px-4.5 py-2.5 text-left border-t border-white/5 opacity-40 cursor-not-allowed"
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-[13.5px] text-zinc-400">
+                        ไทย (สร้างอัตโนมัติ)
+                      </span>
+                      <span className="text-[11px] text-zinc-500">วิดีโอนี้ยังไม่มีคำบรรยายในระบบ</span>
+                    </div>
+                  </button>
+                )}
 
                 {/* ตัวเลือกคำบรรยาย */}
                 <button

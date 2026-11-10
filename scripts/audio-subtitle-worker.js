@@ -58,6 +58,7 @@ async function ensureAudioSubtitleColumns() {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_status VARCHAR(50) DEFAULT 'waiting';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_tracks JSONB DEFAULT '[]'::jsonb;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_model VARCHAR(100) DEFAULT '';`;
   } catch (err) {
     console.warn('[Schema check warning]:', err.message);
@@ -286,6 +287,52 @@ async function discoverAvailableGeminiModel() {
   }
 }
 
+function parseGeminiSubtitleResponse(rawText) {
+  if (!rawText) return null;
+  let cleaned = String(rawText).trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (parsed && typeof parsed === 'object') {
+      const isThai = Boolean(parsed.is_thai);
+      let detectedLangCode = String(parsed.detected_lang_code || (isThai ? 'th' : 'und')).trim();
+      let detectedLangName = String(parsed.detected_lang_name || (isThai ? 'ไทย' : 'ภาษาต่างประเทศ')).trim();
+      let thaiSrt = String(parsed.thai_srt || '').trim();
+      let originalSrt = String(parsed.original_srt || '').trim();
+
+      // If audio was Thai, ensure thai_srt has text
+      if (isThai && !thaiSrt && originalSrt) {
+        thaiSrt = originalSrt;
+        originalSrt = '';
+      }
+
+      return {
+        isThai,
+        detectedLangCode,
+        detectedLangName,
+        thaiSrt,
+        originalSrt,
+      };
+    }
+  } catch (err) {
+    console.warn('⚠️ Subtitle JSON parse fallback:', err.message);
+  }
+
+  // Fallback: If AI returned raw SRT directly
+  if (cleaned.includes('-->')) {
+    return {
+      isThai: true,
+      detectedLangCode: 'th',
+      detectedLangName: 'ไทย',
+      thaiSrt: cleaned,
+      originalSrt: '',
+    };
+  }
+
+  return null;
+}
+
 async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName, customPrompt) {
   if (!GEMINI_API_KEY) {
     throw new Error('ไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ Environment / GitHub Secrets');
@@ -294,16 +341,37 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
   const audioBuffer = await fs.promises.readFile(audioFilePath);
   const base64Audio = audioBuffer.toString('base64');
 
-  const systemInstruction = `คุณคือผู้เชี่ยวชาญการถอดเสียงและสร้างไฟล์คำบรรยาย (.SRT) ความแม่นยำสูง
-กฎเหล็ก:
-1. ส่งคืนเฉพาะเนื้อหาไฟล์ .SRT มาตรฐานเท่านั้น ห้ามใส่คำอธิบายนำหน้าหรือต่อท้าย ห้ามครอบด้วย markdown code block
-2. ใช้ไทม์โค้ดรูปแบบ 00:00:00,000 --> 00:00:00,000 ที่ตรงกับจังหวะเสียงพูดจริง
-3. แบ่งวรรคตอนให้อ่านง่าย ไม่เกิน 2 บรรทัดต่อ 1 ลำดับซับไตเติล
-4. สะกดคำภาษาไทยและคำทับศัพท์ให้ถูกต้องตามบริบทของวิดีโอ "${videoTitle || ''}"`;
+  const systemInstruction = `คุณคือผู้เชี่ยวชาญระดับสูงด้านการถอดเสียง (Audio Transcription), ระบุภาษาพูด (Language Identification) และแปลภาษาทำคำบรรยาย (.SRT) สองแทร็ก (Dual-Track Subtitles) ความแม่นยำสูง
+
+ภารกิจหลักของคุณ:
+1. วิเคราะห์และตรวจจับภาษาพูดหลักในไฟล์เสียงนี้อย่างละเอียดและชัดเจน:
+   - หากเป็นภาษาไทย: กำหนด is_thai = true, detected_lang_code = "th", detected_lang_name = "ไทย"
+   - หากเป็นภาษาต่างประเทศอื่นๆ: กำหนด is_thai = false
+     * กรณีภาษาจีน ต้องระบุสำเนียง/รูปแบบตัวเขียนให้ชัดเจน เช่น:
+       - "จีนกลาง (ตัวย่อ)" (detected_lang_code: "zh-Hans")
+       - "จีนกลาง (ตัวเต็ม)" (detected_lang_code: "zh-Hant")
+       - "จีนกวางตุ้ง" (detected_lang_code: "yue")
+       - "จีนไต้หวัน" (detected_lang_code: "zh-TW")
+     * ภาษาอื่นๆ ระบุชื่อภาษาภาษาไทยให้ชัดเจน เช่น "ญี่ปุ่น" ("ja"), "อังกฤษ" ("en"), "เกาหลี" ("ko"), "เวียดนาม" ("vi"), "ฝรั่งเศส" ("fr") เป็นต้น
+2. สร้างคำบรรยาย .SRT แบบ 2 แทร็ก (Synchronized Dual Tracks):
+   - แทร็ก 1 (thai_srt): คำบรรยายภาษาไทยที่แปลอย่างสละสลวย เป็นธรรมชาติ ถูกต้องตามอารมณ์และบริบทของบทสนทนา (หากเสียงต้นฉบับเป็นภาษาไทยอยู่แล้ว ให้ถอดเสียงภาษาไทยลงใน thai_srt นี้)
+   - แทร็ก 2 (original_srt): คำบรรยายตามภาษาต้นฉบับที่พูดจริงในวิดีโอ (เช่น ข้อความภาษาจีน, ภาษาอังกฤษ, ภาษาญี่ปุ่น) พร้อมไทม์โค้ดตรงกับเสียงพูดเป๊ะๆ (หากเสียงต้นฉบับเป็นภาษาไทยอยู่แล้ว ให้เว้นว่าง original_srt เป็น "")
+3. กฎเหล็กของไฟล์ .SRT:
+   - ใช้ไทม์โค้ดมาตรฐาน 00:00:00,000 --> 00:00:00,000
+   - แบ่งวรรคตอนให้อ่านง่าย ไม่เกิน 2 บรรทัดต่อ 1 sequence
+   - ไทม์โค้ดระหว่าง thai_srt และ original_srt ต้องตรงกัน เพื่อให้ผู้ชมสามารถสลับแทร็กภาษาใน Player ได้อย่างราบรื่น
+4. ส่งผลลัพธ์กลับมาเป็น JSON ตามโครงสร้างนี้เท่านั้น (ห้ามใส่คำเกริ่นนำหรือ markdown code block):
+{
+  "is_thai": false,
+  "detected_lang_code": "zh-Hans",
+  "detected_lang_name": "จีนกลาง (ตัวย่อ)",
+  "thai_srt": "1\\n00:00:00,320 --> 00:00:02,500\\n...\\n",
+  "original_srt": "1\\n00:00:00,320 --> 00:00:02,500\\n...\\n"
+}`;
 
   const userPrompt = customPrompt
-    ? `${systemInstruction}\n\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nกรุณาถอดเสียงจากไฟล์เสียงนี้เป็น .SRT:`
-    : `${systemInstruction}\n\nกรุณาถอดเสียงจากไฟล์เสียงนี้เป็น .SRT:`;
+    ? `${systemInstruction}\n\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nกรุณาถอดเสียงและแปลคำบรรยายจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`
+    : `${systemInstruction}\n\nกรุณาถอดเสียงและแปลคำบรรยายจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`;
 
   const safetySettings = [
     { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -330,6 +398,7 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
     ],
     generationConfig: {
       temperature: 0.2,
+      responseMimeType: 'application/json',
     },
     safetySettings,
   });
@@ -352,7 +421,9 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
       if (!text) {
         throw new Error('Gemini API ไม่ได้ส่งเนื้อหาคำบรรยายกลับมา');
       }
-      return text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+      const parsed = parseGeminiSubtitleResponse(text);
+      if (parsed) return parsed;
+      throw new Error('ไม่สามารถแปลงผลลัพธ์คำบรรยายจาก Gemini ให้เป็นโครงสร้างที่ถูกต้องได้');
     }
 
     lastStatus = res.status;
@@ -378,7 +449,8 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
       if (text) {
-        return text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+        const parsed = parseGeminiSubtitleResponse(text);
+        if (parsed) return parsed;
       }
     }
   }
@@ -475,26 +547,84 @@ async function main() {
     `;
     console.log('✅ Audio extracted and marked READY in DB.');
 
-    // 3. Generate AI Subtitles via Gemini
-    console.log(`🤖 Sending audio to Gemini (${AI_MODEL}) for subtitle generation...`);
-    const srtContent = await generateSubtitlesWithGemini(localAudioPath, video.title, AI_MODEL, CUSTOM_PROMPT);
-    const vttContent = convertSrtToVtt(srtContent);
+    // 3. Generate AI Subtitles via Gemini (Language Detection & Dual-Track Subtitles)
+    console.log(`🤖 Sending audio to Gemini (${AI_MODEL}) for subtitle generation & language detection...`);
+    const subResult = await generateSubtitlesWithGemini(localAudioPath, video.title, AI_MODEL, CUSTOM_PROMPT);
+    const { isThai, detectedLangCode, detectedLangName, thaiSrt, originalSrt } = subResult;
 
+    console.log(`🌐 Audio Language Detected: ${detectedLangName} (${detectedLangCode}) | Is Thai: ${isThai}`);
+
+    const thaiVtt = convertSrtToVtt(thaiSrt);
+    const originalVtt = originalSrt ? convertSrtToVtt(originalSrt) : '';
+
+    let tracks = [];
+    if (!isThai && originalSrt) {
+      tracks = [
+        {
+          id: 'th',
+          label: 'ไทย (แปลอัตโนมัติ)',
+          lang: 'th',
+          isAutoTranslate: true,
+          isOriginal: false,
+          srt: thaiSrt,
+          vtt: thaiVtt,
+        },
+        {
+          id: 'original',
+          label: `${detectedLangName} (สร้างอัตโนมัติ)`,
+          lang: detectedLangCode,
+          isAutoTranslate: false,
+          isOriginal: true,
+          srt: originalSrt,
+          vtt: originalVtt,
+        },
+      ];
+    } else {
+      tracks = [
+        {
+          id: 'th',
+          label: 'ไทย (สร้างอัตโนมัติ)',
+          lang: 'th',
+          isAutoTranslate: false,
+          isOriginal: true,
+          srt: thaiSrt,
+          vtt: thaiVtt,
+        },
+      ];
+    }
+
+    // Prepare files to upload to OneDrive
     const srtPath = path.join(tempDir, 'subtitles.srt');
     const vttPath = path.join(tempDir, 'subtitles.vtt');
-    fs.writeFileSync(srtPath, srtContent, 'utf8');
-    fs.writeFileSync(vttPath, vttContent, 'utf8');
+    fs.writeFileSync(srtPath, thaiSrt, 'utf8');
+    fs.writeFileSync(vttPath, thaiVtt, 'utf8');
 
-    await Promise.all([
+    const uploadPromises = [
       uploadSmallOrChunkedFile(driveId, streamFolderId, 'subtitles.srt', srtPath, 'text/plain; charset=utf-8'),
       uploadSmallOrChunkedFile(driveId, streamFolderId, 'subtitles.vtt', vttPath, 'text/vtt; charset=utf-8'),
-    ]);
+    ];
+
+    if (!isThai && originalSrt) {
+      const origSrtPath = path.join(tempDir, 'subtitles_original.srt');
+      const origVttPath = path.join(tempDir, 'subtitles_original.vtt');
+      fs.writeFileSync(origSrtPath, originalSrt, 'utf8');
+      fs.writeFileSync(origVttPath, originalVtt, 'utf8');
+
+      uploadPromises.push(
+        uploadSmallOrChunkedFile(driveId, streamFolderId, 'subtitles_original.srt', origSrtPath, 'text/plain; charset=utf-8'),
+        uploadSmallOrChunkedFile(driveId, streamFolderId, 'subtitles_original.vtt', origVttPath, 'text/vtt; charset=utf-8')
+      );
+    }
+
+    console.log(`⬆️ Uploading ${tracks.length} subtitle track(s) to OneDrive...`);
+    await Promise.all(uploadPromises);
 
     await sql`
       UPDATE videos
       SET subtitle_status = 'ready',
-          subtitle_srt = ${srtContent},
-          subtitle_vtt = ${vttContent},
+          subtitle_srt = ${thaiSrt},
+          subtitle_vtt = ${thaiVtt},
+          subtitle_tracks = ${JSON.stringify(tracks)}::jsonb,
           subtitle_model = ${AI_MODEL},
           source_cache = NULL,
           source_cache_expires_at = 0,
@@ -502,7 +632,7 @@ async function main() {
       WHERE id = ${vidNum};
     `;
 
-    console.log(`🎉 Subtitles (.SRT & .VTT) generated and saved for Video #${vidNum}!`);
+    console.log(`🎉 Dual-track Subtitles generated and saved for Video #${vidNum}! Tracks:`, tracks.map((t) => t.label).join(', '));
   } catch (err) {
     console.error('❌ [Audio & Subtitle Worker Error]:', err);
     try {

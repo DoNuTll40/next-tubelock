@@ -361,12 +361,56 @@ export default function VideoPlayer({
     [subtitleStyle, isMobileView]
   );
 
-  const subtitleCues = useMemo(() => {
-    const rawSub = currentVideo?.subtitle_srt || currentVideo?.subtitle_vtt || '';
-    return parseSubtitleCues(rawSub);
-  }, [currentVideo?.subtitle_srt, currentVideo?.subtitle_vtt]);
+  const subtitleTracks = useMemo(() => {
+    let tracks = [];
+    const raw = currentVideo?.subtitle_tracks;
+    if (Array.isArray(raw) && raw.length > 0) {
+      tracks = raw;
+    } else if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) tracks = parsed;
+      } catch (_) { }
+    }
+    // Fallback if no tracks array but subtitle_srt or subtitle_vtt exists
+    if (tracks.length === 0 && (currentVideo?.subtitle_srt || currentVideo?.subtitle_vtt)) {
+      tracks = [
+        {
+          id: 'th',
+          label: 'ไทย (สร้างอัตโนมัติ)',
+          lang: 'th',
+          srt: currentVideo?.subtitle_srt || '',
+          vtt: currentVideo?.subtitle_vtt || '',
+        },
+      ];
+    }
+    return tracks;
+  }, [currentVideo?.subtitle_tracks, currentVideo?.subtitle_srt, currentVideo?.subtitle_vtt]);
 
-  const hasSubtitles = subtitleCues.length > 0;
+  const [selectedSubTrackId, setSelectedSubTrackId] = useState('th');
+
+  useEffect(() => {
+    if (subtitleTracks.length > 0) {
+      const match = subtitleTracks.find((t) => t.id === selectedSubTrackId);
+      if (!match) {
+        const hasTh = subtitleTracks.some((t) => t.id === 'th');
+        setSelectedSubTrackId(hasTh ? 'th' : subtitleTracks[0].id);
+      }
+    }
+  }, [subtitleTracks, selectedSubTrackId]);
+
+  const activeSubTrack = useMemo(() => {
+    if (!subtitleTracks || subtitleTracks.length === 0) return null;
+    return subtitleTracks.find((t) => t.id === selectedSubTrackId) || subtitleTracks[0];
+  }, [subtitleTracks, selectedSubTrackId]);
+
+  const subtitleCues = useMemo(() => {
+    if (!activeSubTrack) return [];
+    const rawSub = activeSubTrack.srt || activeSubTrack.vtt || '';
+    return parseSubtitleCues(rawSub);
+  }, [activeSubTrack]);
+
+  const hasSubtitles = subtitleTracks.length > 0 && subtitleCues.length > 0;
   const [isLiked, setIsLiked] = useState(false);
   const [isDisliked, setIsDisliked] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
@@ -2254,6 +2298,10 @@ export default function VideoPlayer({
         isCcActive={isCcActive}
         setIsCcActive={setIsCcActive}
         hasSubtitles={hasSubtitles}
+        subtitleTracks={subtitleTracks}
+        selectedSubTrackId={selectedSubTrackId}
+        setSelectedSubTrackId={setSelectedSubTrackId}
+        activeSubTrack={activeSubTrack}
         subtitleStyle={subtitleStyle}
         setSubtitleStyle={setSubtitleStyle}
       />
