@@ -63,7 +63,7 @@ export async function POST(request) {
 
     // 1. Verify video exists in DB
     const existing = await sql`
-      SELECT id, title, raw_file_name, status, audio_status, subtitle_status, sprite_status, rating_check_status
+      SELECT id, title, raw_file_name, status, audio_status, subtitle_status, sprite_status, rating_check_status, updated_at
       FROM videos 
       WHERE id = ${videoId} 
       LIMIT 1;
@@ -77,6 +77,21 @@ export async function POST(request) {
     }
 
     const currentVideo = existing[0];
+
+    // Anti-Spam / Concurrent Execution Protection
+    const nowMs = Date.now();
+    const updatedMs = currentVideo.updated_at ? new Date(currentVideo.updated_at).getTime() : 0;
+    const isRecent = (nowMs - updatedMs) < 60000; // ภายใน 60 วินาทีที่เพิ่งสั่งรันไป
+
+    if (isRecent && (currentVideo.status === 'PROCESSING' || currentVideo.status === 'TRANSCODING' || currentVideo.status === 'QUEUED')) {
+      return NextResponse.json({
+        success: true,
+        videoId,
+        status: currentVideo.status,
+        alreadyRunning: true,
+        message: 'วิดีโอนี้อยู่ในคิวหรือกำลังรันกระบวนการแปลงไฟล์ HLS อยู่แล้ว ไม่สามารถสั่งซ้ำได้',
+      });
+    }
     const finalRawFileName = rawFileName || currentVideo.raw_file_name;
     const finalTitle = title || currentVideo.title;
     const finalDescription = typeof description === 'string' ? description : '';

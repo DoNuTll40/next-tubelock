@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   ShieldAlert,
   Search,
@@ -14,6 +14,7 @@ import {
   Info,
   Check,
   Bot,
+  XCircle,
 } from 'lucide-react';
 
 const CONTENT_RATINGS = [
@@ -66,16 +67,20 @@ export default function StepRatingVision({
   thumbnailUrl,
   onDispatchSpriteRating,
   onApplyRecommendation,
+  isCancelling = false,
+  onCancelUpload = null,
 }) {
   const [isDispatching, setIsDispatching] = useState(false);
+  const isDispatchingRef = useRef(false);
 
   const isSpriteReady = spriteSheetStatus === 'ready';
   const isVisionAnalyzing =
     isDispatching || spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing';
-  const canTriggerWorkflow = Boolean(isRawUploaded) && !isVisionAnalyzing;
+  const canTriggerWorkflow = Boolean(isRawUploaded) && !isVisionAnalyzing && !isDispatching;
 
   const handleRunVisionAnalysis = async (autoApplyFlag = contentRating === 'auto') => {
-    if (!canTriggerWorkflow || !onDispatchSpriteRating) return;
+    if (isDispatchingRef.current || isVisionAnalyzing || !canTriggerWorkflow || !onDispatchSpriteRating) return;
+    isDispatchingRef.current = true;
     setIsDispatching(true);
     try {
       await onDispatchSpriteRating({
@@ -83,6 +88,7 @@ export default function StepRatingVision({
         autoApply: autoApplyFlag,
       });
     } finally {
+      isDispatchingRef.current = false;
       setIsDispatching(false);
     }
   };
@@ -316,20 +322,52 @@ export default function StepRatingVision({
           <button
             type="button"
             onClick={() => {
+              if (isDispatchingRef.current || isVisionAnalyzing || !canTriggerWorkflow) return;
               setContentRating('auto');
               handleRunVisionAnalysis(true);
             }}
-            disabled={!canTriggerWorkflow}
+            disabled={!canTriggerWorkflow || isVisionAnalyzing}
             className={`py-3 px-4 rounded-xl font-semibold text-xs sm:text-sm transition flex items-center justify-center gap-2 border ${
-              canTriggerWorkflow
+              canTriggerWorkflow && !isVisionAnalyzing
                 ? 'bg-[#1c1c1c] hover:bg-[#262626] border-purple-700/50 text-purple-300 cursor-pointer'
                 : 'bg-[#181818] border-[#2c2c2c] text-[#666666] cursor-not-allowed'
             }`}
           >
-            <Sparkles className="w-4 h-4" />
-            <span>ให้ AI ตรวจสอบและตั้งเรตให้อัตโนมัติ (ไม่เลือกเอง)</span>
+            {isVisionAnalyzing && contentRating === 'auto' ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+                <span>กำลังส่ง AI ตรวจสอบอัตโนมัติ...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>ให้ AI ตรวจสอบและตั้งเรตให้อัตโนมัติ (ไม่เลือกเอง)</span>
+              </>
+            )}
           </button>
         </div>
+
+        {/* Cancel Upload Button */}
+        {onCancelUpload && (
+          <button
+            type="button"
+            disabled={isCancelling}
+            onClick={onCancelUpload}
+            className="w-full py-2.5 rounded-xl bg-rose-950/25 hover:bg-rose-900/40 text-rose-300 hover:text-white border border-rose-800/40 text-xs font-semibold transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            {isCancelling ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>กำลังยกเลิกการอัปโหลดและลบไฟล์ออกจาก OneDrive...</span>
+              </>
+            ) : (
+              <>
+                <XCircle className="w-4 h-4 text-rose-400" />
+                <span>ยกเลิกการอัปโหลดขึ้น OneDrive และลบวิดีโอนี้ (กรณีเลือกไฟล์ผิด)</span>
+              </>
+            )}
+          </button>
+        )}
 
         {!isRawUploaded && (
           <div className="text-[11px] text-center text-amber-400/90 flex items-center justify-center gap-1.5">
@@ -393,12 +431,28 @@ export default function StepRatingVision({
 
             {Array.isArray(visionResult.safetyScores) && visionResult.safetyScores.length > 0 && (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                {visionResult.safetyScores.map((s, idx) => (
-                  <div key={idx} className="p-2 rounded bg-[#141414] border border-[#222222]">
-                    <div className="text-[10px] text-[#71717A]">{s.name}</div>
-                    <div className="text-xs font-mono text-emerald-400 font-medium">{s.status}</div>
-                  </div>
-                ))}
+                {visionResult.safetyScores.map((s, idx) => {
+                  const statusStr = String(s.status || '').toUpperCase();
+                  const isHigh = statusStr.includes('HIGH');
+                  const isMed = statusStr.includes('MED') || statusStr.includes('CAUTION') || statusStr.includes('LOW');
+                  const colorClass = isHigh
+                    ? 'text-rose-400 font-bold'
+                    : isMed
+                    ? 'text-amber-400'
+                    : 'text-emerald-400';
+
+                  return (
+                    <div
+                      key={idx}
+                      className={`p-2 rounded bg-[#141414] border ${
+                        isHigh ? 'border-rose-900/50 bg-rose-950/20' : 'border-[#222222]'
+                      }`}
+                    >
+                      <div className="text-[10px] text-[#71717A]">{s.name}</div>
+                      <div className={`text-xs font-mono font-medium ${colorClass}`}>{s.status}</div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 

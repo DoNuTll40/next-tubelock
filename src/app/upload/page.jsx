@@ -154,6 +154,10 @@ export default function UploadPage() {
   const [stageDetail, setStageDetail] = useState('');
   const [errorMsg, setErrorMsg] = useState(null);
   const [completedVideo, setCompletedVideo] = useState(null);
+  const [isStartingPipeline, setIsStartingPipeline] = useState(false);
+  const isStartingPipelineRef = useRef(false);
+  const isDispatchingAudioRef = useRef(false);
+  const isDispatchingSpriteRef = useRef(false);
 
   // System Activity Logs
   const [logs, setLogs] = useState([]);
@@ -617,8 +621,10 @@ export default function UploadPage() {
   // Dispatch Workflow #1: Extract Audio & AI Subtitles
   const handleDispatchAudioSubtitles = async () => {
     const vidId = activeVideoIdRef.current || activeVideoId;
-    if (!vidId || !isRawUploaded) return;
+    if (!vidId || !isRawUploaded || isDispatchingAudioRef.current) return;
+    if (audioStatus === 'extracting' || subtitleStatus === 'processing') return;
 
+    isDispatchingAudioRef.current = true;
     setAudioStatus('extracting');
     setSubtitleStatus('processing');
     addLog(`🚀 สั่งรัน GitHub Action #1 (extract-audio-subtitles.yml) สำหรับ Video ID #${vidId}...`);
@@ -639,20 +645,28 @@ export default function UploadPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'ไม่สามารถส่งคำสั่งรัน GitHub Action #1 ได้');
       }
-      addLog(`✅ ส่งคำสั่ง GitHub Action #1 สำเร็จ: กำลังดึงวิดีโอจาก OneDrive มาสกัดเสียงและสร้างซับด้วย AI`);
+      if (data.alreadyRunning) {
+        addLog(`ℹ️ GitHub Action #1 กำลังทำงานอยู่แล้ว ไม่ต้องส่งซ้ำ`);
+      } else {
+        addLog(`✅ ส่งคำสั่ง GitHub Action #1 สำเร็จ: กำลังดึงวิดีโอจาก OneDrive มาสกัดเสียงและสร้างซับด้วย AI`);
+      }
       startPollingStatus(vidId);
     } catch (err) {
       setAudioStatus('failed');
       setSubtitleStatus('failed');
       addLog(`❌ สั่งรัน GitHub Action #1 ล้มเหลว: ${err.message}`);
+    } finally {
+      isDispatchingAudioRef.current = false;
     }
   };
 
   // Dispatch Workflow #2: Detailed Sprite Sheet Grid & Content Rating AI Verification
   const handleDispatchSpriteRating = async ({ userRating = contentRating, autoApply = false } = {}) => {
     const vidId = activeVideoIdRef.current || activeVideoId;
-    if (!vidId || !isRawUploaded) return;
+    if (!vidId || !isRawUploaded || isDispatchingSpriteRef.current) return;
+    if (spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing') return;
 
+    isDispatchingSpriteRef.current = true;
     setSpriteSheetStatus('generating');
     setRatingCheckStatus('analyzing');
     addLog(`🚀 สั่งรัน GitHub Action #2 (sprite-content-rating.yml) สร้าง Sprite Sheet Grid 25 เฟรม & ตรวจเรตเนื้อหา...`);
@@ -673,11 +687,17 @@ export default function UploadPage() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'ไม่สามารถส่งคำสั่งรัน GitHub Action #2 ได้');
       }
-      addLog(`✅ ส่งคำสั่ง GitHub Action #2 สำเร็จ: กำลังสร้าง Sprite Sheet Grid และส่งให้ Gemini Vision ประเมินเรตเนื้อหา`);
+      if (data.alreadyRunning) {
+        addLog(`ℹ️ GitHub Action #2 กำลังสร้าง Sprite Grid หรือตรวจเรตเนื้อหาอยู่แล้ว`);
+      } else {
+        addLog(`✅ ส่งคำสั่ง GitHub Action #2 สำเร็จ: กำลังสร้าง Sprite Sheet Grid และส่งให้ Gemini Vision ประเมินเรตเนื้อหา`);
+      }
       startPollingStatus(vidId);
     } catch (err) {
       setSpriteSheetStatus('failed');
       addLog(`❌ สั่งรัน GitHub Action #2 ล้มเหลว: ${err.message}`);
+    } finally {
+      isDispatchingSpriteRef.current = false;
     }
   };
 
@@ -688,7 +708,19 @@ export default function UploadPage() {
       addLog(`⚠️ กรุณารอให้อัปโหลดวิดีโอขึ้น OneDrive เสร็จครบ 100% ก่อนทำการกดยืนยันเผยแพร่`);
       return;
     }
+    if (
+      isStartingPipelineRef.current ||
+      isStartingPipeline ||
+      currentStatus === 'PROCESSING' ||
+      currentStatus === 'TRANSCODING' ||
+      currentStatus === 'QUEUED'
+    ) {
+      addLog(`⚠️ วิดีโอนี้อยู่ในคิวหรือกำลังประมวลผลอยู่แล้ว ไม่สามารถส่งซ้ำได้`);
+      return;
+    }
 
+    isStartingPipelineRef.current = true;
+    setIsStartingPipeline(true);
     setErrorMsg(null);
     setCurrentStatus('QUEUED');
     setStageDetail('กำลังส่งคำสั่งรัน GitHub Actions (HLS Multi-bitrate + AI Subtitles + Sprite Rating)...');
@@ -741,6 +773,8 @@ export default function UploadPage() {
       if (completeData.warning) {
         addLog(`แจ้งเตือน: ${completeData.warning}`);
         setStageDetail(completeData.warning);
+      } else if (completeData.alreadyRunning) {
+        addLog(`ℹ️ ${completeData.message}`);
       } else {
         addLog(`✅ ส่งคำสั่งรัน GitHub Actions สำเร็จ (HLS Audio 192kbps Uniform + AI Workflows)`);
         setCurrentStatus('PROCESSING');
@@ -759,6 +793,9 @@ export default function UploadPage() {
       console.error('[Complete Pipeline Error]:', err);
       setErrorMsg(err.message);
       addLog(`❌ เกิดข้อผิดพลาด: ${err.message}`);
+    } finally {
+      isStartingPipelineRef.current = false;
+      setIsStartingPipeline(false);
     }
   };
 
@@ -791,6 +828,18 @@ export default function UploadPage() {
     3: { completed: Boolean(contentRating) },
     4: { completed: Boolean(completedVideo) },
   };
+
+  const hasTitle = Boolean(title && title.trim().length > 0);
+  const hasRating = Boolean(contentRating);
+  const isReadyToPublish =
+    hasTitle &&
+    hasRating &&
+    isRawUploaded &&
+    !isUploading &&
+    !isStartingPipeline &&
+    currentStatus !== 'PROCESSING' &&
+    currentStatus !== 'TRANSCODING' &&
+    currentStatus !== 'QUEUED';
 
   return (
     <div className=" bg-[#0a0a0a] text-[#F1F1F1] pb-24">
@@ -967,6 +1016,8 @@ export default function UploadPage() {
                     generatedSubtitleSrt={generatedSubtitleSrt}
                     onDispatchAudioSubtitles={handleDispatchAudioSubtitles}
                     onAddLog={addLog}
+                    isCancelling={isCancelling}
+                    onCancelUpload={handleCancelUpload}
                   />
                 )}
 
@@ -987,6 +1038,8 @@ export default function UploadPage() {
                       setContentRating(result.suggestedRating);
                       addLog(`นำเรตติ้ง "${result.suggestedRatingLabel}" ไปใช้กับวิดีโอเรียบร้อย`);
                     }}
+                    isCancelling={isCancelling}
+                    onCancelUpload={handleCancelUpload}
                   />
                 )}
 
@@ -1012,28 +1065,47 @@ export default function UploadPage() {
                     stageDetail={stageDetail}
                     completedVideo={completedVideo}
                     onStartPipeline={handleStartPipeline}
+                    isStartingPipeline={isStartingPipeline}
                     errorMsg={errorMsg}
                   />
                 )}
 
-                {/* Bottom Step Navigation Bar (Back / Next) */}
-                <div className="flex items-center justify-between p-4 bg-[#141414] border border-[#262626] rounded-2xl shadow-xl">
-                  <button
-                    type="button"
-                    disabled={activeStep <= 1}
-                    onClick={() => setActiveStep((prev) => Math.max(1, prev - 1))}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-[#222222] hover:bg-[#2a2a2a] text-[#A1A1AA] hover:text-[#F1F1F1] border border-[#333333] transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <ArrowLeft className="w-4 h-4" />
-                    <span>ย้อนกลับ</span>
-                  </button>
+                {/* Bottom Step Navigation Bar (Back / Cancel / Next) */}
+                <div className="flex items-center justify-between p-4 bg-[#141414] border border-[#262626] rounded-2xl shadow-xl gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={activeStep <= 1}
+                      onClick={() => setActiveStep((prev) => Math.max(1, prev - 1))}
+                      className="flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-[#222222] hover:bg-[#2a2a2a] text-[#A1A1AA] hover:text-[#F1F1F1] border border-[#333333] transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      <span>ย้อนกลับ</span>
+                    </button>
 
-                  <div className="text-xs text-[#71717A] font-mono">
+                    <button
+                      type="button"
+                      disabled={isCancelling}
+                      onClick={handleCancelUpload}
+                      className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-medium bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 hover:text-white border border-rose-800/40 transition cursor-pointer disabled:opacity-50"
+                      title="ยกเลิกการอัปโหลดและลบวิดีโอนี้เพื่อเลือกไฟล์ใหม่"
+                    >
+                      {isCancelling ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-rose-400" />
+                      )}
+                      <span>ยกเลิก</span>
+                    </button>
+                  </div>
+
+                  <div className="text-xs text-[#71717A] font-mono hidden sm:block">
                     ขั้นตอน {activeStep} จาก 4
                   </div>
 
                   <button
                     type="button"
+                    disabled={activeStep === 4 && (!isReadyToPublish || isStartingPipeline)}
                     onClick={() => {
                       if (activeStep < 4) {
                         setActiveStep((prev) => Math.min(4, prev + 1));
@@ -1041,10 +1113,23 @@ export default function UploadPage() {
                         handleStartPipeline();
                       }
                     }}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-gradient-to-r from-[#ea580c] to-[#f97316] text-white hover:brightness-110 transition shadow-lg shadow-[#ea580c]/20 cursor-pointer"
+                    className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition shadow-lg ${
+                      activeStep === 4 && (!isReadyToPublish || isStartingPipeline)
+                        ? 'bg-[#181818] border border-[#2c2c2c] text-[#555555] cursor-not-allowed shadow-none'
+                        : 'bg-gradient-to-r from-[#ea580c] to-[#f97316] text-white hover:brightness-110 shadow-[#ea580c]/20 cursor-pointer'
+                    }`}
                   >
-                    <span>{activeStep === 4 ? 'ยืนยันและแปลงไฟล์ HLS' : 'ถัดไป'}</span>
-                    <ArrowRight className="w-4 h-4" />
+                    {activeStep === 4 && isStartingPipeline ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>กำลังสั่งรัน...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{activeStep === 4 ? 'ยืนยันและแปลงไฟล์ HLS' : 'ถัดไป'}</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
                 </div>
 

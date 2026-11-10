@@ -92,7 +92,7 @@ export async function POST(request) {
     await ensureAiColumns(sql);
 
     const rows = await sql`
-      SELECT id, title, raw_file_name, content_rating
+      SELECT id, title, raw_file_name, content_rating, audio_status, subtitle_status, sprite_status, rating_check_status, status, updated_at
       FROM videos
       WHERE id = ${videoId}
       LIMIT 1;
@@ -107,7 +107,24 @@ export async function POST(request) {
     const video = rows[0];
     const effectiveRawName = rawFileName || video.raw_file_name || '';
 
+    // Anti-Spam / Concurrent execution debounce (45 seconds)
+    const nowMs = Date.now();
+    const updatedMs = video.updated_at ? new Date(video.updated_at).getTime() : 0;
+    const isRecent = (nowMs - updatedMs) < 45000;
+
     if (workflowType === 'audio_subtitles') {
+      if (isRecent && (video.audio_status === 'extracting' || video.subtitle_status === 'processing')) {
+        return NextResponse.json({
+          success: true,
+          videoId,
+          workflowType,
+          audioStatus: video.audio_status,
+          subtitleStatus: video.subtitle_status,
+          alreadyRunning: true,
+          message: 'GitHub Action #1 กำลังทำงานอยู่แล้ว ไม่ต้องส่งซ้ำ',
+        });
+      }
+
       await sql`
         UPDATE videos
         SET audio_status = 'extracting',
@@ -135,6 +152,18 @@ export async function POST(request) {
     }
 
     if (workflowType === 'sprite_rating') {
+      if (isRecent && (video.sprite_status === 'generating' || video.rating_check_status === 'analyzing')) {
+        return NextResponse.json({
+          success: true,
+          videoId,
+          workflowType,
+          spriteStatus: video.sprite_status,
+          ratingCheckStatus: video.rating_check_status,
+          alreadyRunning: true,
+          message: 'GitHub Action #2 กำลังสร้าง Sprite Sheet และตรวจเรตเนื้อหาอยู่แล้ว ไม่ต้องส่งซ้ำ',
+        });
+      }
+
       const targetUserRating = userRating || video.content_rating || 'auto';
 
       await sql`
@@ -165,6 +194,17 @@ export async function POST(request) {
     }
 
     if (workflowType === 'transcode') {
+      if (isRecent && (video.status === 'PROCESSING' || video.status === 'TRANSCODING' || video.status === 'QUEUED')) {
+        return NextResponse.json({
+          success: true,
+          videoId,
+          workflowType,
+          status: video.status,
+          alreadyRunning: true,
+          message: 'GitHub Action #3 (HLS Transcode) กำลังทำงานอยู่แล้ว ไม่ต้องส่งซ้ำ',
+        });
+      }
+
       await triggerGitHubWorkflow('transcode.yml', {
         video_id: String(videoId),
         raw_file_name: String(effectiveRawName),

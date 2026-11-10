@@ -34,6 +34,7 @@ export default function StepPublish({
   transcodeProgress,
   completedVideo,
   onStartPipeline,
+  isStartingPipeline = false,
   errorMsg,
 }) {
   const hasTitle = Boolean(title && title.trim().length > 0);
@@ -43,8 +44,10 @@ export default function StepPublish({
     hasRating &&
     isRawUploaded &&
     !isUploading &&
+    !isStartingPipeline &&
     currentStatus !== 'PROCESSING' &&
-    currentStatus !== 'TRANSCODING';
+    currentStatus !== 'TRANSCODING' &&
+    currentStatus !== 'QUEUED';
 
   // Subtitle summary text
   const subtitleSummary = manualSubtitleFile
@@ -246,9 +249,9 @@ export default function StepPublish({
         <button
           type="button"
           onClick={onStartPipeline}
-          disabled={!isReadyToPublish}
+          disabled={!isReadyToPublish || isStartingPipeline}
           className={`w-full py-4 rounded-2xl font-bold text-sm sm:text-base transition-all duration-200 flex items-center justify-center gap-2.5 shadow-xl cursor-pointer ${
-            isReadyToPublish
+            isReadyToPublish && !isStartingPipeline
               ? 'bg-gradient-to-r from-[#ea580c] via-[#f97316] to-[#ea580c] text-white hover:brightness-110 active:scale-[0.99] shadow-[#ea580c]/25'
               : 'bg-[#181818] border border-[#2c2c2c] text-[#555555] cursor-not-allowed'
           }`}
@@ -258,7 +261,12 @@ export default function StepPublish({
               <CloudUpload className="w-5 h-5 animate-bounce" />
               <span>กำลังอัปโหลดวิดีโอขึ้น OneDrive ({uploadPercent}%)... รอให้ครบ 100% เพื่อกด Deploy</span>
             </>
-          ) : currentStatus === 'PROCESSING' || currentStatus === 'TRANSCODING' ? (
+          ) : isStartingPipeline ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin text-white" />
+              <span>กำลังส่งคำสั่งรัน GitHub Actions...</span>
+            </>
+          ) : currentStatus === 'PROCESSING' || currentStatus === 'TRANSCODING' || currentStatus === 'QUEUED' ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
               <span>กำลังรัน GitHub Actions แปลงไฟล์ HLS Multi-bitrate ({transcodeProgress}%)...</span>

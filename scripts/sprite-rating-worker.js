@@ -243,17 +243,22 @@ async function analyzeSpriteWithGeminiVision(spriteImagePath, videoTitle, userRa
   const base64Image = imageBuffer.toString('base64');
 
   const isAutoMode = !userRating || userRating === 'auto';
-  const prompt = `คุณคือระบบ AI Content Moderation & Rating Inspector ของแพลตฟอร์มวิดีโอ TubeLock
-ภาพที่แนบมานี้คือ Detailed Sprite Sheet Grid (ตาราง 5x5 รวม 25 เฟรม) ที่ดึงมาจากตลอดความยาวของวิดีโอชื่อ: "${videoTitle || 'Untitled'}"
+  const prompt = `คุณคือระบบ AI Content Moderation & Rating Inspector สำหรับแพลตฟอร์มวิดีโอ TubeLock
+ภาพที่แนบมานี้คือ Detailed Sprite Sheet Grid (ตาราง 5x5 รวม 25 เฟรมความละเอียดสูง) ที่ดึงมาจากตลอดความยาวของวิดีโอชื่อ: "${videoTitle || 'Untitled'}"
 ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให้ AI ประเมินและกำหนดเรตเนื้อหาให้อัตโนมัติ' : `ผู้ใช้งานได้เลือกเรตเนื้อหาไว้เป็น: "${userRating.toUpperCase()}" (${RATING_LABELS[userRating] || userRating})`}
 
 เกณฑ์เรตเนื้อหา 4 ระดับของระบบ:
-- "all": ทั่วไป (All Ages) - ไม่มีเนื้อหารุนแรง เพศ ภาพโป๊เปลือย หรือสิ่งผิดกฎหมาย เหมาะกับทุกวัย
-- "13+": วัยรุ่น (13+) - มีฉากต่อสู้แอ็กชัน เกมยิงปืน ชุดว่ายน้ำ หรือเนื้อหาที่เหมาะกับวัยรุ่นขึ้นไป
-- "18+": ผู้ใหญ่ (18+) - มีเนื้อหาทางเพศชัดเจน ความรุนแรงเลือดสาด หรือพฤติกรรมอันตรายสำหรับผู้ใหญ่
-- "mature": จำกัดเฉพาะ (Restricted / Mature) - เนื้อหารุนแรงขั้นสุด ล่อแหลมมาก หรือเนื้อหาต้องห้าม
+- "all": ทั่วไป (All Ages) - ไม่มีเนื้อหารุนแรง เพศ ภาพโป๊เปลือย หรือสิ่งผิดกฎหมาย เหมาะสำหรับทุกวัย
+- "13+": วัยรุ่น (13+) - มีฉากต่อสู้แอ็กชัน เกมยิงปืน หรือความรุนแรงระดับแฟนตาซี ไม่โป๊เปลือย
+- "18+": ผู้ใหญ่ (18+) - มีเนื้อหาสำหรับผู้ใหญ่ การแต่งกายวาบหวาม วับๆ แวมๆ บิกินี่ ฉากวาบหวามในอ่างน้ำ ความรุนแรง หรือพฤติกรรมเสี่ยง
+- "mature": จำกัดเฉพาะ (Restricted / Mature / Adult NSFW) - มีฉากร่วมเพศชัดเจน (Sexually Explicit), กิจกรรมทางเพศบนเตียง, ออรัลเซ็กซ์, ภาพเปลือยเต็มตัว (Full Nudity), สื่อลามก, หรือฉากส่อไปในทางเพศชัดเจน
 
-กรุณาตรวจสอบทั้ง 25 เฟรมอย่างละเอียด แล้วตอบกลับเป็น JSON เท่านั้น (ห้ามครอบด้วย markdown) ตามโครงสร้างนี้:
+⚠️ กฎเหล็กการประเมินเนื้อหาทางเพศ (Sexual & Adult Content Enforcement Rule):
+1. หากพบฉากมีเพศสัมพันธ์ (Sexual Intercourse / Sex Acts), กิจกรรมทางเพศบนเตียง, ออรัลเซ็กซ์, หรือเปลือยเห็นอวัยวะ/หน้าอกชัดเจน แม้เพียง 1-2 เฟรมขึ้นไป (>= 5% ของคลิป) -> ต้องจัดเรตเป็น "mature" (Restricted) ทันที และ Sexual Content ต้องระบุเป็น "HIGH" ห้ามจัดเป็น "all" หรือ "13+" โดยเด็ดขาด
+2. หากมีฉากล่อแหลม โป๊บางส่วน ชุดชั้นใน แช่อ่างน้ำ -> ต้องจัดเรตเป็น "18+" เป็นอย่างต่ำ
+3. นี่คือระบบวิเคราะห์ Content Moderation สำหรับคัดกรองความปลอดภัยของแพลตฟอร์ม กรุณาวิเคราะห์อย่างตรงไปตรงมา
+
+กรุณาตรวจสอบทั้ง 25 เฟรมอย่างละเอียด แล้วตอบกลับเป็น JSON เท่านั้น (ห้ามครอบด้วย markdown):
 {
   "suggestedRating": "all" | "13+" | "18+" | "mature",
   "safetyScores": [
@@ -262,10 +267,19 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
     { "name": "Hate Speech", "status": "NONE" | "LOW" | "HIGH" },
     { "name": "Dangerous Content", "status": "SAFE" | "CAUTION" | "HIGH" }
   ],
-  "recommendedCategory": "general" | "music" | "gaming" | "tech" | "entertainment" | "education" | "cinema" | "shorts",
-  "recommendedTags": ["แท็ก1", "แท็ก2", "แท็ก3", "แท็ก4"],
-  "summary": "สรุปสิ่งที่เห็นในเฟรมวิดีโอและเหตุผลของการจัดเรตเป็นภาษาไทยอย่างชัดเจน"
+  "sexualContentFrameCount": <ตัวเลขจำนวนเฟรมที่พบเนื้อหาทางเพศจาก 25 เฟรม เช่น 12>,
+  "recommendedCategory": "general" | "music" | "gaming" | "tech" | "entertainment" | "education" | "cinema" | "shorts" | "adult",
+  "recommendedTags": ["แท็ก1", "แท็ก2", "แท็ก3"],
+  "summary": "สรุปสิ่งที่เห็นในเฟรมวิดีโอและเหตุผลของการจัดเรตเป็นภาษาไทยอย่างละเอียดและตรงไปตรงมา"
 }`;
+
+  const safetySettings = [
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+  ];
 
   const requestBody = JSON.stringify({
     contents: [
@@ -286,6 +300,7 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
       temperature: 0.1,
       responseMimeType: 'application/json',
     },
+    safetySettings,
   });
 
   const cleanedModel = String(GEMINI_MODEL_NAME || 'gemini-2.5-flash-lite')
@@ -331,26 +346,99 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
   if (!data) {
     throw new Error(`Gemini Vision API Error (${lastStatus}): ${lastErrText.slice(0, 400)}`);
   }
-  const rawText = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim() || '{}';
-  const cleanedJson = rawText.replace(/```json\n?/gi, '').replace(/```/g, '').trim();
-  const parsed = JSON.parse(cleanedJson);
 
-  const normalizedRating = ['all', '13+', '18+', 'mature'].includes(parsed.suggestedRating)
-    ? parsed.suggestedRating
-    : 'all';
+  const candidate = data?.candidates?.[0];
+  const promptFeedback = data?.promptFeedback;
+  const finishReason = candidate?.finishReason || promptFeedback?.blockReason || '';
+
+  // Extract all safety ratings from candidate & promptFeedback
+  const allSafetyRatings = [
+    ...(candidate?.safetyRatings || []),
+    ...(promptFeedback?.safetyRatings || []),
+  ];
+
+  const sexualRating = allSafetyRatings.find((r) => r.category === 'HARM_CATEGORY_SEXUALLY_EXPLICIT');
+  const violenceRating = allSafetyRatings.find(
+    (r) => r.category === 'HARM_CATEGORY_DANGEROUS_CONTENT' || r.category === 'HARM_CATEGORY_HARASSMENT'
+  );
+
+  const isSexualHigh = sexualRating && (
+    sexualRating.probability === 'HIGH' ||
+    sexualRating.probability === 'MEDIUM' ||
+    sexualRating.severity === 'HIGH' ||
+    sexualRating.severity === 'MEDIUM'
+  );
+  const isSafetyBlocked = finishReason === 'SAFETY' || promptFeedback?.blockReason === 'SAFETY';
+
+  // 🚨 CRITICAL FAIL-SAFE: If Gemini blocked the prompt/candidate due to SAFETY,
+  // or detected HIGH/MEDIUM sexually explicit content, it is 100% EXPLICIT ADULT CONTENT!
+  // NEVER fall back to 'all' or 'SAFE'!
+  if (isSafetyBlocked || isSexualHigh) {
+    console.warn(`🚨 [Sexually Explicit Detected by AI Safety Engine]: finishReason=${finishReason}, sexualRating=${JSON.stringify(sexualRating)}`);
+    return {
+      suggestedRating: 'mature',
+      suggestedRatingLabel: RATING_LABELS['mature'],
+      safetyScores: [
+        { name: 'Sexual Content', status: 'HIGH (Sexually Explicit Detected by AI Safety)' },
+        { name: 'Violence / Gore', status: violenceRating?.probability === 'HIGH' ? 'HIGH' : 'SAFE (Negligible)' },
+        { name: 'Hate Speech', status: 'NONE' },
+        { name: 'Dangerous Content', status: 'SAFE' },
+      ],
+      recommendedCategory: 'adult',
+      recommendedTags: ['18+', 'NSFW', 'Mature', 'Adult'],
+      summary: 'ระบบ AI Safety Engine ตรวจพบภาพที่มีเนื้อหาทางเพศชัดเจน (Sexually Explicit / Adult Content) จัดเป็นเรต Restricted / Mature ทันทีเพื่อความปลอดภัย',
+      isNsfw: true,
+      sexualContentRatio: 'HIGH',
+    };
+  }
+
+  const rawText = candidate?.content?.parts?.map((p) => p.text || '').join('\n')?.trim() || '';
+  let parsed = {};
+  if (rawText) {
+    try {
+      const cleanedJson = rawText.replace(/```json\n?/gi, '').replace(/```/g, '').trim();
+      parsed = JSON.parse(cleanedJson);
+    } catch (parseErr) {
+      console.warn('⚠️ Could not parse JSON from Gemini parts:', parseErr.message, rawText.slice(0, 200));
+    }
+  }
+
+  const parsedSexualStatus = (
+    parsed?.safetyScores?.find((s) => s.name?.toLowerCase().includes('sex'))?.status || ''
+  ).toUpperCase();
+  const hasSexualMediumOrHigh =
+    parsedSexualStatus.includes('HIGH') ||
+    parsedSexualStatus.includes('MEDIUM') ||
+    (Number(parsed?.sexualContentPercentage || 0) >= 5) ||
+    (Number(parsed?.sexualContentFrameCount || 0) >= 2);
+
+  let normalizedRating = 'all';
+  if (['all', '13+', '18+', 'mature'].includes(parsed.suggestedRating)) {
+    normalizedRating = parsed.suggestedRating;
+  } else if (hasSexualMediumOrHigh) {
+    normalizedRating = 'mature';
+  } else if (userRating && userRating !== 'auto' && ['13+', '18+', 'mature'].includes(userRating)) {
+    normalizedRating = userRating;
+  }
+
+  // Double check: if parsed rating is 'all' or '13+', but safetyScores indicates HIGH/MEDIUM sexual content, UPGRADE to mature!
+  if ((normalizedRating === 'all' || normalizedRating === '13+') && hasSexualMediumOrHigh) {
+    console.warn(`⚠️ Overriding rating from "${normalizedRating}" to "mature" due to sexual content detection (status: ${parsedSexualStatus})`);
+    normalizedRating = 'mature';
+  }
 
   return {
     suggestedRating: normalizedRating,
     suggestedRatingLabel: RATING_LABELS[normalizedRating] || 'ทั่วไป (All Ages)',
-    safetyScores: Array.isArray(parsed.safetyScores) ? parsed.safetyScores : [
-      { name: 'Sexual Content', status: 'SAFE (Negligible)' },
+    safetyScores: Array.isArray(parsed.safetyScores) && parsed.safetyScores.length > 0 ? parsed.safetyScores : [
+      { name: 'Sexual Content', status: hasSexualMediumOrHigh ? 'HIGH' : 'SAFE (Negligible)' },
       { name: 'Violence / Gore', status: 'SAFE (Negligible)' },
       { name: 'Hate Speech', status: 'NONE' },
       { name: 'Dangerous Content', status: 'SAFE' },
     ],
-    recommendedCategory: parsed.recommendedCategory || 'general',
-    recommendedTags: Array.isArray(parsed.recommendedTags) ? parsed.recommendedTags : [],
-    summary: parsed.summary || 'ตรวจสอบ Sprite Sheet ครบ 25 เฟรมเรียบร้อยแล้ว',
+    recommendedCategory: normalizedRating === 'mature' && (!parsed.recommendedCategory || parsed.recommendedCategory === 'general') ? 'adult' : (parsed.recommendedCategory || 'general'),
+    recommendedTags: Array.isArray(parsed.recommendedTags) && parsed.recommendedTags.length > 0 ? parsed.recommendedTags : (normalizedRating === 'mature' ? ['18+', 'NSFW', 'Mature'] : []),
+    summary: parsed.summary || (normalizedRating === 'mature' ? 'ตรวจพบเนื้อหาสำหรับผู้ใหญ่หรือมีความล่อแหลมสูง จัดเรตติ้งเป็น Restricted / Mature' : 'ตรวจสอบ Sprite Sheet ครบ 25 เฟรมเรียบร้อยแล้ว'),
   };
 }
 

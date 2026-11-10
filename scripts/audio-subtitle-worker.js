@@ -305,6 +305,14 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
     ? `${systemInstruction}\n\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nกรุณาถอดเสียงจากไฟล์เสียงนี้เป็น .SRT:`
     : `${systemInstruction}\n\nกรุณาถอดเสียงจากไฟล์เสียงนี้เป็น .SRT:`;
 
+  const safetySettings = [
+    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+  ];
+
   const requestBody = JSON.stringify({
     contents: [
       {
@@ -323,6 +331,7 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
     generationConfig: {
       temperature: 0.2,
     },
+    safetySettings,
   });
 
   const candidates = normalizeModelCandidates(modelName);

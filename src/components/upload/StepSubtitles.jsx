@@ -13,6 +13,7 @@ import {
   Bot,
   Info,
   ShieldCheck,
+  XCircle,
 } from 'lucide-react';
 
 const DEFAULT_SYSTEM_PROMPT = `คุณคือผู้เชี่ยวชาญการสร้างไฟล์คำบรรยาย (.SRT) 
@@ -36,14 +37,17 @@ export default function StepSubtitles({
   generatedSubtitleSrt,
   onDispatchAudioSubtitles,
   onAddLog,
+  isCancelling = false,
+  onCancelUpload = null,
 }) {
   const [isDispatching, setIsDispatching] = useState(false);
+  const isDispatchingRef = useRef(false);
   const fileInputRef = useRef(null);
 
   const isRunningWorkflow =
     isDispatching || audioStatus === 'extracting' || subtitleStatus === 'processing';
   const isSubtitleReady = subtitleStatus === 'ready';
-  const canStartAiGeneration = Boolean(isRawUploaded) && !isRunningWorkflow;
+  const canStartAiGeneration = Boolean(isRawUploaded) && !isRunningWorkflow && !isDispatching;
 
   const handleFileDrop = (e) => {
     e.preventDefault();
@@ -74,11 +78,13 @@ export default function StepSubtitles({
   };
 
   const handleRunAiSubtitles = async () => {
-    if (!canStartAiGeneration || !onDispatchAudioSubtitles) return;
+    if (isDispatchingRef.current || isRunningWorkflow || !canStartAiGeneration || !onDispatchAudioSubtitles) return;
+    isDispatchingRef.current = true;
     setIsDispatching(true);
     try {
       await onDispatchAudioSubtitles();
     } finally {
+      isDispatchingRef.current = false;
       setIsDispatching(false);
     }
   };
@@ -372,6 +378,30 @@ export default function StepSubtitles({
                   <span>
                     กรุณารออัปโหลดวิดีโอขึ้น OneDrive ให้เสร็จก่อน ({uploadPercent}%) หรือข้ามไปกดยืนยันใน Step 4 เพื่อให้ระบบรันอัตโนมัติ
                   </span>
+                </div>
+              )}
+
+              {/* Cancel Upload Button */}
+              {onCancelUpload && (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    disabled={isCancelling}
+                    onClick={onCancelUpload}
+                    className="w-full py-2.5 rounded-xl bg-rose-950/25 hover:bg-rose-900/40 text-rose-300 hover:text-white border border-rose-800/40 text-xs font-semibold transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  >
+                    {isCancelling ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>กำลังยกเลิกการอัปโหลดและลบไฟล์ออกจาก OneDrive...</span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-4 h-4 text-rose-400" />
+                        <span>ยกเลิกการอัปโหลดขึ้น OneDrive และลบวิดีโอนี้ (กรณีเลือกไฟล์ผิด)</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               )}
             </div>
