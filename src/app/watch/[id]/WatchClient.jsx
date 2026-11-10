@@ -151,9 +151,10 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
   // ⚡ YouTube In-Place Instant Video Switcher (Keeps DOM intact -> Fullscreen stays 100% active!)
   const handleSelectVideo = (newVideo) => {
-    if (!newVideo || !newVideo.id) return;
-    const videoSlug = encodeVideoSlug(newVideo.id, newVideo.category) || newVideo.id;
-    const newUrl = `/watch/${videoSlug}`;
+    if (!newVideo || !newVideo.id || newVideo.id === 'undefined') return;
+    const safeId = newVideo.id && newVideo.id !== 'undefined' ? newVideo.id : '';
+    const videoSlug = encodeVideoSlug(safeId, newVideo.category) || (safeId ? String(safeId) : '');
+    const newUrl = videoSlug ? `/watch/${videoSlug}` : '/';
 
     if (typeof window !== 'undefined') {
       window.history.pushState(null, '', newUrl);
@@ -432,7 +433,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   fps={video?.fps}
                   codec={video?.codec}
                   videoId={video?.id}
-                  videoSlug={video?.slug || encodeVideoSlug(video?.id, video?.category)}
+                  videoSlug={video?.slug || encodeVideoSlug(video?.id, video?.category) || (video?.id && video?.id !== 'undefined' ? String(video.id) : '')}
                   videoCategory={video?.category}
                   videoRef={videoRef}
                   desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}

@@ -35,6 +35,13 @@ updated: 10 พฤศจิกายน 2026
 - **Synchronous Ref Locks & Button Debounce:** ล็อกการกดปุ่มสั่ง Action ซ้ำๆ พร้อมแสดง Spinner หมุน และป้องกันไม่ให้ส่ง Action ซ้ำไปยัง GitHub Actions หากมีงานค้างอยู่ไม่เกิน 45–60 วินาที
 - **ปุ่มยกเลิกการอัปโหลด:** เพิ่มปุ่มยกเลิกข้ามหน้าอัปโหลด สามารถหยุดกระบวนการและลบไฟล์ออกจากระบบได้ทุกขั้นตอน
 
+### 4. แก้ไขข้อผิดพลาดการรับชมวิดีโอ (Watch 404 Fix & Undefined Slug Sanitization)
+- **แก้ไขปัญหาเปิดดูวิดีโอแล้วติดหน้า 404 (Watch SSR Schema Resilience):** ปรับปรุง `getVideoById` และ `relatedRows` ใน `src/app/watch/[id]/page.jsx` ให้มี Fallback Query (`SELECT v.*`) แบบอัตโนมัติ ป้องกันไม่ให้เกิดหน้า 404 เมื่อตารางฐานข้อมูลเกิดความไม่สอดคล้องของ Schema พร้อมรัน Migration คอลัมน์ `subtitle_tracks` และ `content_rating` บน Neon DB เรียบร้อย ทุกวิดีโอสามารถเปิดรับชมและเล่นได้ทันที
+- **ป้องกันและทำความสะอาดรหัสวิดีโอต่อด้วย undefined (Undefined Slug Sanitization):**
+  - ปรับปรุง `src/lib/videoUtils.js` ฟังก์ชัน `encodeVideoSlug` และ `getCategoryPrefix` ให้ตรวจสอบค่า `undefined` และ `null` อย่างรัดกุม ป้องกันไม่ให้สร้างหมวดหมู่อักษร `'u'` หรือหลุดคำว่า `undefined`
+  - เพิ่มระบบ Auto-Cleaning ใน `decodeVideoSlug` หากมีลิงก์หรือไคลเอนต์ส่งรหัสที่มี `undefined` ต่อท้าย (เช่น `v_ekhuJ3wundefined` หรือ `855undefined`) ระบบจะตัดคำว่า `undefined` ออกอัตโนมัติและถอดรหัสวิดีโอจริงกลับมา พร้อม Canonical Redirect ไปยัง URL ที่ถูกต้อง
+  - ปรับปรุง `VideoCard.jsx`, `ResultsClient.jsx`, `HistoryClient.jsx`, `WatchClient.jsx`, `StepPublish.jsx`, `PlayerStatsModal.jsx` และ `src/proxy.js` ให้ตรวจสอบความถูกต้องของ ID/Slug และหากมีการเข้าเส้นทาง `/watch/undefined` หรือ `/watch/null` จะถูก Redirect กลับหน้าแรกทันที ไม่ติดหน้า 404
+
 ---
 
 ## เวอร์ชัน 1.2.2 (Build 1.2.2.20261109 — 9 พฤศจิกายน 2026) — Fast Cold-Start Playback, 3-Workflow GitHub Actions Studio, YouTube-Style Subtitle (CC) Settings & Uniform HLS Audio

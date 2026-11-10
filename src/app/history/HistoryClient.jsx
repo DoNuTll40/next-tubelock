@@ -89,8 +89,9 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   const pos = isMusic ? 0 : (item.last_position_seconds || 0);
   // เพลงในหน้าประวัติการรับชม: เคยดูแล้วให้เส้นเต็ม 100% เลย ไม่ระบุเวลาดู
   const progressPct = isMusic ? 100 : (dur > 0 && pos > 0 ? Math.min((pos / dur) * 100, 100) : 0);
-  const videoSlug = encodeVideoSlug(item.video_id, item.category) || item.video_id;
-  const watchUrl = `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
+  const safeId = item?.video_id && item?.video_id !== 'undefined' ? item.video_id : (item?.id && item?.id !== 'undefined' ? item.id : '');
+  const videoSlug = encodeVideoSlug(safeId, item?.category) || (safeId ? String(safeId) : '');
+  const watchUrl = videoSlug ? `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}` : '/';
 
   const handleImageLoad = (e) => {
     const color = extractDominantColor(e.target);

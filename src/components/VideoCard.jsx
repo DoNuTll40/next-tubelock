@@ -161,8 +161,9 @@ export default function VideoCard({
     ? (hasWatched ? 100 : 0)
     : (dur > 0 && pos > 0 ? Math.min((pos / dur) * 100, 100) : 0);
 
-  const videoSlug = encodeVideoSlug(video?.id, video?.category) || video?.id;
-  const watchUrl = `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
+  const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
+  const videoSlug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
+  const watchUrl = videoSlug ? `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}` : '/';
 
   // สกัดสีเด่นเมื่อภาพ Thumbnail โหลดเสร็จ (สไตล์ YouTube Themed Color)
   const handleImageLoad = (e) => {
@@ -647,7 +648,8 @@ function VideoMenu({
   canDelete = false,
 }) {
   const isHalf = variant === 'half';
-  const slug = encodeVideoSlug(video?.id, video?.category) || video?.id;
+  const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
+  const slug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
 
   return (
     <div className="relative shrink-0">

@@ -262,9 +262,9 @@ export default function PlayerStatsModal({
   }, [showStats, video, hlsRef, containerRef, src, codec, fps]);
 
   const displayVideoId = useMemo(() => {
-    if (videoSlug) return videoSlug;
+    if (videoSlug && videoSlug !== 'undefined' && videoSlug !== 'null') return videoSlug;
     const str = String(videoId || '').trim();
-    if (!str) return 'N/A';
+    if (!str || str === 'undefined' || str === 'null') return 'N/A';
     if (str.startsWith('v_')) return str;
     if (/^\d+$/.test(str)) {
       const slug = encodeVideoSlug(str, videoCategory);

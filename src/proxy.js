@@ -6,8 +6,13 @@ export async function proxy(request) {
   const { pathname } = url;
   const host = request.headers.get('host') || '';
 
-  // ── เข้า /watch โดยไม่ระบุรหัสวิดีโอ → redirect ไปหน้าแรก / เสมอ ──
-  if (pathname === '/watch' || pathname === '/watch/') {
+  // ── เข้า /watch โดยไม่ระบุรหัสวิดีโอ หรือเป็น undefined/null → redirect ไปหน้าแรก / เสมอ ──
+  if (
+    pathname === '/watch' ||
+    pathname === '/watch/' ||
+    pathname === '/watch/undefined' ||
+    pathname === '/watch/null'
+  ) {
     return NextResponse.redirect(new URL('/', request.url));
   }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { encodeVideoSlug } from '@/lib/videoUtils';
 
 /**
  * GET /api/videos/[id]/status
@@ -47,6 +48,8 @@ export async function GET(request, context) {
       video: {
         id: video.id,
         title: video.title,
+        category: video.category || 'general',
+        slug: encodeVideoSlug(video.id, video.category) || String(video.id),
         status: video.status || 'READY',
         transcodeProgress: video.transcode_progress || 0,
         stageDetail: video.stage_detail || '',

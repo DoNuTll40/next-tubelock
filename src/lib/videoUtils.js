@@ -409,11 +409,11 @@ function fromBase62(str) {
 
 export function getCategoryPrefix(category = '') {
   const cat = String(category || '').toLowerCase().trim();
+  if (!cat || cat === 'general' || cat === 'video' || cat === 'undefined' || cat === 'null') return 'v';     // v = video
   if (cat === 'shorts' || cat.startsWith('short')) return 's';      // s = short
   if (cat === 'cinema' || cat.startsWith('cine')) return 'c';       // c = cinema
   if (cat === 'music' || cat === 'เพลง' || cat.startsWith('mus')) return 'm'; // m = music
   if (cat === 'gaming' || cat === 'เกม' || cat.startsWith('game')) return 'g'; // g = gaming
-  if (cat === 'general' || cat === 'video' || !cat) return 'v';     // v = video
   if (/^[a-z]$/.test(cat[0])) return cat[0];
   return 'v';
 }
@@ -423,7 +423,13 @@ export function getCategoryPrefix(category = '') {
  * Format: v_[categoryPrefix][6-char-hash] (e.g. v_gX22NFW)
  */
 export function encodeVideoSlug(id, category = '') {
-  const n = parseInt(id, 10);
+  if (!id || id === 'undefined' || id === 'null') return '';
+  const strId = String(id).trim();
+  // If already a valid canonical slug format (e.g. v_ekhuJ3w), return directly
+  if (/^v_[a-z0-9][a-zA-Z0-9]{6}$/i.test(strId)) {
+    return strId;
+  }
+  const n = parseInt(strId, 10);
   if (!n || isNaN(n) || n <= 0) return '';
   const prefix = getCategoryPrefix(category);
   const hash = toBase62(obfuscateInt(n), 6);
@@ -436,10 +442,19 @@ export function encodeVideoSlug(id, category = '') {
  * - Slugs: 'v_gX22NFW', 'v_mkAf2NA'
  * - Backward compatibility: '851', 851
  * - Raw hash fallback: 'X22NFW'
+ * - Resilient cleanup: strips accidental 'undefined' suffix (e.g. 'v_ekhuJ3wundefined' -> 'v_ekhuJ3w')
  */
 export function decodeVideoSlug(slugOrId) {
   if (!slugOrId && slugOrId !== 0) return null;
-  const str = String(slugOrId).trim();
+  let str = String(slugOrId).trim();
+  if (!str || str === 'undefined' || str === 'null') return null;
+
+  // Auto-clean accidental 'undefined' suffix if passed from broken client concatenation
+  if (str.endsWith('undefined')) {
+    str = str.replace(/undefined$/i, '').trim();
+    if (!str) return null;
+  }
+
   if (/^\d+$/.test(str)) {
     const n = parseInt(str, 10);
     return n > 0 ? n : null;

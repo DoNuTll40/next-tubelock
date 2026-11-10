@@ -501,11 +501,12 @@ function HorizontalVideoCard({ video }) {
     return `${Math.floor(diff / 31536000)} ปีที่แล้ว`;
   };
 
-  const videoSlug = encodeVideoSlug(video?.id, video?.category) || video?.id;
+  const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
+  const videoSlug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
   const isMusic = isMusicVideo(video);
   const pos = Number(video?.last_position_seconds || 0);
   const dur = Number(video?.duration || 0);
-  const watchUrl = `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}`;
+  const watchUrl = videoSlug ? `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}` : '/';
 
   const resBadge = formatResolutionBadge(video.resolution);
   const effectiveThumbnail =

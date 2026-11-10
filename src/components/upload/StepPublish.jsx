@@ -234,7 +234,7 @@ export default function StepPublish({
           </p>
           <div className="pt-1">
             <Link
-              href={`/watch/${encodeVideoSlug(completedVideo.id, completedVideo.category)}`}
+              href={`/watch/${encodeVideoSlug(completedVideo.id, completedVideo.category) || completedVideo.slug || completedVideo.id || ''}`}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-lg shadow-emerald-900/30 transition"
             >
               <span>เปิดดูวิดีโอทันที (Watch Video)</span>
