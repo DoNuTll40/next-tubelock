@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
@@ -68,7 +69,6 @@ export async function POST(request) {
     const {
       videoId,
       workflowType, // 'audio_subtitles' | 'sprite_rating' | 'transcode'
-      rawFileName = '',
       model = '',
       customPrompt = '',
       userRating = 'auto',
@@ -89,12 +89,14 @@ export async function POST(request) {
     }
 
     const sql = getDb();
+    const userId = await getSessionUserId(sql);
+    if (userId == null) return accessError(401);
     await ensureAiColumns(sql);
 
     const rows = await sql`
       SELECT id, title, raw_file_name, content_rating, audio_status, subtitle_status, sprite_status, rating_check_status, status, updated_at
       FROM videos
-      WHERE id = ${videoId}
+      WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
     `;
     if (!rows || rows.length === 0) {
@@ -105,7 +107,7 @@ export async function POST(request) {
     }
 
     const video = rows[0];
-    const effectiveRawName = rawFileName || video.raw_file_name || '';
+    const effectiveRawName = video.raw_file_name || '';
 
     // Anti-Spam / Concurrent execution debounce (45 seconds)
     const nowMs = Date.now();
@@ -131,7 +133,7 @@ export async function POST(request) {
             subtitle_status = 'processing',
             subtitle_model = ${resolvedModel},
             updated_at = NOW()
-        WHERE id = ${videoId};
+        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
       `;
 
       await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
@@ -172,7 +174,7 @@ export async function POST(request) {
             rating_check_status = 'analyzing',
             user_selected_rating = ${targetUserRating},
             updated_at = NOW()
-        WHERE id = ${videoId};
+        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
       `;
 
       await triggerGitHubWorkflow('sprite-content-rating.yml', {

@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -20,6 +21,9 @@ global.__tubelock_jobs = global.__tubelock_jobs || new Map();
  * Server-Sent Events (SSE) endpoint to slice video with Native FFmpeg and upload to OneDrive
  */
 export async function GET(request) {
+  const actor = await getSessionUserId();
+  if (actor == null) return accessError(401);
+  if (!isAdmin(actor)) return accessError(403);
   const { searchParams } = new URL(request.url);
 
   const jobId = searchParams.get('jobId');
@@ -54,7 +58,7 @@ export async function GET(request) {
             percent: 5,
             text: `ตรวจพบไฟล์ในเครื่อง: "${path.basename(localPath)}" (${(fileSize / (1024 * 1024)).toFixed(1)} MB)`,
           });
-        } else if (jobId && global.__tubelock_jobs.has(jobId)) {
+        } else if (jobId && global.__tubelock_jobs.get(jobId)?.isComplete !== false && global.__tubelock_jobs.has(jobId)) {
           // From uploaded temp
           const jobData = global.__tubelock_jobs.get(jobId);
           inputFilePath = jobData.tempFilePath;
@@ -214,7 +218,7 @@ export async function GET(request) {
           error: err.message || 'เกิดข้อผิดพลาดในการประมวลผล HLS',
         });
       } finally {
-        if (jobId && global.__tubelock_jobs) {
+        if (jobId && cleanupDir) {
           global.__tubelock_jobs.delete(jobId);
         }
         if (cleanupDir && fs.existsSync(cleanupDir)) {

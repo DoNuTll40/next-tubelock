@@ -35,7 +35,7 @@ export async function GET(request, context) {
     const rows = await sql`
       SELECT id, title, thumbnail_url
       FROM videos
-      WHERE id = ${numericId}
+      WHERE id = ${numericId} AND (status = 'READY' OR status IS NULL)
       LIMIT 1;
     `;
 

@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
@@ -29,11 +30,10 @@ export async function GET(request, context) {
         v.subtitle_status, v.subtitle_srt, v.subtitle_vtt, v.subtitle_tracks, v.content_rating,
         v.user_id,
         u.name AS author_name,
-        u.email AS author_email,
         u.picture AS author_picture
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id
-      WHERE v.id = ${id} 
+      WHERE v.id = ${id} AND (v.status = 'READY' OR v.status IS NULL)
       LIMIT 1;
     `;
     if (!rows || rows.length === 0) {
@@ -67,16 +67,21 @@ export async function DELETE(request, context) {
     }
 
     const sql = getDb();
+    const userId = await getSessionUserId(sql);
+    if (userId == null) return accessError(401);
+    const admin = isAdmin(userId);
 
     // 1. Fetch video details first to clean up OneDrive assets
     const rows = await sql`
       SELECT id, raw_file_name, onedrive_folder_id, onedrive_item_id, title 
       FROM videos 
-      WHERE id = ${id} 
+      WHERE id = ${id} AND (${admin} OR user_id = ${userId})
       LIMIT 1;
     `;
 
-    if (rows && rows.length > 0) {
+    if (!rows.length) return accessError(404);
+
+    {
       const vid = rows[0];
 
       // 2. Best-effort cleanup of OneDrive files/folders
@@ -134,7 +139,7 @@ export async function DELETE(request, context) {
     }
 
     // 3. Delete record completely from Neon DB
-    await sql`DELETE FROM videos WHERE id = ${id};`;
+    await sql`DELETE FROM videos WHERE id = ${id} AND (${admin} OR user_id = ${userId});`;
 
     return NextResponse.json(
       {

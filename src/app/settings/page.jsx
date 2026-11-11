@@ -260,7 +260,7 @@ function SettingsContent() {
   const handleSave = useCallback(async () => {
     setSaveStatus('saving');
     try {
-      await Promise.all([
+      const responses = await Promise.all([
         fetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -286,6 +286,8 @@ function SettingsContent() {
           }),
         }),
       ]);
+      const failed = responses.find((response) => !response.ok);
+      if (failed) throw new Error(`Shared settings could not be saved (HTTP ${failed.status})`);
 
       localStorage.setItem('pt_gravatar_email', gravatarEmail.trim());
       localStorage.setItem('pt_fallback_avatar', fallbackAvatar);

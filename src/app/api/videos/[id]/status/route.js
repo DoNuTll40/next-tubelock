@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { encodeVideoSlug } from '@/lib/videoUtils';
@@ -17,10 +18,12 @@ export async function GET(request, context) {
     }
 
     const sql = getDb();
+    const userId = await getSessionUserId(sql);
+    if (userId == null) return accessError(401);
     const rows = await sql`
       SELECT *
       FROM videos 
-      WHERE id = ${id} 
+      WHERE id = ${id} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
     `;
 

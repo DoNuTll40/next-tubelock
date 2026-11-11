@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
@@ -20,6 +21,9 @@ export const maxDuration = 300;
  * Server-side native FFmpeg HLS Slicing and OneDrive Upload with Server-Sent Events (SSE)
  */
 export async function POST(request) {
+  const actor = await getSessionUserId();
+  if (actor == null) return accessError(401);
+  if (!isAdmin(actor)) return accessError(403);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({

@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
@@ -16,6 +17,9 @@ global.__tubelock_jobs = global.__tubelock_jobs || new Map();
  * Streams raw binary file directly to disk temp folder (No FormData overhead, No memory limit!)
  */
 export async function POST(request) {
+  const actor = await getSessionUserId();
+  if (actor == null) return accessError(401);
+  if (!isAdmin(actor)) return accessError(403);
   try {
     const rawFileName = request.headers.get('x-file-name') || 'video.mp4';
     const fileName = decodeURIComponent(rawFileName);

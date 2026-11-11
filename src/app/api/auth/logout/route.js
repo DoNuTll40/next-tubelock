@@ -1,3 +1,4 @@
+import { safeReturnUrl } from '@/lib/oauthState';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
@@ -32,5 +33,5 @@ export async function GET(request) {
         path: '/',
     });
 
-    return NextResponse.redirect(new URL(redirectTo, request.url));
+    return NextResponse.redirect(safeReturnUrl(redirectTo, request.url, '/login'));
 }

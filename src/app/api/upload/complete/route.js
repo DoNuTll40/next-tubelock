@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { triggerGitHubWorkflow } from '@/app/api/upload/dispatch-action/route';
@@ -12,7 +13,6 @@ export async function POST(request) {
     const body = await request.json();
     const {
       videoId,
-      rawFileName,
       title,
       description,
       category,
@@ -42,6 +42,8 @@ export async function POST(request) {
     }
 
     const sql = getDb();
+    const userId = await getSessionUserId(sql);
+    if (userId == null) return accessError(401);
 
     // Ensure columns exist
     try {
@@ -65,7 +67,7 @@ export async function POST(request) {
     const existing = await sql`
       SELECT id, title, raw_file_name, status, audio_status, subtitle_status, sprite_status, rating_check_status, updated_at
       FROM videos 
-      WHERE id = ${videoId} 
+      WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
     `;
 
@@ -92,7 +94,7 @@ export async function POST(request) {
         message: 'วิดีโอนี้อยู่ในคิวหรือกำลังรันกระบวนการแปลงไฟล์ HLS อยู่แล้ว ไม่สามารถสั่งซ้ำได้',
       });
     }
-    const finalRawFileName = rawFileName || currentVideo.raw_file_name;
+    const finalRawFileName = currentVideo.raw_file_name;
     const finalTitle = title || currentVideo.title;
     const finalDescription = typeof description === 'string' ? description : '';
     const finalCategory = typeof category === 'string' && category.trim() ? category.trim() : 'general';
@@ -103,7 +105,7 @@ export async function POST(request) {
     const hasManualSub = subtitleMode === 'manual' && (manualSubtitleSrt || manualSubtitleVtt);
 
     // 2. Mark as QUEUED in Neon DB and save comprehensive client metadata
-    await sql`
+    const claimed = await sql`
       UPDATE videos 
       SET 
         status = 'QUEUED',
@@ -129,8 +131,16 @@ export async function POST(request) {
           ELSE ${`/streams/stream_vid_${videoId}/poster.jpg`}
         END,
         updated_at = NOW()
-      WHERE id = ${videoId};
+      WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
+        AND status IS NOT DISTINCT FROM ${currentVideo.status}
+        AND (status IS NULL OR status NOT IN ('QUEUED', 'PROCESSING', 'TRANSCODING')
+          OR updated_at <= NOW() - INTERVAL '60 seconds')
+      RETURNING id;
     `;
+
+    if (!claimed.length) {
+      return NextResponse.json({ success: false, error: 'Video status changed' }, { status: 409 });
+    }
 
     const githubToken = process.env.GITHUB_TOKEN || process.env.GH_PAT || process.env.GITHUB_PAT || '';
     if (!githubToken) {
@@ -138,19 +148,20 @@ export async function POST(request) {
       await sql`
         UPDATE videos 
         SET 
+          status = 'FAILED',
           stage_detail = 'รอ Trigger GitHub Actions (ยังไม่ได้ตั้งค่า GITHUB_TOKEN)',
           error_message = ${warnMsg},
           updated_at = NOW()
-        WHERE id = ${videoId};
+        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
       `;
 
       return NextResponse.json({
-        success: true,
+        success: false,
         videoId,
-        status: 'QUEUED',
+        status: 'FAILED',
         warning: warnMsg,
         message: 'อัปโหลดไฟล์เข้า OneDrive สำเร็จแล้ว แต่ยังไม่ได้รัน GitHub Actions เนื่องจากยังไม่มี GITHUB_TOKEN',
-      });
+      }, { status: 503 });
     }
 
     // 3. Dispatch Workflow #3: HLS Multi-bitrate Transcoder (transcode.yml)
@@ -165,10 +176,11 @@ export async function POST(request) {
       await sql`
         UPDATE videos 
         SET 
+          status = 'FAILED',
           stage_detail = 'ส่งคำสั่งเข้า GitHub Actions ไม่สำเร็จ',
           error_message = ${failMsg},
           updated_at = NOW()
-        WHERE id = ${videoId};
+        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
       `;
       return NextResponse.json(
         { success: false, videoId, status: 'FAILED', error: failMsg },
@@ -190,7 +202,7 @@ export async function POST(request) {
               subtitle_status = 'processing',
               subtitle_model = ${resolvedModel},
               updated_at = NOW()
-          WHERE id = ${videoId};
+          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
         `;
         await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
           video_id: String(videoId),
@@ -218,7 +230,7 @@ export async function POST(request) {
           SET sprite_status = CASE WHEN sprite_status = 'ready' THEN 'ready' ELSE 'generating' END,
               rating_check_status = 'analyzing',
               updated_at = NOW()
-          WHERE id = ${videoId};
+          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
         `;
         await triggerGitHubWorkflow('sprite-content-rating.yml', {
           video_id: String(videoId),
@@ -241,7 +253,7 @@ export async function POST(request) {
         stage_detail = 'GitHub Actions ได้รับคิวงานแล้ว กำลังเตรียม Ubuntu Runner',
         error_message = '',
         updated_at = NOW()
-      WHERE id = ${videoId};
+      WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId}) AND status = 'QUEUED';
     `;
 
     return NextResponse.json({

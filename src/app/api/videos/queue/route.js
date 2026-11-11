@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
@@ -11,6 +12,8 @@ export const revalidate = 0;
 export async function GET() {
   try {
     const sql = getDb();
+    const userId = await getSessionUserId(sql);
+    if (userId == null) return accessError(401);
     const rows = await sql`
       SELECT 
         id, 
@@ -25,8 +28,9 @@ export async function GET() {
         created_at, 
         updated_at
       FROM videos 
-      WHERE status IN ('UPLOADING', 'QUEUED', 'PROCESSING', 'TRANSCODING', 'FAILED')
-         OR (status = 'READY' AND (transcode_progress IS NULL OR transcode_progress < 100))
+      WHERE (${isAdmin(userId)} OR user_id = ${userId})
+        AND (status IN ('UPLOADING', 'QUEUED', 'PROCESSING', 'TRANSCODING', 'FAILED')
+         OR (status = 'READY' AND (transcode_progress IS NULL OR transcode_progress < 100)))
       ORDER BY created_at DESC
       LIMIT 50;
     `;

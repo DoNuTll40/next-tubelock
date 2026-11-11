@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { uploadHlsFileDirect, createHlsFileUploadSession } from '@/lib/onedriveServer';
 
@@ -6,6 +7,9 @@ import { uploadHlsFileDirect, createHlsFileUploadSession } from '@/lib/onedriveS
  * Uploads a single HLS file (.m3u8 playlist or .ts segment) into the target HLS folder
  */
 export async function POST(request) {
+  const actor = await getSessionUserId();
+  if (actor == null) return accessError(401);
+  if (!isAdmin(actor)) return accessError(403);
   try {
     const formData = await request.formData();
     const folderId = formData.get('folderId');

@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { createHlsFolder } from '@/lib/onedriveServer';
 
@@ -6,6 +7,9 @@ import { createHlsFolder } from '@/lib/onedriveServer';
  * Creates a subfolder on OneDrive for an HLS video package (e.g. hls_myvideo_1789728340)
  */
 export async function POST(request) {
+  const actor = await getSessionUserId();
+  if (actor == null) return accessError(401);
+  if (!isAdmin(actor)) return accessError(403);
   try {
     const body = await request.json();
     const { parentFolder = '/Videos', title = 'video' } = body;

@@ -20,6 +20,12 @@ You can start editing the page by modifying `app/page.js`. The page auto-updates
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Administrator access
+
+Set `TUBELOCK_ADMIN_USER_IDS` to a comma-separated list of Neon `users.id` values for trusted administrators in your local and deployment environments. With the variable unset, administrator-only actions return HTTP 403.
+
+Administrators can sync the shared OneDrive library, change shared settings, manage all video jobs, and use the legacy HLS upload endpoints. Signed-in users can use the standard upload flow and manage their own video jobs. Library entries without an owner require an administrator for management.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

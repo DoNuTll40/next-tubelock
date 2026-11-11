@@ -99,7 +99,6 @@ export async function GET(request) {
             h.last_position_seconds,
             (h.id IS NOT NULL) AS has_watched,
             u.name AS author_name,
-            u.email AS author_email,
             u.picture AS author_picture
           FROM videos v
           LEFT JOIN users u ON v.user_id = u.id
@@ -116,7 +115,6 @@ export async function GET(request) {
           NULL AS last_position_seconds,
           FALSE AS has_watched,
           u.name AS author_name,
-          u.email AS author_email,
           u.picture AS author_picture
         FROM videos v
         LEFT JOIN users u ON v.user_id = u.id

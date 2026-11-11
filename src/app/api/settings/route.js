@@ -1,5 +1,5 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
-import { neon } from '@neondatabase/serverless';
 
 // Default fallback configs in case DB is unreachable or keys are missing
 const DEFAULT_SETTINGS = {
@@ -87,6 +87,10 @@ export async function GET() {
  */
 export async function POST(request) {
   try {
+    const actor = await getSessionUserId();
+    if (actor == null) return accessError(401);
+    if (!isAdmin(actor)) return accessError(403);
+
     const body = await request.json();
     const { key, value } = body || {};
 

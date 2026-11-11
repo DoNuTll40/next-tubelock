@@ -1,3 +1,4 @@
+import { consumeOAuthState } from '@/lib/oauthState';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
@@ -7,13 +8,14 @@ import { generateSessionToken, parseUserAgent, fetchGeoIP, getRealIP } from '@/l
 export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
-    const returnTo = searchParams.get('state') || '/';
 
     if (!code) {
         return NextResponse.redirect(new URL('/login?error=no_code', request.url));
     }
 
     try {
+        const targetUrl = await consumeOAuthState('line', searchParams.get('state'), request.url);
+        if (!targetUrl) return NextResponse.redirect(new URL('/login?error=auth_failed', request.url));
         // 1. แลก Authorization Code → Token (ได้ทั้ง access_token และ id_token)
         const tokenRes = await fetch('https://api.line.me/oauth2/v2.1/token', {
             method: 'POST',
@@ -115,8 +117,7 @@ export async function GET(request) {
             path: '/',
         });
 
-        const targetUrl = returnTo.startsWith('/') ? returnTo : '/';
-        return NextResponse.redirect(new URL(targetUrl, request.url));
+        return NextResponse.redirect(targetUrl);
     } catch (err) {
         console.error('LINE Auth Error:', err);
         return NextResponse.redirect(new URL('/login?error=auth_failed', request.url));

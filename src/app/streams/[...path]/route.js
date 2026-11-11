@@ -68,7 +68,7 @@ export async function GET(request, context) {
       rows = await sql`
         SELECT id, onedrive_folder_id, source_cache 
         FROM videos 
-        WHERE id = ${vidId} 
+        WHERE id = ${vidId} AND (status = 'READY' OR status IS NULL)
         LIMIT 1;
       `;
     }
@@ -77,8 +77,9 @@ export async function GET(request, context) {
       rows = await sql`
         SELECT id, onedrive_folder_id, source_cache 
         FROM videos 
-        WHERE master_playlist_path LIKE ${'%' + folderName + '%'} 
-           OR thumbnail_url LIKE ${'%' + folderName + '%'}
+        WHERE (status = 'READY' OR status IS NULL)
+          AND (master_playlist_path LIKE ${'%' + folderName + '%'}
+            OR thumbnail_url LIKE ${'%' + folderName + '%'})
         LIMIT 1;
       `;
     }

@@ -23,17 +23,16 @@ export async function proxy(request) {
     pathname.startsWith('/api/auth/facebook') ||
     pathname.startsWith('/api/auth/line');
 
-  // Social media bot / crawler bypass (ให้ crawler อ่าน Open Graph / Twitter meta tags ได้เสมอ ไม่ถูก redirect /login)
-  const userAgent = (request.headers.get('user-agent') || '').toLowerCase();
-  const isBot = /facebookexternalhit|facebot|twitterbot|linkedinbot|whatsapp|telegrambot|discordbot|googlebot|bingbot|applebot|yandex|duckduckbot/i.test(userAgent);
-  if (isBot) return NextResponse.next();
-
   const isPublicPath =
     pathname === '/' ||
     pathname.startsWith('/watch') ||
     pathname.startsWith('/results') ||
     pathname.startsWith('/api/search') ||
-    pathname.startsWith('/api/videos') ||
+    ((request.method === 'GET' || request.method === 'HEAD') &&
+      (pathname === '/api/videos' ||
+        (/^\/api\/videos\/[^/]+(?:\/source)?$/.test(pathname) &&
+          pathname !== '/api/videos/queue' && pathname !== '/api/videos/sync'))) ||
+    (request.method === 'POST' && /^\/api\/videos\/[^/]+\/view$/.test(pathname)) ||
     pathname.startsWith('/api/og') ||
     pathname.startsWith('/streams') ||
     pathname.startsWith('/images') ||
@@ -42,11 +41,10 @@ export async function proxy(request) {
     pathname === '/api/auth/me' ||
     pathname.startsWith('/tubelock') ||
     pathname.startsWith('/_next') ||
-    pathname.startsWith('/m') ||
+    pathname === '/m' ||
     pathname === '/favicon.ico' ||
     pathname === '/robots.txt' ||
-    pathname === '/sitemap.xml' ||
-    /\.(png|jpg|jpeg|gif|webp|svg|ico|mp4|webm)$/i.test(pathname);
+    pathname === '/sitemap.xml';
 
   // OAuth callbacks ข้ามการตรวจ session ทั้งหมด
   if (isOAuthPath) return NextResponse.next();
@@ -56,48 +54,40 @@ export async function proxy(request) {
 
   // ไม่มี token + ไม่ใช่ public path → redirect /login
   if (!token && !isPublicPath) {
+    if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('from', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  // ── 3. Validate token ใน DB ───────────────────────────────────────────────
-  // ทำเฉพาะเมื่อมี token (ทั้ง public และ protected paths ที่มี token)
-  if (token) {
+  // Public routes perform their own optional session lookups when needed.
+  if (token && (!isPublicPath || pathname === '/login')) {
     try {
-      const sql = neon(process.env.DATABASE_URL);
-
-      // SELECT เพื่อ validate — UPDATE last_seen_at ทำใน /api/auth/me แทน
-      const result = await sql`
+      const sql = neon((process.env.DATABASE_URL || process.env.NEXT_DATABASE_URL)?.trim());
+      const [session] = await sql`
         SELECT id FROM user_sessions
-        WHERE session_token = ${token}
-          AND is_active = TRUE
-          AND expires_at > NOW()
+        WHERE session_token = ${token} AND is_active = TRUE AND expires_at > NOW()
         LIMIT 1
       `;
 
-      const isValid = result.length > 0;
-
-      if (!isValid) {
-        // Token หมดอายุหรือถูก revoke
-        if (!isPublicPath) {
-          const loginUrl = new URL('/login', request.url);
-          loginUrl.searchParams.set('from', pathname);
-          const res = NextResponse.redirect(loginUrl);
-          res.cookies.set('tubelock_session', '', { maxAge: 0, path: '/' });
-          return res;
-        }
-        // Public path + invalid token → ปล่อยผ่าน (จะ redirect ใน component เอง)
-        return NextResponse.next();
-      }
-
-      // Valid session + กำลังจะเปิด /login → redirect ไปหน้าแรก
-      if (isValid && pathname === '/login') {
+      if (session && pathname === '/login') {
         return NextResponse.redirect(new URL('/', request.url));
       }
+      if (!session && !isPublicPath) {
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+        }
+        const loginUrl = new URL('/login', request.url);
+        loginUrl.searchParams.set('from', pathname);
+        const response = NextResponse.redirect(loginUrl);
+        response.cookies.delete('tubelock_session');
+        return response;
+      }
     } catch (err) {
-      // DB error → fall through (อย่า block user เพราะ infra ล่ม)
       console.error('[Middleware DB Error]:', err?.message);
+      if (!isPublicPath) {
+        return NextResponse.json({ error: 'Session validation unavailable' }, { status: 503 });
+      }
     }
   }
 

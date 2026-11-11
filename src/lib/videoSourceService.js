@@ -205,7 +205,6 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false }
       SELECT 
         v.*,
         u.name AS author_name,
-        u.email AS author_email,
         u.picture AS author_picture
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id

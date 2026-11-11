@@ -37,7 +37,7 @@ export async function GET(request, context) {
     const { data, path, notReady } = await resolveVideoSourceServer(id, { forceFresh });
 
     if (notReady) {
-      return NextResponse.json(data, { status: 422, headers: timing(path) });
+      return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404, headers: timing(path) });
     }
 
     return NextResponse.json(data, { headers: timing(path) });

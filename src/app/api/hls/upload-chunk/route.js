@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
@@ -14,48 +15,66 @@ global.__tubelock_jobs = global.__tubelock_jobs || new Map();
  * Accepts 5MB-10MB binary chunks and appends them to disk in real-time.
  */
 export async function POST(request) {
+  const actor = await getSessionUserId();
+  if (actor == null) return accessError(401);
+  if (!isAdmin(actor)) return accessError(403);
   try {
-    const jobId = request.headers.get('x-job-id');
+    const jobId = request.headers.get('x-job-id') || '';
     const rawFileName = request.headers.get('x-file-name') || 'video.mp4';
-    const fileName = decodeURIComponent(rawFileName);
-    const chunkIndex = parseInt(request.headers.get('x-chunk-index') || '0', 10);
-    const totalChunks = parseInt(request.headers.get('x-total-chunks') || '1', 10);
-    const totalSize = parseInt(request.headers.get('x-total-size') || '0', 10);
+    const chunkIndex = Number(request.headers.get('x-chunk-index') ?? NaN);
+    const totalChunks = Number(request.headers.get('x-total-chunks') ?? NaN);
+    const totalSize = Number(request.headers.get('x-total-size') ?? NaN);
 
-    if (!jobId) {
-      return NextResponse.json({ success: false, error: 'x-job-id header is required' }, { status: 400 });
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(jobId)
+      || ![chunkIndex, totalChunks, totalSize].every(Number.isSafeInteger)
+      || chunkIndex < 0 || chunkIndex >= totalChunks || totalSize < totalChunks) {
+      return NextResponse.json({ success: false, error: 'Invalid chunk metadata' }, { status: 400 });
     }
 
-    const safeName = fileName.replace(/[^a-zA-Z0-9.\-_\u0E00-\u0E7F]/g, '_');
-    const tempDir = path.join(os.tmpdir(), `tubelock_${jobId}`);
-    const tempFilePath = path.join(tempDir, safeName);
-
-    // On first chunk, ensure directory and clean previous file
-    if (chunkIndex === 0) {
-      fs.mkdirSync(tempDir, { recursive: true });
-      if (fs.existsSync(tempFilePath)) {
-        fs.unlinkSync(tempFilePath);
-      }
+    const chunkBuffer = Buffer.from(await request.arrayBuffer());
+    if (!chunkBuffer.length || chunkBuffer.length > 10 * 1024 * 1024) {
+      return NextResponse.json({ success: false, error: 'Invalid chunk size' }, { status: 400 });
     }
 
-    const chunkArrayBuffer = await request.arrayBuffer();
-    const chunkBuffer = Buffer.from(chunkArrayBuffer);
-
-    // Append chunk to disk
-    fs.appendFileSync(tempFilePath, chunkBuffer);
-
-    const isComplete = chunkIndex === totalChunks - 1;
-
-    if (isComplete) {
-      const stat = fs.statSync(tempFilePath);
-      global.__tubelock_jobs.set(jobId, {
-        tempFilePath,
-        tempDir,
-        fileName,
-        fileSize: stat.size,
+    let job = global.__tubelock_jobs.get(jobId);
+    if (!job && chunkIndex === 0) {
+      job = {
+        fileName: decodeURIComponent(rawFileName),
+        totalChunks,
+        totalSize,
+        nextChunk: 0,
+        fileSize: 0,
         createdAt: Date.now(),
-      });
+      };
     }
+
+    if (!job || job.nextChunk !== chunkIndex || job.totalChunks !== totalChunks || job.totalSize !== totalSize) {
+      return NextResponse.json({ success: false, error: 'Unexpected chunk for this job' }, { status: 409 });
+    }
+
+    const fileSize = job.fileSize + chunkBuffer.length;
+    const isComplete = chunkIndex === totalChunks - 1;
+    if (fileSize > totalSize || isComplete !== (fileSize === totalSize)) {
+      return NextResponse.json({ success: false, error: 'Chunk does not match declared size' }, { status: 400 });
+    }
+
+    if (chunkIndex === 0) {
+      job.tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tubelock_'));
+      job.tempFilePath = path.join(job.tempDir, 'video');
+    }
+
+    try {
+      fs.appendFileSync(job.tempFilePath, chunkBuffer);
+    } catch (err) {
+      global.__tubelock_jobs.delete(jobId);
+      fs.rmSync(job.tempDir, { recursive: true, force: true });
+      throw err;
+    }
+
+    job.nextChunk += 1;
+    job.fileSize = fileSize;
+    job.isComplete = isComplete;
+    global.__tubelock_jobs.set(jobId, job);
 
     return NextResponse.json({
       success: true,

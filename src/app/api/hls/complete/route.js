@@ -1,3 +1,4 @@
+import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 
@@ -6,6 +7,9 @@ import { getDb } from '@/lib/db';
  * Records a completed HLS package into Neon PostgreSQL DB
  */
 export async function POST(request) {
+  const actor = await getSessionUserId();
+  if (actor == null) return accessError(401);
+  if (!isAdmin(actor)) return accessError(403);
   try {
     const body = await request.json();
     const {
