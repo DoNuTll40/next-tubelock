@@ -25,10 +25,9 @@ const CHANNEL_ALIAS_MAP = {
 /**
  * Recognizes and extracts social media info from URL (TikTok, YouTube, Facebook, Instagram, etc.)
  */
-function getSocialLinkInfo(urlStr) {
+function getSocialLinkInfo(parsed) {
   try {
-    const parsed = new URL(urlStr);
-    const host = parsed.hostname.toLowerCase().replace('www.', '');
+    const host = parsed.hostname.replace(/^www\./, '');
     const pathname = decodeURIComponent(parsed.pathname);
 
     // 1. TikTok: tiktok.com/@teerapong_6 or tiktok.com/@username
@@ -36,9 +35,7 @@ function getSocialLinkInfo(urlStr) {
       const match = pathname.match(/^\/@?([a-zA-Z0-9_.-]+)/);
       const username = match ? match[1] : pathname.replace(/^\//, '');
       return {
-        type: 'tiktok',
         label: username ? `/ ${username}` : '/ tiktok',
-        url: urlStr,
       };
     }
 
@@ -46,9 +43,7 @@ function getSocialLinkInfo(urlStr) {
     if (host.includes('youtube.com') || host.includes('youtu.be')) {
       if (pathname.startsWith('/@')) {
         return {
-          type: 'youtube',
           label: `/ ${pathname.slice(1).split('/')[0]}`,
-          url: urlStr,
         };
       }
       if (pathname.includes('/channel/') || pathname.includes('/c/') || pathname.includes('/user/')) {
@@ -57,16 +52,12 @@ function getSocialLinkInfo(urlStr) {
         const alias = CHANNEL_ALIAS_MAP[name];
         const display = alias || (name.startsWith('@') ? name : (name.length > 18 ? `${name.slice(0, 15)}...` : name));
         return {
-          type: 'youtube',
           label: `/ ${display}`,
-          url: urlStr,
         };
       }
       const clean = pathname.replace(/^\//, '').split('/')[0];
       return {
-        type: 'youtube',
         label: clean ? `/ ${clean}` : '/ youtube',
-        url: urlStr,
       };
     }
 
@@ -74,9 +65,7 @@ function getSocialLinkInfo(urlStr) {
     if (host.includes('facebook.com') || host.includes('fb.com') || host.includes('fb.me')) {
       const clean = pathname.replace(/^\//, '').split('/')[0];
       return {
-        type: 'facebook',
         label: clean ? `/ ${clean}` : '/ facebook',
-        url: urlStr,
       };
     }
 
@@ -84,9 +73,7 @@ function getSocialLinkInfo(urlStr) {
     if (host.includes('instagram.com')) {
       const clean = pathname.replace(/^\//, '').split('/')[0];
       return {
-        type: 'instagram',
         label: clean ? `/ ${clean}` : '/ instagram',
-        url: urlStr,
       };
     }
 
@@ -94,27 +81,21 @@ function getSocialLinkInfo(urlStr) {
     if (host === 'twitter.com' || host === 'x.com') {
       const clean = pathname.replace(/^\//, '').split('/')[0];
       return {
-        type: 'x',
         label: clean ? `/ @${clean}` : '/ x',
-        url: urlStr,
       };
     }
 
     // 6. Spotify
     if (host.includes('spotify.com')) {
       return {
-        type: 'spotify',
         label: '/ spotify',
-        url: urlStr,
       };
     }
 
     // 7. LINE
     if (host.includes('line.me')) {
       return {
-        type: 'line',
         label: '/ line',
-        url: urlStr,
       };
     }
 
@@ -124,85 +105,31 @@ function getSocialLinkInfo(urlStr) {
   }
 }
 
-/**
- * Renders authentic brand SVGs for social platforms
- */
-function renderSocialIcon(type) {
-  switch (type) {
-    case 'tiktok':
-      return (
-        <span className="w-3.5 h-3.5 rounded-full bg-black flex items-center justify-center shrink-0">
-          <svg className="w-2 h-2 fill-white" viewBox="0 0 24 24">
-            <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.29 0 .58.04.85.12V9.4a6.33 6.33 0 0 0-1-.08A6.34 6.34 0 0 0 3 15.66a6.34 6.34 0 0 0 10.82 4.49 6.33 6.33 0 0 0 1.86-4.49V8.67a8.21 8.21 0 0 0 4.91 1.62V6.85a4.83 4.83 0 0 1-1-.16z" />
-          </svg>
-        </span>
-      );
-    case 'youtube':
-      return (
-        <span className="w-3.5 h-3.5 flex items-center justify-center shrink-0">
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-            <rect width="24" height="24" rx="5" fill="#FF0000" />
-            <polygon points="9.5,7.5 16.5,12 9.5,16.5" fill="#FFFFFF" />
-          </svg>
-        </span>
-      );
-    case 'facebook':
-      return (
-        <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center shrink-0">
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-            <circle cx="12" cy="12" r="12" fill="#1877F2" />
-            <path d="M15 12h-2v7h-3v-7H8.5V9.5H10V7.8C10 6.3 11 5 13.2 5H15v2.4h-1.3c-.7 0-.9.4-.9.9v1.2H15L14.7 12z" fill="#FFFFFF" />
-          </svg>
-        </span>
-      );
-    case 'instagram':
-      return (
-        <span className="w-3.5 h-3.5 rounded-xs flex items-center justify-center shrink-0">
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-            <defs>
-              <linearGradient id="ig-grad-box" x1="0%" y1="100%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor="#fdf497" />
-                <stop offset="5%" stopColor="#fdf497" />
-                <stop offset="45%" stopColor="#fd5949" />
-                <stop offset="60%" stopColor="#d6249f" />
-                <stop offset="90%" stopColor="#285AEB" />
-              </linearGradient>
-            </defs>
-            <rect width="24" height="24" rx="6" fill="url(#ig-grad-box)" />
-            <rect x="4" y="4" width="16" height="16" rx="4.5" fill="none" stroke="#FFFFFF" strokeWidth="1.8" />
-            <circle cx="12" cy="12" r="3.5" fill="none" stroke="#FFFFFF" strokeWidth="1.8" />
-            <circle cx="16.5" cy="7.5" r="1" fill="#FFFFFF" />
-          </svg>
-        </span>
-      );
-    case 'x':
-      return (
-        <span className="w-3.5 h-3.5 rounded-full bg-black flex items-center justify-center shrink-0">
-          <svg className="w-2 h-2 fill-white" viewBox="0 0 24 24">
-            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-          </svg>
-        </span>
-      );
-    case 'spotify':
-      return (
-        <span className="w-3.5 h-3.5 rounded-full bg-[#1DB954] flex items-center justify-center shrink-0">
-          <svg className="w-2 h-2 fill-black" viewBox="0 0 24 24">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.58 14.42c-.18.3-.56.4-.86.22-2.36-1.44-5.32-1.76-8.82-.96-.34.08-.68-.14-.76-.48-.08-.34.14-.68.48-.76 3.82-.88 7.1-.5 9.74 1.12.3.18.4.56.22.86zm1.22-2.72c-.24.38-.72.5-1.1.26-2.7-1.66-6.82-2.14-10.02-1.18-.42.12-.86-.12-.98-.54-.12-.42.12-.86.54-.98 3.66-1.1 8.2-.58 11.3 1.34.38.24.5.72.26 1.1zm.1-2.82c-3.24-1.92-8.58-2.1-11.68-1.16-.5.16-1.02-.12-1.18-.62-.16-.5.12-1.02.62-1.18 3.56-1.08 9.44-.88 13.16 1.34.46.26.6.84.34 1.3-.26.46-.84.6-1.26.32z" />
-          </svg>
-        </span>
-      );
-    case 'line':
-      return (
-        <span className="w-3.5 h-3.5 rounded-xs flex items-center justify-center shrink-0">
-          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
-            <rect width="24" height="24" rx="5" fill="#06C755" />
-            <path d="M19.5 10.5c0-4.1-3.6-7.5-8-7.5s-8 3.4-8 7.5c0 3.7 3.2 6.8 7.6 7.4.3.1.7.2.8.5.1.3.1.6 0 1l-.4 1.4c-.1.4 0 .6.3.5.3-.1 2-1.2 2.8-1.7.4-.3.9-.4 1.3-.4 2.4 0 4.4-1.9 4.6-4.2z" fill="#FFF" />
-          </svg>
-        </span>
-      );
-    default:
-      return <ExternalLink className="w-3 h-3 opacity-70 shrink-0" />;
+function LinkFavicon({ hostname }) {
+  const [attempt, setAttempt] = useState(0);
+  const isDomain = /^(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*$/i.test(hostname);
+
+  if (!isDomain || attempt >= 2) {
+    return <ExternalLink aria-hidden="true" className="size-3.5 shrink-0 opacity-70" />;
   }
+
+  const alternateHost = hostname.startsWith('www.') ? hostname.slice(4) : `www.${hostname}`;
+  const iconHost = attempt === 0 ? hostname : alternateHost;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`https://a.favicon.im/${encodeURIComponent(iconHost)}?throw-error-on-404=true`}
+      alt=""
+      width={14}
+      height={14}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setAttempt(attempt + 1)}
+      className="size-3.5 shrink-0 rounded-sm object-contain"
+    />
+  );
 }
 
 /**
@@ -256,21 +183,31 @@ function parseDescriptionTokens(text = '', onSeek) {
         </button>
       );
     } else if (url) {
-      const social = getSocialLinkInfo(url);
+      let parsed;
+      try {
+        parsed = new URL(url);
+      } catch {
+        elements.push(url);
+        lastIndex = regex.lastIndex;
+        continue;
+      }
+
+      const hostname = parsed.hostname;
+      const social = getSocialLinkInfo(parsed);
 
       if (social) {
         // YouTube-Style Social Capsule Badge (Pill) - compact & flush with line height
         elements.push(
           <a
             key={`social-${match.index}`}
-            href={social.url}
+            href={url}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center gap-1.5 px-2 py-0 mx-1 h-[21px] rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000014] dark:hover:bg-white/20 text-[#0F0F0F] dark:text-[#F1F1F1] text-[12px] font-normal transition cursor-pointer select-none align-[-3px]"
-            title={social.url}
+            title={url}
           >
-            {renderSocialIcon(social.type)}
+            <LinkFavicon key={hostname} hostname={hostname} />
             <span className="font-normal text-[#0F0F0F] dark:text-[#F1F1F1] tracking-tight whitespace-nowrap">
               {social.label}
             </span>
@@ -278,11 +215,8 @@ function parseDescriptionTokens(text = '', onSeek) {
         );
       } else {
         // General Clean URL Link
-        let displayHost = url;
-        try {
-          const u = new URL(url);
-          displayHost = u.hostname.replace('www.', '') + (u.pathname.length > 1 ? u.pathname.slice(0, 15) : '');
-        } catch (_) { }
+        const displayHost = hostname.replace(/^www\./, '') +
+          (parsed.pathname.length > 1 ? parsed.pathname.slice(0, 15) : '');
 
         elements.push(
           <a
@@ -294,7 +228,7 @@ function parseDescriptionTokens(text = '', onSeek) {
             className="inline-flex items-center gap-1 px-2 py-0 mx-1 h-[21px] rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000014] dark:hover:bg-white/20 text-[#065FD4] dark:text-[#3EA6FF] text-[12px] font-normal transition align-[-3px]"
             title={url}
           >
-            <ExternalLink className="w-3 h-3 opacity-65 shrink-0" />
+            <LinkFavicon key={hostname} hostname={hostname} />
             <span className="hover:underline truncate max-w-[200px]">{displayHost}</span>
           </a>
         );
