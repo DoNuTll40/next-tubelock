@@ -6,9 +6,17 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { ViewModeProvider } from "@/context/ViewModeContext";
 import { SidebarProvider } from "@/context/SidebarContext";
 import AppShell from "@/components/AppShell";
-import DevTools from "@/components/DevTools";
+import PwaRegistration from "@/components/PwaRegistration";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://tubelock.vercel.app';
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#0F0F0F",
+};
 
 export const metadata = {
   metadataBase: new URL(SITE_URL),
@@ -24,10 +32,11 @@ export const metadata = {
   alternates: {
     canonical: '/',
   },
+  appleWebApp: { capable: true, title: "TubeLock", statusBarStyle: "default" },
   icons: {
     icon: "/images/TubeLock.png",
     shortcut: "/images/TubeLock.png",
-    apple: "/images/TubeLock.png",
+    apple: { url: "/images/pwa-180.png", sizes: "180x180", type: "image/png" },
   },
   openGraph: {
     type: "website",
@@ -133,7 +142,7 @@ export default async function RootLayout({ children }) {
             </SidebarProvider>
           </ViewModeProvider>
         </ThemeProvider>
-        {/* <DevTools /> */}
+        <PwaRegistration />
       </body>
     </html>
   );

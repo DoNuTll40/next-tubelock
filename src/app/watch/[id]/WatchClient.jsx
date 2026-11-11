@@ -126,7 +126,6 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         const h = el.getBoundingClientRect().height;
         if (h > 0) {
           setPlayerHeight(h);
-          document.documentElement.style.setProperty('--watch-player-height', `${h}px`);
         }
       }
     };
@@ -403,7 +402,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           {/* 🎯 Video Player: Sticky on mobile across entire page / Static in Left Col on desktop */}
           <div
             ref={playerWrapperRef}
-            className={`relative sticky top-0 z-20 w-full bg-black lg:bg-transparent lg:relative lg:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] lg:h-auto flex justify-center items-center lg:block' : ''
+            className={`sticky top-0 z-30 w-full bg-black lg:bg-transparent lg:relative lg:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] lg:h-auto flex justify-center items-center lg:block' : ''
               }`}
           >
             {/* YouTube-style Storyboard Ambient Mode Light */}
@@ -605,11 +604,11 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           {/* 🏷️ YouTube Recommendation Filter Chips: Sticky directly under video player on mobile! */}
           <div
             style={{
-              top: playerHeight ? `${playerHeight}px` : 'var(--watch-player-height, 56.25vw)',
+              top: playerHeight ? `${playerHeight}px` : '56.25vw',
             }}
-            className="sticky z-20 bg-[#FBF9F5] dark:bg-[#0F0F0F] sm:dark:bg-transparent -mx-3.5 px-3.5 py-2.5 border-b border-[#EFECE6]/80 dark:border-white/10 lg:static lg:mx-0 lg:px-0 lg:py-0.5 lg:border-none lg:bg-transparent"
+            className="sticky z-20 -mx-3.5 px-3.5 py-2.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] border-b border-[#EFECE6]/80 dark:border-white/10 sm:mx-0 sm:px-0 lg:static lg:py-0.5 lg:border-none lg:bg-transparent lg:dark:bg-transparent"
           >
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 select-none">
+            <div className="flex items-center gap-1.5 overflow-x-auto overscroll-x-contain scrollbar-none py-0.5 select-none">
               {[
                 { id: 'all', label: 'ทั้งหมด' },
                 { id: 'cloud', label: 'จาก OneDrive' },
@@ -656,14 +655,14 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           ) : (
             <>
               {/* Mobile: Full-width feed cards (YouTube mobile app experience) */}
-              <div className="flex flex-col gap-4 sm:hidden">
+              <div className="isolate flex flex-col gap-4 sm:hidden">
                 {filteredRelated.map((item) => (
                   <VideoCard key={`mob-${item.id}`} video={item} replace={true} compact={false} />
                 ))}
               </div>
 
               {/* Desktop / Tablet: Compact sidebar cards (YouTube standard) */}
-              <div className="hidden sm:flex flex-col gap-2.5">
+              <div className="isolate hidden sm:flex flex-col gap-2.5">
                 {filteredRelated.map((item) => (
                   <div key={`desk-wrap-${item.id}`}>
                     <VideoCard

@@ -11,7 +11,7 @@ import { formatResolutionBadge } from '@/lib/videoUtils';
 import { useViewMode } from '@/context/ViewModeContext';
 
 export default function FeedPage() {
-  const { isMobile, isDesktop } = useViewMode();
+  const { isMobile } = useViewMode();
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState('all');
@@ -50,13 +50,17 @@ export default function FeedPage() {
 
   // Touch Handlers for Mobile Pull to Refresh
   const handleTouchStart = (e) => {
-    if (window.scrollY <= 0 && !isRefreshing) {
+    if (e.touches.length === 1 && window.scrollY <= 0 && !isRefreshing) {
       touchStartY.current = e.touches[0].clientY;
       isPulling.current = true;
     }
   };
 
   const handleTouchMove = (e) => {
+    if (e.touches.length !== 1) {
+      cancelPull();
+      return;
+    }
     if (!isPulling.current || isRefreshing || window.scrollY > 0) return;
 
     const currentY = e.touches[0].clientY;
@@ -66,6 +70,11 @@ export default function FeedPage() {
       const dampedPull = Math.min(diff * 0.45, 110);
       setPullY(dampedPull);
     }
+  };
+
+  const cancelPull = () => {
+    isPulling.current = false;
+    setPullY(0);
   };
 
   const handleTouchEnd = () => {
@@ -133,6 +142,7 @@ export default function FeedPage() {
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={cancelPull}
       style={{ overscrollBehaviorY: 'contain' }}
       className="flex flex-col w-full min-h-[85vh]"
     >

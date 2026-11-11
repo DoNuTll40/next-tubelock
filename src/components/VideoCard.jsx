@@ -202,7 +202,7 @@ export default function VideoCard({
         <Link
           href={watchUrl}
           replace={replace}
-          className="relative aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
+          className="relative isolate aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
         >
           {effectiveThumbnail && !imgError ? (
             <img
@@ -344,7 +344,7 @@ export default function VideoCard({
         <Link
           href={watchUrl}
           replace={replace}
-          className="relative aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
+          className="relative isolate aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
         >
           {effectiveThumbnail && !imgError ? (
             <img
@@ -469,7 +469,7 @@ export default function VideoCard({
       style={cardHoverStyle}
     >
       <Link href={watchUrl} replace={replace} className="flex flex-col">
-        <div className="relative aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs">
+        <div className="relative isolate aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs">
           {effectiveThumbnail && !imgError ? (
             <>
               <img

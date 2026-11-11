@@ -105,8 +105,6 @@ function SettingsContent() {
   const [session, setSession] = useState(null);
 
   // Settings States
-  const [targetFolder, setTargetFolder] = useState('/Videos');
-  const [scanSubfolders, setScanSubfolders] = useState(true);
   const [volume, setVolume] = useState(0.8);
   const [autoplay, setAutoplay] = useState(true);
   const [defaultSpeed, setDefaultSpeed] = useState(1);
@@ -194,11 +192,7 @@ function SettingsContent() {
         ]);
 
         if (settingsRes?.success && settingsRes.data && isMounted) {
-          const { onedrive_config, player_defaults, content_safety } = settingsRes.data;
-          if (onedrive_config) {
-            setTargetFolder(onedrive_config.target_folder || '/Videos');
-            setScanSubfolders(onedrive_config.scan_subfolders ?? true);
-          }
+          const { player_defaults, content_safety } = settingsRes.data;
           if (player_defaults) {
             setVolume(player_defaults.volume ?? 0.8);
             setAutoplay(player_defaults.autoplay ?? true);
@@ -251,7 +245,6 @@ function SettingsContent() {
       setSaveStatus('idle');
     }
   }, [
-    targetFolder, scanSubfolders,
     volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats,
     gravatarEmail, fallbackAvatar, allow18Plus,
   ]);
@@ -267,14 +260,6 @@ function SettingsContent() {
           body: JSON.stringify({
             key: 'player_defaults',
             value: { volume, autoplay, default_speed: defaultSpeed, default_fit: defaultFit, seek_step: seekStep, auto_stats: autoStats },
-          }),
-        }),
-        fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            key: 'onedrive_config',
-            value: { target_folder: targetFolder, scan_subfolders: scanSubfolders },
           }),
         }),
         fetch('/api/settings', {
@@ -303,7 +288,7 @@ function SettingsContent() {
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 4000);
     }
-  }, [volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats, targetFolder, scanSubfolders, gravatarEmail, fallbackAvatar, allow18Plus]);
+  }, [volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats, gravatarEmail, fallbackAvatar, allow18Plus]);
 
   // ─── Other actions ────────────────────────────────────────────────────────
   const handleClearHistory = async () => {
@@ -367,16 +352,7 @@ function SettingsContent() {
           />
         );
       case 'onedrive':
-        return (
-          <StorageSection
-            targetFolder={targetFolder}
-            setTargetFolder={setTargetFolder}
-            scanSubfolders={scanSubfolders}
-            setScanSubfolders={setScanSubfolders}
-            videoCount={videoCount}
-            totalSizeGB={totalSizeGB}
-          />
-        );
+        return <StorageSection />;
       case 'system':
         return (
           <SystemSection
@@ -553,7 +529,7 @@ function SettingsContent() {
                         <div className="flex flex-col">
                           <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">OneDrive และโฟลเดอร์สื่อ</span>
                           <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
-                            {targetFolder} ({videoCount} คลิป, {totalSizeGB} GB)
+                            {videoCount} คลิป · {totalSizeGB} GB
                           </span>
                         </div>
                       </div>

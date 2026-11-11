@@ -3,10 +3,6 @@ import { NextResponse } from 'next/server';
 
 // Default fallback configs in case DB is unreachable or keys are missing
 const DEFAULT_SETTINGS = {
-  onedrive_config: {
-    target_folder: '/Videos',
-    scan_subfolders: true,
-  },
   player_defaults: {
     fit: 'contain',
     speed: 1.0,

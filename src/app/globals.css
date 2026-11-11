@@ -7,6 +7,10 @@
   --font-sans: 'Graphik Thai Loop', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+html {
+  touch-action: pan-x pan-y;
+}
+
 body {
   font-family: 'Graphik Thai Loop', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   margin: 0;

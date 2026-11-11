@@ -77,7 +77,7 @@ export async function login() {
     console.warn('[msAuth] Popup login failed, trying redirect:', err);
     await msal.loginRedirect({
       ...loginRequest,
-      redirectStartPage: `${window.location.origin}/sync`,
+      redirectStartPage: `${window.location.origin}/`,
     });
     return null;
   }

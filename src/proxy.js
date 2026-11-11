@@ -31,7 +31,7 @@ export async function proxy(request) {
     ((request.method === 'GET' || request.method === 'HEAD') &&
       (pathname === '/api/videos' ||
         (/^\/api\/videos\/[^/]+(?:\/source)?$/.test(pathname) &&
-          pathname !== '/api/videos/queue' && pathname !== '/api/videos/sync'))) ||
+          pathname !== '/api/videos/queue'))) ||
     (request.method === 'POST' && /^\/api\/videos\/[^/]+\/view$/.test(pathname)) ||
     pathname.startsWith('/api/og') ||
     pathname.startsWith('/streams') ||
@@ -42,6 +42,8 @@ export async function proxy(request) {
     pathname.startsWith('/tubelock') ||
     pathname.startsWith('/_next') ||
     pathname === '/m' ||
+    pathname === '/manifest.webmanifest' ||
+    pathname === '/sw.js' ||
     pathname === '/favicon.ico' ||
     pathname === '/robots.txt' ||
     pathname === '/sitemap.xml';
