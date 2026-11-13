@@ -13,9 +13,10 @@ const VTT_NOTE_TAIL_RE = /(?:\r?\n|^)[ \t]*NOTE\b[^\n]*(?:\r?\n(?![ \t]*\d+[ \t]
  * Parse a timestamp string into milliseconds. Supports:
  * - Standard HH:MM:SS,mmm / H:M:S.ms (including 1-digit min/sec like 00:54:0,500 or 2-digit ms)
  * - Short MM:SS,mmm / M:S.ms (e.g. 01:03,200 or 53:3,140)
- * - Colon-ms MM:SS:mmm when no comma/dot is present and 3rd part has 3 digits or >= 60 (e.g. 01:01:200)
+ * - Colon-ms MM:SS:mmm when no comma/dot is present and 3rd part has 3 digits or >= 60,
+ *   or when interpreting as HH:MM:SS would exceed maxExpectedSec (e.g. 01:53:20 inside a 5-min chunk)
  */
-export function parseSrtTimestampToMs(rawTs) {
+export function parseSrtTimestampToMs(rawTs, { maxExpectedSec = null } = {}) {
   const s = String(rawTs || '').trim().replace('.', ',');
   if (!s) return null;
 
@@ -28,14 +29,20 @@ export function parseSrtTimestampToMs(rawTs) {
     return ((h * 3600 + m * 60 + sec) * 1000) + ms;
   }
 
-  // Handle Gemini omitting comma before milliseconds (MM:SS:mmm -> e.g. 01:02:200)
+  // Handle Gemini omitting comma before milliseconds (MM:SS:mmm -> e.g. 01:02:200 or 01:53:20)
   const threeColonMatch = s.match(/^(\d{1,3}):(\d{1,2}):(\d{1,3})$/);
   if (threeColonMatch) {
     const p1 = parseInt(threeColonMatch[1], 10);
     const p2 = parseInt(threeColonMatch[2], 10);
     const p3Raw = threeColonMatch[3];
     const p3 = parseInt(p3Raw, 10);
-    if (p3Raw.length === 3 || p3 >= 60) {
+    const exceedsWindowAsHms =
+      maxExpectedSec &&
+      Number.isFinite(maxExpectedSec) &&
+      p1 >= 1 &&
+      (p1 * 3600 + p2 * 60 + p3) > (maxExpectedSec + 30) &&
+      (p1 * 60 + p2) <= (maxExpectedSec + 30);
+    if (p3Raw.length === 3 || p3 >= 60 || exceedsWindowAsHms) {
       const ms = parseInt(p3Raw.padEnd(3, '0').slice(0, 3), 10);
       return ((p1 * 60 + p2) * 1000) + ms;
     }
@@ -110,21 +117,21 @@ export function sanitizeCueText(text) {
  * Handles multi-line blocks, single-newline blocks, inline space-separated cues,
  * 1-digit seconds, MM:SS:mmm colons, and broken mid-timestamp line wraps.
  */
-export function parseSrtCues(rawText) {
+export function parseSrtCues(rawText, options = {}) {
   if (!rawText || typeof rawText !== 'string') return [];
   const normalized = normalizeSrtRawText(rawText);
   if (!normalized.trim()) return [];
 
   const matches = [];
   for (const m of normalized.matchAll(TS_PAIR_GLOBAL_RE)) {
-    const startMs = parseSrtTimestampToMs(m[1]);
-    const endMs = parseSrtTimestampToMs(m[2]);
+    const startMs = parseSrtTimestampToMs(m[1], options);
+    const endMs = parseSrtTimestampToMs(m[2], options);
     if (startMs !== null && endMs !== null) {
       matches.push({
         index: m.index,
         endIndex: m.index + m[0].length,
         startMs,
-        endMs: Math.max(startMs + 200, endMs),
+        endMs: endMs > startMs ? Math.max(startMs + 200, endMs) : startMs + 1200,
       });
     }
   }
@@ -218,4 +225,170 @@ export function convertSrtToVtt(srtText) {
   if (cleaned.startsWith('WEBVTT')) return cleaned;
   const vttBody = cleaned.replace(/(\d{1,3}:\d{2}(?::\d{2})?),(\d{1,3})/g, '$1.$2');
   return `WEBVTT\n\n${vttBody}\n`;
+}
+
+/**
+ * Map a single audio chunk's parsed cues onto the full video timeline.
+ * Automatically detects whether the model returned chunk-relative timestamps
+ * or accidentally used video-absolute timestamps, and rejects out-of-window outliers.
+ */
+export function alignChunkCuesToWindow(cues, chunkStartSec, chunkLenSec, totalVideoDurationSec = 0) {
+  if (!Array.isArray(cues) || cues.length === 0) return [];
+  const chunkStartMs = Math.max(0, Math.round((Number(chunkStartSec) || 0) * 1000));
+  const chunkLenMs = Math.max(1000, Math.round((Number(chunkLenSec) || 300) * 1000));
+  const maxVideoMs =
+    totalVideoDurationSec && Number(totalVideoDurationSec) > 0
+      ? Math.round(Number(totalVideoDurationSec) * 1000) + 1500
+      : Infinity;
+
+  let alreadyAbsolute = false;
+  if (chunkStartMs >= 90000 && cues.length >= 2) {
+    let relCount = 0;
+    let absCount = 0;
+    for (const c of cues) {
+      if (c.startMs >= 0 && c.startMs <= chunkLenMs + 20000) relCount++;
+      if (c.startMs >= chunkStartMs - 20000 && c.startMs <= chunkStartMs + chunkLenMs + 25000) absCount++;
+    }
+    if (absCount >= Math.ceil(cues.length * 0.7) && relCount <= Math.floor(cues.length * 0.25)) {
+      alreadyAbsolute = true;
+    }
+  }
+
+  const aligned = [];
+  for (const cue of cues) {
+    const rawStart = Math.max(0, Number(cue?.startMs) || 0);
+    const rawEnd = Math.max(rawStart + 200, Number(cue?.endMs) || rawStart + 1200);
+    const dur = Math.max(200, rawEnd - rawStart);
+
+    if (alreadyAbsolute) {
+      if (rawStart < Math.max(0, chunkStartMs - 15000) || rawStart > chunkStartMs + chunkLenMs + 15000) {
+        continue;
+      }
+      const absStart = Math.min(Math.max(Math.max(0, chunkStartMs - 2000), rawStart), maxVideoMs);
+      const absEnd = Math.min(maxVideoMs, chunkStartMs + chunkLenMs + 4000, Math.max(absStart + 200, absStart + dur));
+      if (absEnd > absStart) {
+        aligned.push({ startMs: absStart, endMs: absEnd, text: cue.text });
+      }
+      continue;
+    }
+
+    // Reject rogue chunk timestamps far outside this audio slice
+    if (rawStart > chunkLenMs + 30000) continue;
+    const relStart = Math.max(0, Math.min(rawStart, Math.max(0, chunkLenMs - 200)));
+    const absStart = chunkStartMs + relStart;
+    if (absStart > maxVideoMs) continue;
+    const absEnd = Math.min(maxVideoMs, chunkStartMs + chunkLenMs + 4000, absStart + dur);
+    if (absEnd > absStart) {
+      aligned.push({ startMs: absStart, endMs: absEnd, text: cue.text });
+    }
+  }
+
+  return aligned;
+}
+
+/**
+ * Clamp obvious typo end timestamps (e.g., 10 chars stretched over 4 minutes)
+ * BEFORE running splitOverlongSubtitleCues so text weights do not smear across minutes.
+ */
+export function trimRunawayCueEndsBeforeSplit(cues) {
+  if (!Array.isArray(cues) || cues.length === 0) return [];
+  const sorted = [...cues]
+    .filter((c) => c && typeof c.text === 'string' && c.text.trim())
+    .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+
+  return sorted.map((cue, idx) => {
+    const cleanLen = cue.text.replace(/\s+/g, '').length;
+    const maxByChars = Math.max(12000, cleanLen * 450 + 4000);
+    let nextEnd = Math.max(cue.startMs + 200, cue.endMs || cue.startMs + 1200);
+    const nextCue = sorted[idx + 1];
+    if (nextCue && nextCue.startMs - cue.startMs >= 350 && nextEnd > nextCue.startMs) {
+      nextEnd = Math.min(nextEnd, nextCue.startMs);
+    }
+    if (nextEnd - cue.startMs > maxByChars) {
+      nextEnd = cue.startMs + maxByChars;
+    }
+    return {
+      startMs: cue.startMs,
+      endMs: Math.max(cue.startMs + 200, nextEnd),
+      text: cue.text,
+    };
+  });
+}
+
+/**
+ * Normalize final subtitle cues into a strictly monotonic, overlap-free timeline:
+ * chronological sort, adjacent duplicate merge, runaway end-time capping,
+ * and clean handoff between consecutive cues.
+ */
+export function normalizeSubtitleTimeline(
+  cues,
+  { maxVideoDurationMs = Infinity, capRunawayDuration = true } = {}
+) {
+  if (!Array.isArray(cues) || cues.length === 0) return [];
+  const hasMaxDur = Number.isFinite(maxVideoDurationMs) && maxVideoDurationMs > 0;
+
+  const prepared = [];
+  for (const cue of cues) {
+    const text = String(cue?.text || '').trim();
+    const startMs = Math.round(Number(cue?.startMs));
+    const rawEndMs = Math.round(Number(cue?.endMs));
+    if (!text || !Number.isFinite(startMs) || startMs < 0) continue;
+    if (hasMaxDur && startMs > maxVideoDurationMs) continue;
+
+    let endMs = Number.isFinite(rawEndMs) && rawEndMs > startMs ? rawEndMs : startMs + 1200;
+    if (hasMaxDur) endMs = Math.min(endMs, maxVideoDurationMs + 1000);
+    if (endMs <= startMs) continue;
+
+    if (capRunawayDuration) {
+      const compactLen = text.replace(/\s+/g, '').length;
+      const maxSingleMs = Math.max(6000, Math.min(14000, compactLen * 320 + 3000));
+      if (endMs - startMs > maxSingleMs) {
+        endMs = startMs + maxSingleMs;
+      }
+    }
+
+    prepared.push({ startMs, endMs, text });
+  }
+
+  if (prepared.length === 0) return [];
+  prepared.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+
+  // Merge exact/near-duplicate adjacent cues emitted at boundaries or repeats
+  const normalizeCmp = (s) => s.replace(/[\s.,!?。，！？…'"“”]+/g, '').toLowerCase();
+  const deduped = [];
+  for (const cue of prepared) {
+    const prev = deduped[deduped.length - 1];
+    if (
+      prev &&
+      cue.startMs - prev.startMs <= 1200 &&
+      normalizeCmp(prev.text) &&
+      normalizeCmp(prev.text) === normalizeCmp(cue.text)
+    ) {
+      prev.endMs = Math.max(prev.endMs, cue.endMs);
+      continue;
+    }
+    deduped.push({ ...cue });
+  }
+
+  // Resolve overlapping cues so an earlier subtitle never stays stuck over newer dialogue
+  for (let i = 0; i < deduped.length - 1; i++) {
+    const cur = deduped[i];
+    const next = deduped[i + 1];
+    if (cur.endMs > next.startMs) {
+      const startDelta = next.startMs - cur.startMs;
+      if (startDelta >= 350) {
+        cur.endMs = next.startMs;
+      } else {
+        const minSlotEnd = Math.min(cur.endMs, Math.max(cur.startMs + 250, next.startMs));
+        cur.endMs = minSlotEnd;
+        if (next.startMs < cur.endMs) {
+          next.startMs = cur.endMs;
+          next.endMs = Math.max(next.endMs, next.startMs + 400);
+          if (hasMaxDur) next.endMs = Math.min(next.endMs, maxVideoDurationMs + 1000);
+        }
+      }
+    }
+  }
+
+  return deduped.filter((c) => c.endMs > c.startMs && c.text);
 }

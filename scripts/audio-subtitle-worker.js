@@ -23,6 +23,9 @@ import {
   cuesToSrt,
   convertSrtToVtt,
   sanitizeCueText,
+  alignChunkCuesToWindow,
+  trimRunawayCueEndsBeforeSplit,
+  normalizeSubtitleTimeline,
 } from '../src/lib/subtitleUtils.js';
 import {
   createWorkerLogger,
@@ -255,7 +258,8 @@ function probeMediaDuration(filePath) {
       out += d.toString();
     });
     proc.on('close', () => {
-      const sec = Math.max(0, Math.round(parseFloat(out.trim() || '0') || 0));
+      const rawSec = parseFloat(out.trim() || '0') || 0;
+      const sec = rawSec > 0 ? Math.round(rawSec * 1000) / 1000 : 0;
       resolve(sec);
     });
     proc.on('error', () => resolve(0));
@@ -421,15 +425,6 @@ function splitOverlongSubtitleCues(cues, { maxDurationMs = 5200, maxChars = 60, 
     }
   }
   return result;
-}
-
-function offsetSrtCues(cues, offsetSeconds) {
-  const offsetMs = Math.round((Number(offsetSeconds) || 0) * 1000);
-  return cues.map((cue) => ({
-    startMs: cue.startMs + offsetMs,
-    endMs: cue.endMs + offsetMs,
-    text: cue.text,
-  }));
 }
 
 function normalizeModelCandidates(rawModel) {
@@ -664,7 +659,7 @@ async function transcribeOriginalAudioWithGemini(
   videoTitle,
   modelName,
   customPrompt,
-  { chunkInfo = '', logger = null, allowEmptySpeech = false } = {}
+  { chunkInfo = '', chunkDurationSec = 0, logger = null, allowEmptySpeech = false } = {}
 ) {
   if (!GEMINI_API_KEY) {
     throw new Error('ไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ Environment / GitHub Secrets');
@@ -678,7 +673,7 @@ async function transcribeOriginalAudioWithGemini(
   }
 
   const chunkHint = chunkInfo
-    ? `\nหมายเหตุ: ไฟล์เสียงนี้เป็นส่วน "${chunkInfo}" ของวิดีโอ หากช่วงนี้มีแต่เสียงดนตรี/เงียบไม่มีคำพูด ให้คืนค่า "original_srt": "" ได้เลย และต้องเขียน original_srt เป็นภาษาพูดจริงในคลิปเท่านั้น (ห้ามแปลเป็นไทยในขั้นนี้)`
+    ? `\nหมายเหตุสำคัญเรื่องเวลา (Timeline): ไฟล์เสียงนี้เป็นส่วน "${chunkInfo}"${chunkDurationSec > 0 ? ` (ความยาวไฟล์เสียงส่วนนี้ประมาณ ${formatDurationShort(chunkDurationSec)})` : ''} — ไทม์โค้ดทุกบรรทัดใน original_srt ต้องเริ่มนับตั้งแต่ 00:00:00,000 ตามเวลาจริงในไฟล์เสียงส่วนนี้เท่านั้น ห้ามบวกเวลาเริ่มต้นของช่วงเข้าไปเอง และห้ามใส่เวลาเกินความยาวไฟล์เสียงส่วนนี้ หากช่วงนี้มีแต่เสียงดนตรี/เงียบไม่มีคำพูด ให้คืนค่า "original_srt": "" ได้เลย และห้ามแปลเป็นภาษาไทยใน original_srt โดยเด็ดขาด`
     : '';
 
   const prompt = customPrompt
@@ -877,7 +872,43 @@ async function translateOriginalSrtToThaiWithGemini(
   return { thaiSrt, elapsedSec };
 }
 
-async function buildAudioChunks(localAudioPath, tempDir, audioDurationSec, logger) {
+async function sliceAudioToMp3Chunk(sourceAudioPath, startSec, lenSec, outPath, { stepLabel = '', logger = null, logIntervalMs = 10000 } = {}) {
+  const isPcmWav = /\.wav$/i.test(String(sourceAudioPath || ''));
+  // PCM WAV supports sample-exact input seeking; for compressed MP3 place -ss after -i to eliminate bitrate-estimate drift
+  const ffArgs = isPcmWav
+    ? [
+        '-y',
+        '-ss', String(startSec),
+        '-t', String(lenSec),
+        '-i', sourceAudioPath,
+        '-ac', '1',
+        '-ar', '16000',
+        '-c:a', 'libmp3lame',
+        '-b:a', '32k',
+        outPath,
+      ]
+    : [
+        '-y',
+        '-i', sourceAudioPath,
+        '-ss', String(startSec),
+        '-t', String(lenSec),
+        '-ac', '1',
+        '-ar', '16000',
+        '-c:a', 'libmp3lame',
+        '-b:a', '32k',
+        outPath,
+      ];
+
+  await runFFmpegWithProgress(ffArgs, {
+    durationSec: lenSec,
+    stepLabel,
+    logger,
+    logIntervalMs,
+  });
+  return outPath;
+}
+
+async function buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger) {
   if (!audioDurationSec || audioDurationSec <= AUDIO_CHUNK_SECONDS + 30) {
     return [
       {
@@ -899,35 +930,21 @@ async function buildAudioChunks(localAudioPath, tempDir, audioDurationSec, logge
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
     const startSec = i * AUDIO_CHUNK_SECONDS;
-    const lenSec = Math.min(AUDIO_CHUNK_SECONDS, audioDurationSec - startSec);
+    const lenSec = Math.max(0, Number(Math.min(AUDIO_CHUNK_SECONDS, audioDurationSec - startSec).toFixed(3)));
     if (lenSec < 2 && i > 0) break;
 
     const chunkPath = path.join(tempDir, `chunk_${String(i + 1).padStart(3, '0')}.mp3`);
-    await runFFmpegWithProgress(
-      [
-        '-y',
-        '-ss', String(startSec),
-        '-t', String(lenSec),
-        '-i', localAudioPath,
-        '-ac', '1',
-        '-ar', '16000',
-        '-c:a', 'libmp3lame',
-        '-b:a', '32k',
-        chunkPath,
-      ],
-      {
-        durationSec: lenSec,
-        stepLabel: `ตัดช่วงเสียง ${i + 1}/${totalChunks}`,
-        logger,
-        logIntervalMs: 6000,
-      }
-    );
+    await sliceAudioToMp3Chunk(seekAudioPath, startSec, lenSec, chunkPath, {
+      stepLabel: `ตัดช่วงเสียง ${i + 1}/${totalChunks}`,
+      logger,
+      logIntervalMs: 6000,
+    });
 
     chunks.push({
       index: i + 1,
       total: totalChunks,
       startSec,
-      endSec: startSec + lenSec,
+      endSec: Number((startSec + lenSec).toFixed(3)),
       path: chunkPath,
     });
   }
@@ -935,41 +952,46 @@ async function buildAudioChunks(localAudioPath, tempDir, audioDurationSec, logge
   return chunks;
 }
 
-async function splitSubChunkAudio(localAudioPath, tempDir, startSec, lenSec, labelSlug) {
+async function splitSubChunkAudio(seekAudioPath, tempDir, startSec, lenSec, labelSlug) {
   const outPath = path.join(tempDir, `sub_${labelSlug}.mp3`);
-  await runFFmpegWithProgress(
-    [
-      '-y',
-      '-ss', String(startSec),
-      '-t', String(lenSec),
-      '-i', localAudioPath,
-      '-ac', '1',
-      '-ar', '16000',
-      '-c:a', 'libmp3lame',
-      '-b:a', '32k',
-      outPath,
-    ],
-    { durationSec: lenSec, logIntervalMs: 10000 }
-  );
-  return outPath;
+  return sliceAudioToMp3Chunk(seekAudioPath, startSec, lenSec, outPath, { logIntervalMs: 10000 });
 }
 
-async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName, customPrompt, tempDir, audioDurationSec, logger) {
-  const chunks = await buildAudioChunks(localAudioPath, tempDir, audioDurationSec, logger);
+async function generateSubtitlesWithGemini(
+  localAudioPath,
+  videoTitle,
+  modelName,
+  customPrompt,
+  tempDir,
+  audioDurationSec,
+  logger,
+  { seekAudioPath = localAudioPath } = {}
+) {
+  const chunks = await buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger);
 
   const chunkResults = [];
   const langTally = new Map();
   let lastChunkErrorMsg = '';
 
   const recordChunkOutput = (rangeLabel, chunkMeta, res1, chunkStartSec) => {
-    const parsedCues = parseSrtCues(res1.originalSrt);
-    const shiftedCues = offsetSrtCues(parsedCues, chunkStartSec);
+    const chunkLenSec = Math.max(
+      1,
+      Number(((chunkMeta?.endSec || 0) - (chunkMeta?.startSec || 0)) || audioDurationSec || AUDIO_CHUNK_SECONDS)
+    );
+    const parsedCues = parseSrtCues(res1.originalSrt, { maxExpectedSec: chunkLenSec });
+    const shiftedCues = alignChunkCuesToWindow(parsedCues, chunkStartSec, chunkLenSec, audioDurationSec);
+    const preTrimmedCues = trimRunawayCueEndsBeforeSplit(shiftedCues);
     // Split any overly long/essay cues upfront so BOTH original and Thai tracks are concise 1-5s subtitles
-    const normalizedCues = splitOverlongSubtitleCues(shiftedCues, {
-      maxDurationMs: 5200,
-      maxChars: 60,
-      idealChars: 44,
-    });
+    const normalizedCues = normalizeSubtitleTimeline(
+      splitOverlongSubtitleCues(preTrimmedCues, {
+        maxDurationMs: 5200,
+        maxChars: 60,
+        idealChars: 44,
+      }),
+      {
+        maxVideoDurationMs: audioDurationSec ? Math.round(audioDurationSec * 1000) + 1500 : Infinity,
+      }
+    );
     if (normalizedCues.length > 0) {
       const langKey = `${res1.isThai ? 'th' : 'orig'}:${res1.detectedLangCode}:${res1.detectedLangName}`;
       langTally.set(langKey, {
@@ -1006,6 +1028,7 @@ async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName
     try {
       const res1 = await transcribeOriginalAudioWithGemini(ch.path, videoTitle, modelName, customPrompt, {
         chunkInfo: rangeLabel,
+        chunkDurationSec: Math.max(0, (ch.endSec || 0) - (ch.startSec || 0)),
         logger,
         allowEmptySpeech: chunks.length > 1,
       });
@@ -1035,9 +1058,10 @@ async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName
         const subLabel = `ช่วง ${ch.index}${tag}/${ch.total} (${formatDurationShort(sliceStart)}–${formatDurationShort(sliceStart + sliceLen)})`;
         let subPath = '';
         try {
-          subPath = await splitSubChunkAudio(localAudioPath, tempDir, sliceStart, sliceLen, `${ch.index}_${tag}`);
+          subPath = await splitSubChunkAudio(seekAudioPath, tempDir, sliceStart, sliceLen, `${ch.index}_${tag}`);
           const subRes = await transcribeOriginalAudioWithGemini(subPath, videoTitle, modelName, customPrompt, {
             chunkInfo: subLabel,
+            chunkDurationSec: sliceLen,
             logger,
             allowEmptySpeech: true,
           });
@@ -1079,8 +1103,12 @@ async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName
     }
   }
 
-  // Merge all original cues seamlessly in strict chronological order
-  let allOriginalCues = chunkResults.flatMap((r) => r.cues).sort((a, b) => a.startMs - b.startMs);
+  // Merge all original cues seamlessly in strict chronological, overlap-free order
+  const maxVideoMs = audioDurationSec ? Math.round(audioDurationSec * 1000) + 1500 : Infinity;
+  let allOriginalCues = normalizeSubtitleTimeline(
+    chunkResults.flatMap((r) => r.cues),
+    { maxVideoDurationMs: maxVideoMs }
+  );
   if (allOriginalCues.length === 0) {
     const firstRaw = chunkResults.find((r) => r.rawSrt)?.rawSrt || '';
     if (!firstRaw) {
@@ -1279,12 +1307,14 @@ async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName
     }
   }
 
-  allThaiCues.sort((a, b) => a.startMs - b.startMs);
-  allThaiCues = splitOverlongSubtitleCues(allThaiCues, {
-    maxDurationMs: 5200,
-    maxChars: 60,
-    idealChars: 44,
-  });
+  allThaiCues = normalizeSubtitleTimeline(
+    splitOverlongSubtitleCues(trimRunawayCueEndsBeforeSplit(allThaiCues), {
+      maxDurationMs: 5200,
+      maxChars: 60,
+      idealChars: 44,
+    }),
+    { maxVideoDurationMs: maxVideoMs }
+  );
   const mergedThaiSrt = cuesToSrt(allThaiCues);
   return {
     isThai: false,
@@ -1348,6 +1378,7 @@ async function main() {
 
     const localVideoPath = path.join(tempDir, 'input_video.mp4');
     const localAudioPath = path.join(tempDir, 'audio.mp3');
+    const seekAudioPath = path.join(tempDir, 'audio_seek_src.wav');
     let audioDurationSec = 0;
 
     if (downloadUrl) {
@@ -1364,7 +1395,8 @@ async function main() {
       await runFFmpegWithProgress(
         [
           '-y', '-i', localVideoPath,
-          '-vn', '-ac', '1', '-ar', '16000',
+          '-vn', '-af', 'aresample=async=1:first_pts=0',
+          '-ac', '1', '-ar', '16000',
           '-c:a', 'libmp3lame', '-b:a', '32k',
           localAudioPath,
         ],
@@ -1374,6 +1406,24 @@ async function main() {
           logger,
         }
       );
+      // Extract PCM WAV for sample-exact chunk slicing with zero MP3 seek drift
+      await runFFmpegWithProgress(
+        [
+          '-y', '-i', localVideoPath,
+          '-vn', '-af', 'aresample=async=1:first_pts=0',
+          '-ac', '1', '-ar', '16000',
+          '-c:a', 'pcm_s16le',
+          seekAudioPath,
+        ],
+        {
+          durationSec: audioDurationSec,
+          stepLabel: 'สร้างเสียงต้นทางสำหรับซิงก์ไทม์ไลน์',
+          logger,
+        }
+      );
+      try {
+        if (fs.existsSync(localVideoPath)) fs.unlinkSync(localVideoPath);
+      } catch (_) {}
     } else {
       // Fallback: check if audio.mp3 already exists in /streams/stream_vid_{id}/audio.mp3
       const existingAudioRes = await fetchWithRetry(
@@ -1388,12 +1438,25 @@ async function main() {
           expectedSizeBytes: Number(audioData.size || 0),
           logger,
         });
+        await runFFmpegWithProgress(
+          [
+            '-y', '-i', localAudioPath,
+            '-ac', '1', '-ar', '16000',
+            '-c:a', 'pcm_s16le',
+            seekAudioPath,
+          ],
+          { durationSec: 0, logIntervalMs: 15000 }
+        );
       } else {
         throw new Error(`ไม่พบไฟล์วิดีโอต้นฉบับใน /raw/${activeRawName} หรือไฟล์เสียงในโฟลเดอร์สตรีม`);
       }
     }
 
-    if (!audioDurationSec) {
+    const activeSeekPath = fs.existsSync(seekAudioPath) ? seekAudioPath : localAudioPath;
+    const probedSeekDur = await probeMediaDuration(activeSeekPath);
+    if (probedSeekDur > 0) {
+      audioDurationSec = probedSeekDur;
+    } else if (!audioDurationSec) {
       audioDurationSec = await probeMediaDuration(localAudioPath);
     }
 
@@ -1419,7 +1482,8 @@ async function main() {
       CUSTOM_PROMPT,
       tempDir,
       audioDurationSec,
-      logger
+      logger,
+      { seekAudioPath: activeSeekPath }
     );
     const { isThai, detectedLangCode, detectedLangName, thaiSrt, originalSrt, totalCues } = subResult;
 

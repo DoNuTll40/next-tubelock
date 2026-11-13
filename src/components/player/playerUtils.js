@@ -2,7 +2,7 @@
  * Helper utilities for TubeLock Video Player
  */
 
-import { parseSrtTimestampToMs, parseSrtCues } from '@/lib/subtitleUtils';
+import { parseSrtTimestampToMs, parseSrtCues, normalizeSubtitleTimeline } from '../../lib/subtitleUtils.js';
 
 export const formatTime = (time, isDuration = false) => {
   if (isNaN(time) || !time || time < 0) return '00:00';
@@ -55,14 +55,42 @@ export function parseSubTimestamp(ts) {
 
 /**
  * Fault-tolerant SRT / WebVTT parser that works directly on database strings
- * (supports HH:MM:SS,mmm, MM:SS,mmm, inline cues, 1-digit fields, and single-\n cues)
+ * (supports HH:MM:SS,mmm, MM:SS,mmm, inline cues, 1-digit fields, single-\n cues,
+ * and normalizes overlapping / runaway durations onto a clean monotonic timeline)
  */
 export function parseSubtitleCues(rawText) {
-  return parseSrtCues(rawText).map((cue) => ({
+  return normalizeSubtitleTimeline(parseSrtCues(rawText)).map((cue) => ({
     start: cue.startMs / 1000,
     end: cue.endMs / 1000,
     text: cue.text,
   }));
+}
+
+/**
+ * Find the active cue at playback position `curSec`.
+ * Scans sorted cues and selects the latest started cue covering `curSec`
+ * so boundary transitions immediately favor the newest spoken line.
+ */
+export function findActiveSubtitleCue(cues, curSec) {
+  if (!Array.isArray(cues) || cues.length === 0) return null;
+  let lo = 0;
+  let hi = cues.length - 1;
+  let candidateIdx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (cues[mid].start <= curSec) {
+      candidateIdx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  for (let i = candidateIdx; i >= 0; i--) {
+    const cue = cues[i];
+    if (curSec <= cue.end) return cue;
+    if (curSec - cue.start > 20) break;
+  }
+  return null;
 }
 
 export const SPEED_OPTIONS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];

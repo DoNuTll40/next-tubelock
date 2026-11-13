@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
-import { formatTime, formatTimePair, parseSubtitleCues, DEFAULT_SUBTITLE_STYLE, computeSubtitleStyles } from './player/playerUtils';
+import { formatTime, formatTimePair, parseSubtitleCues, findActiveSubtitleCue, DEFAULT_SUBTITLE_STYLE, computeSubtitleStyles } from './player/playerUtils';
 import PlayerTopBar from './player/PlayerTopBar';
 import PlayerCenterControls from './player/PlayerCenterControls';
 import PlayerBottomBar from './player/PlayerBottomBar';
@@ -604,7 +604,7 @@ export default function VideoPlayer({
 
     // Update active subtitle cue text with millisecond accuracy (only re-renders when cue text changes)
     if (isCcActive && subtitleCues.length > 0) {
-      const matchedCue = subtitleCues.find((cue) => cur >= cue.start && cur <= cue.end);
+      const matchedCue = findActiveSubtitleCue(subtitleCues, cur);
       const nextText = matchedCue ? matchedCue.text : '';
       if (nextText !== lastCueTextRef.current) {
         lastCueTextRef.current = nextText;
