@@ -398,6 +398,29 @@ async function callGeminiWithFallback(requestBody, preferredModelName, logger = 
   const candidates = normalizeModelCandidates(preferredModelName);
   let lastErrorText = '';
   let lastStatus = 0;
+  let lastEmptyReason = '';
+
+  const inspectEmptyDiagnostic = (data) => {
+    const cand = data?.candidates?.[0];
+    const finishReason = cand?.finishReason || '';
+    const blockReason = data?.promptFeedback?.blockReason || '';
+    const highRatings = [
+      ...(cand?.safetyRatings || []),
+      ...(data?.promptFeedback?.safetyRatings || []),
+    ]
+      .filter((r) => r?.probability === 'HIGH' || r?.probability === 'MEDIUM')
+      .map((r) => `${String(r.category || '').replace('HARM_CATEGORY_', '')}:${r.probability}`);
+    const parts = [
+      finishReason && `finishReason=${finishReason}`,
+      blockReason && `blockReason=${blockReason}`,
+      highRatings.length > 0 && `safety=[${highRatings.join(',')}]`,
+    ].filter(Boolean);
+    return {
+      finishReason,
+      blockReason,
+      summary: parts.join(', ') || 'empty parts',
+    };
+  };
 
   for (const candidateModel of candidates) {
     const startMs = Date.now();
@@ -418,7 +441,19 @@ async function callGeminiWithFallback(requestBody, preferredModelName, logger = 
       const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
-      if (!text) throw new Error('Gemini API ไม่ได้ส่งเนื้อหาคำบรรยายกลับมา');
+      if (!text) {
+        const diag = inspectEmptyDiagnostic(data);
+        lastEmptyReason = diag.summary;
+        const msg = `⚠️ ${stepLabel}: โมเดล "${candidateModel}" ไม่ส่งข้อความกลับมา (${diag.summary})`;
+        if (logger) await logger.log(msg, { level: 'warn', toDb: false });
+        else console.warn(msg);
+
+        // If Gemini hard-prohibited the content itself, do not spam extra models unnecessarily
+        if (diag.blockReason === 'PROHIBITED_CONTENT' || diag.finishReason === 'PROHIBITED_CONTENT') {
+          break;
+        }
+        continue;
+      }
       if (logger) {
         await logger.log(`⚡ ${stepLabel}: โมเดล "${candidateModel}" ตอบกลับใน ${elapsedSec}s`, { toDb: false });
       }
@@ -434,28 +469,38 @@ async function callGeminiWithFallback(requestBody, preferredModelName, logger = 
     throw new Error(`Gemini API Error (${res.status}): ${lastErrorText.slice(0, 400)}`);
   }
 
-  const discoveredModel = await discoverAvailableGeminiModel();
-  if (discoveredModel) {
-    console.log(`🔄 Discovered available model from ListModels: ${discoveredModel}`);
-    const startMs = Date.now();
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(discoveredModel)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-    const res = await fetchWithRetry(
-      endpoint,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody,
-      },
-      3,
-      3000,
-      GEMINI_REQUEST_TIMEOUT_MS
-    );
-    if (res.ok) {
-      const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
-      const data = await res.json();
-      const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
-      if (text) return { text, modelUsed: discoveredModel, elapsedSec };
+  if (!lastEmptyReason) {
+    const discoveredModel = await discoverAvailableGeminiModel();
+    if (discoveredModel) {
+      console.log(`🔄 Discovered available model from ListModels: ${discoveredModel}`);
+      const startMs = Date.now();
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(discoveredModel)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+      const res = await fetchWithRetry(
+        endpoint,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: requestBody,
+        },
+        3,
+        3000,
+        GEMINI_REQUEST_TIMEOUT_MS
+      );
+      if (res.ok) {
+        const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
+        if (text) return { text, modelUsed: discoveredModel, elapsedSec };
+        lastEmptyReason = inspectEmptyDiagnostic(data).summary;
+      }
     }
+  }
+
+  if (lastEmptyReason) {
+    const err = new Error(`Gemini ไม่ส่งเนื้อหาคำบรรยายกลับมา (${lastEmptyReason})`);
+    err.code = 'GEMINI_EMPTY';
+    err.reason = lastEmptyReason;
+    throw err;
   }
 
   throw new Error(`Gemini API Error (${lastStatus}): ${lastErrorText.slice(0, 400)}`);
@@ -631,11 +676,55 @@ async function buildAudioChunks(localAudioPath, tempDir, audioDurationSec, logge
   return chunks;
 }
 
+async function splitSubChunkAudio(localAudioPath, tempDir, startSec, lenSec, labelSlug) {
+  const outPath = path.join(tempDir, `sub_${labelSlug}.mp3`);
+  await runFFmpegWithProgress(
+    [
+      '-y',
+      '-ss', String(startSec),
+      '-t', String(lenSec),
+      '-i', localAudioPath,
+      '-ac', '1',
+      '-ar', '16000',
+      '-c:a', 'libmp3lame',
+      '-b:a', '32k',
+      outPath,
+    ],
+    { durationSec: lenSec, logIntervalMs: 10000 }
+  );
+  return outPath;
+}
+
 async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName, customPrompt, tempDir, audioDurationSec, logger) {
   const chunks = await buildAudioChunks(localAudioPath, tempDir, audioDurationSec, logger);
 
   const chunkResults = [];
   const langTally = new Map();
+  let lastChunkErrorMsg = '';
+
+  const recordChunkOutput = (rangeLabel, chunkMeta, res1, chunkStartSec) => {
+    const parsedCues = parseSrtCues(res1.originalSrt);
+    const shiftedCues = offsetSrtCues(parsedCues, chunkStartSec);
+    if (shiftedCues.length > 0) {
+      const langKey = `${res1.isThai ? 'th' : 'orig'}:${res1.detectedLangCode}:${res1.detectedLangName}`;
+      langTally.set(langKey, {
+        count: (langTally.get(langKey)?.count || 0) + shiftedCues.length,
+        isThai: res1.isThai,
+        code: res1.detectedLangCode,
+        name: res1.detectedLangName,
+      });
+    }
+    chunkResults.push({
+      chunk: chunkMeta,
+      rangeLabel,
+      cues: shiftedCues,
+      rawSrt: res1.originalSrt,
+      isThai: res1.isThai,
+      code: res1.detectedLangCode,
+      name: res1.detectedLangName,
+    });
+    return shiftedCues.length;
+  };
 
   // Step 1: Transcribe every chunk in original spoken language + shift cue timestamps
   for (const ch of chunks) {
@@ -648,39 +737,65 @@ async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName
       { toDb: true }
     );
 
-    const res1 = await transcribeOriginalAudioWithGemini(ch.path, videoTitle, modelName, customPrompt, {
-      chunkInfo: rangeLabel,
-      logger,
-      allowEmptySpeech: chunks.length > 1,
-    });
-
-    const parsedCues = parseSrtCues(res1.originalSrt);
-    const shiftedCues = offsetSrtCues(parsedCues, ch.startSec);
-
-    if (shiftedCues.length > 0) {
-      const langKey = `${res1.isThai ? 'th' : 'orig'}:${res1.detectedLangCode}:${res1.detectedLangName}`;
-      langTally.set(langKey, {
-        count: (langTally.get(langKey)?.count || 0) + shiftedCues.length,
-        isThai: res1.isThai,
-        code: res1.detectedLangCode,
-        name: res1.detectedLangName,
+    try {
+      const res1 = await transcribeOriginalAudioWithGemini(ch.path, videoTitle, modelName, customPrompt, {
+        chunkInfo: rangeLabel,
+        logger,
+        allowEmptySpeech: chunks.length > 1,
       });
+      const count = recordChunkOutput(rangeLabel, ch, res1, ch.startSec);
+      await logger.log(
+        `✅ [ขั้นที่ 1/2] ${rangeLabel} ถอดเสียงเสร็จใน ${res1.elapsedSec}s: พบ ${count} ประโยค (${res1.detectedLangName})`,
+        { level: 'success', toDb: true }
+      );
+    } catch (chunkErr) {
+      lastChunkErrorMsg = chunkErr.message;
+      const chunkLen = Math.max(0, (ch.endSec || 0) - (ch.startSec || 0));
+      const canSubSplit = chunkLen >= 120;
+
+      if (!canSubSplit) {
+        if (chunks.length === 1) throw chunkErr;
+        await logger.log(
+          `⚠️ [ขั้นที่ 1/2] ข้าม ${rangeLabel}: ${chunkErr.message}`,
+          { level: 'warn', toDb: true }
+        );
+        continue;
+      }
+
+      // Split blocked/empty chunk into two halves so an isolated blocked/explicit part does not discard the whole 8-min slice
+      const halfLen = Math.floor(chunkLen / 2);
+      const subParts = [
+        { subIdx: 'A', startSec: ch.startSec, lenSec: halfLen },
+        { subIdx: 'B', startSec: ch.startSec + halfLen, lenSec: chunkLen - halfLen },
+      ];
+      await logger.log(
+        `⚠️ [ขั้นที่ 1/2] ${rangeLabel} ไม่ได้คำบรรยาย (${chunkErr.reason || chunkErr.message}) — ลองแบ่งย่อยเป็น 2 ช่วงย่อยเพื่อเก็บส่วนที่ถอดได้...`,
+        { level: 'warn', toDb: true }
+      );
+
+      for (const sp of subParts) {
+        const subLabel = `ช่วง ${ch.index}${sp.subIdx}/${ch.total} (${formatDurationShort(sp.startSec)}–${formatDurationShort(sp.startSec + sp.lenSec)})`;
+        try {
+          const subPath = await splitSubChunkAudio(localAudioPath, tempDir, sp.startSec, sp.lenSec, `${ch.index}_${sp.subIdx}`);
+          const subRes = await transcribeOriginalAudioWithGemini(subPath, videoTitle, modelName, customPrompt, {
+            chunkInfo: subLabel,
+            logger,
+            allowEmptySpeech: true,
+          });
+          const subCount = recordChunkOutput(subLabel, { ...ch, startSec: sp.startSec, endSec: sp.startSec + sp.lenSec }, subRes, sp.startSec);
+          await logger.log(
+            `✅ [ขั้นที่ 1/2] ${subLabel} ถอดได้ ${subCount} ประโยค (${subRes.elapsedSec}s)`,
+            { level: 'success', toDb: true }
+          );
+        } catch (subErr) {
+          lastChunkErrorMsg = subErr.message;
+          await logger.log(
+            `⚠️ [ขั้นที่ 1/2] ข้าม ${subLabel}: ${subErr.reason || subErr.message}`,
+            { level: 'warn', toDb: true }
+          );
+        }
+      }
     }
-
-    await logger.log(
-      `✅ [ขั้นที่ 1/2] ${rangeLabel} ถอดเสียงเสร็จใน ${res1.elapsedSec}s: พบ ${shiftedCues.length} ประโยค (${res1.detectedLangName})`,
-      { level: 'success', toDb: true }
-    );
-
-    chunkResults.push({
-      chunk: ch,
-      rangeLabel,
-      cues: shiftedCues,
-      rawSrt: res1.originalSrt,
-      isThai: res1.isThai,
-      code: res1.detectedLangCode,
-      name: res1.detectedLangName,
-    });
   }
 
   // Merge all original cues seamlessly
@@ -688,7 +803,7 @@ async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName
   if (allOriginalCues.length === 0) {
     const firstRaw = chunkResults.find((r) => r.rawSrt)?.rawSrt || '';
     if (!firstRaw) {
-      throw new Error('AI ไม่พบเสียงพูดที่สามารถถอดเป็นคำบรรยาย .SRT ได้ในคลิปนี้');
+      throw new Error(lastChunkErrorMsg || 'AI ไม่พบเสียงพูดที่สามารถถอดเป็นคำบรรยาย .SRT ได้ในคลิปนี้');
     }
     const firstMeta = chunkResults[0];
     if (firstMeta.isThai) {
@@ -752,34 +867,42 @@ async function generateSubtitlesWithGemini(localAudioPath, videoTitle, modelName
     const chunkOrigSrt = cuesToSrt(r.cues);
     await logger.log(`🌐 [ขั้นที่ 2/2] กำลังแปล ${r.rangeLabel} (${r.cues.length} ประโยค) -> ไทย...`, { toDb: true });
 
-    const tr = await translateOriginalSrtToThaiWithGemini(
-      chunkOrigSrt,
-      dominantLang.name,
-      modelName,
-      customPrompt,
-      { chunkInfo: r.rangeLabel, logger }
-    );
+    try {
+      const tr = await translateOriginalSrtToThaiWithGemini(
+        chunkOrigSrt,
+        dominantLang.name,
+        modelName,
+        customPrompt,
+        { chunkInfo: r.rangeLabel, logger }
+      );
 
-    const parsedThai = parseSrtCues(tr.thaiSrt);
-    if (parsedThai.length === r.cues.length) {
-      // Lock exact timestamps from Step 1 to guarantee 100% timing alignment across chunks
-      for (let idx = 0; idx < r.cues.length; idx++) {
-        allThaiCues.push({
-          startMs: r.cues[idx].startMs,
-          endMs: r.cues[idx].endMs,
-          text: parsedThai[idx].text || r.cues[idx].text,
-        });
+      const parsedThai = parseSrtCues(tr.thaiSrt);
+      if (parsedThai.length === r.cues.length) {
+        // Lock exact timestamps from Step 1 to guarantee 100% timing alignment across chunks
+        for (let idx = 0; idx < r.cues.length; idx++) {
+          allThaiCues.push({
+            startMs: r.cues[idx].startMs,
+            endMs: r.cues[idx].endMs,
+            text: parsedThai[idx].text || r.cues[idx].text,
+          });
+        }
+      } else if (parsedThai.length > 0) {
+        allThaiCues.push(...parsedThai);
+      } else {
+        allThaiCues.push(...r.cues);
       }
-    } else if (parsedThai.length > 0) {
-      allThaiCues.push(...parsedThai);
-    } else {
-      allThaiCues.push(...r.cues);
-    }
 
-    await logger.log(`✅ [ขั้นที่ 2/2] แปล ${r.rangeLabel} เสร็จใน ${tr.elapsedSec}s (${parsedThai.length || r.cues.length} ประโยค)`, {
-      level: 'success',
-      toDb: true,
-    });
+      await logger.log(`✅ [ขั้นที่ 2/2] แปล ${r.rangeLabel} เสร็จใน ${tr.elapsedSec}s (${parsedThai.length || r.cues.length} ประโยค)`, {
+        level: 'success',
+        toDb: true,
+      });
+    } catch (trErr) {
+      allThaiCues.push(...r.cues);
+      await logger.log(
+        `⚠️ [ขั้นที่ 2/2] แปล ${r.rangeLabel} ไม่สำเร็จ (${trErr.message}) — คงข้อความต้นฉบับในช่วงนี้ไว้`,
+        { level: 'warn', toDb: true }
+      );
+    }
   }
 
   const mergedThaiSrt = cuesToSrt(allThaiCues);
