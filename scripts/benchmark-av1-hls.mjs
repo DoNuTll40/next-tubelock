@@ -1,8 +1,9 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { createInterface } from 'node:readline';
 
 const [source, sample = '0', scratchRoot = tmpdir()] = process.argv.slice(2);
 const seconds = Number(sample);
@@ -25,13 +26,15 @@ function report(line) {
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
 }
 
-const { streams } = JSON.parse(run(ffprobe, [
-    '-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate,duration',
+const { streams, format } = JSON.parse(run(ffprobe, [
+    '-v', 'error', '-show_entries', 'stream=codec_type,width,height,r_frame_rate,duration:format=duration',
     '-of', 'json', input,
 ]));
 const video = streams.find((stream) => stream.codec_type === 'video');
 if (!video?.width || !video?.height) throw new Error('Input has no usable video stream.');
 const { width, height } = video;
+const sourceDuration = Number(video.duration) || Number(format?.duration) || Infinity;
+const duration = Math.min(sourceDuration, seconds || Infinity);
 const [numerator, denominator] = video.r_frame_rate.split('/').map(Number);
 const fps = numerator / denominator;
 const gop = String(Number.isFinite(fps) && fps > 0 ? Math.max(1, Math.round(fps * 2)) : 60);
@@ -46,7 +49,7 @@ const passes = [
     [[3840, 2160, 20000, height >= 2160 || width >= 3840]],
 ];
 
-function encode(renditions, directory) {
+function encode(renditions, directory, label) {
     const split = renditions.length > 1
         ? `[0:v:0]split=${renditions.length}${renditions.map(([, h]) => `[in${h}]`).join('')};`
         : '';
@@ -63,10 +66,37 @@ function encode(renditions, directory) {
         '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', `${h}p-init.mp4`,
         '-hls_segment_filename', `${h}p-%05d.m4s`, `${h}p.m3u8`,
     ]);
-    run(ffmpeg, [
-        '-hide_banner', '-nostdin', '-loglevel', 'error', '-i', input,
+    const child = spawn(ffmpeg, [
+        '-hide_banner', '-nostdin', '-loglevel', 'error', '-nostats',
+        '-progress', 'pipe:1', '-stats_period', '1', '-i', input,
         '-filter_complex', split + filters, ...outputArgs,
-    ], { cwd: directory, stdio: 'inherit' });
+    ], { cwd: directory, stdio: ['ignore', 'pipe', 'inherit'] });
+    const lines = createInterface({ input: child.stdout });
+    const started = performance.now();
+    let position = 0;
+    let speed = '';
+    lines.on('line', (line) => {
+        const [key, value] = line.split('=');
+        if (key === 'out_time_us' && Number.isFinite(Number(value))) {
+            position = Math.max(position, Number(value) / 1e6);
+        }
+        if (key === 'speed') speed = value.trim();
+    });
+    const heartbeat = setInterval(() => {
+        const elapsed = ((performance.now() - started) / 1000).toFixed(0);
+        const progress = Number.isFinite(duration)
+            ? `${Math.min(99, Math.floor(position / duration * 100))}% (${position.toFixed(0)}/${duration.toFixed(0)}s)`
+            : `${position.toFixed(0)}s encoded`;
+        const status = position > 0 ? `Encoding ${progress}` : 'Waiting for first encoded timestamp';
+        console.log(`[${label}] ${status} · elapsed ${elapsed}s${speed && speed !== 'N/A' ? ` · speed ${speed}` : ''}`);
+    }, 10000);
+    return new Promise((resolveEncode, rejectEncode) => {
+        child.once('error', rejectEncode);
+        child.once('close', (code, signal) => {
+            if (code === 0) resolveEncode();
+            else rejectEncode(new Error(`[${label}] FFmpeg exited with ${signal || `status ${code}`}`));
+        });
+    }).finally(() => clearInterval(heartbeat));
 }
 
 report(`## AV1 preset 8 · source ${width}×${height} · ${seconds ? `first ${seconds}s` : 'full clip'}`);
@@ -74,14 +104,17 @@ report('');
 report('| Rendition | Encoded size | Pass wall time |');
 report('| --- | ---: | ---: |');
 let total = 0;
-for (const pass of passes) {
-    const renditions = pass.filter(([, , , enabled = true]) => enabled);
-    if (renditions.length === 0) continue;
+const activePasses = passes.map((pass) => pass.filter(([, , , enabled = true]) => enabled))
+    .filter((pass) => pass.length > 0);
+for (const [index, renditions] of activePasses.entries()) {
+    const label = `Pass ${index + 1}/${activePasses.length} · ${renditions.map(([, h]) => `${h}p`).join(' + ')}`;
     const directory = mkdtempSync(join(resolve(scratchRoot), 'tubelock-av1-'));
     try {
+        console.log(`[${label}] Starting AV1 encode`);
         const started = performance.now();
-        encode(renditions, directory);
+        await encode(renditions, directory, label);
         const elapsed = (performance.now() - started) / 1000;
+        console.log(`[${label}] Finished in ${elapsed.toFixed(2)}s`);
         total += elapsed;
         const files = readdirSync(directory);
         for (const [, h] of renditions) {
