@@ -84,7 +84,7 @@ async function ensureAudioSubtitleColumns() {
   }
 }
 
-async function fetchWithRetry(url, options = {}, retries = 4, delay = 2500, timeoutMs = 120000) {
+async function fetchWithRetry(url, options = {}, retries = 4, delay = 2500, timeoutMs = 120000, { retryOnTimeout = true } = {}) {
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(url, {
@@ -101,8 +101,9 @@ async function fetchWithRetry(url, options = {}, retries = 4, delay = 2500, time
       }
       return res;
     } catch (err) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
       console.warn(`⚠️ [Request Error ${i + 1}/${retries}]: ${err.name || 'Error'} - ${err.message}`);
-      if (i === retries - 1) throw err;
+      if (i === retries - 1 || (isTimeout && !retryOnTimeout)) throw err;
       await new Promise((r) => setTimeout(r, delay));
       delay *= 1.5;
     }
@@ -497,8 +498,31 @@ function parseJsonResponseSafe(rawText) {
   return { rawFallbackText: cleaned };
 }
 
-const GEMINI_REQUEST_TIMEOUT_MS = 300000; // 5 minutes per chunk
+const GEMINI_REQUEST_TIMEOUT_MS = 95000; // 95s per model attempt so slow fallback thinking never stalls 5–10m silently
 const AUDIO_CHUNK_SECONDS = 300; // 5-minute chunks -> tighter timing, shorter cues, lower block risk (~24 req/hr << 500 RPD)
+
+function buildRequestBodyForModel(rawBodyStr, modelName, allowThinkingTune = true) {
+  if (!allowThinkingTune) return rawBodyStr;
+  const lower = String(modelName || '').toLowerCase();
+  const isThinkingCapable = (lower.startsWith('gemini-2.5-') || lower.startsWith('gemini-3')) && !lower.includes('lite');
+  if (!isThinkingCapable) return rawBodyStr;
+
+  try {
+    const payload = JSON.parse(rawBodyStr);
+    const genCfg = { ...(payload.generationConfig || {}) };
+    if (!genCfg.thinkingConfig) {
+      if (lower.startsWith('gemini-2.5-')) {
+        genCfg.thinkingConfig = { thinkingBudget: lower.includes('pro') ? 128 : 0 };
+      } else {
+        genCfg.thinkingConfig = { thinkingLevel: 'minimal' };
+      }
+    }
+    payload.generationConfig = genCfg;
+    return JSON.stringify(payload);
+  } catch (_) {
+    return rawBodyStr;
+  }
+}
 
 async function callGeminiWithFallback(requestBody, preferredModelName, logger = null, stepLabel = 'Gemini', { validateText = null } = {}) {
   const candidates = normalizeModelCandidates(preferredModelName);
@@ -528,20 +552,43 @@ async function callGeminiWithFallback(requestBody, preferredModelName, logger = 
     };
   };
 
-  const tryModelOnce = async (candidateModel) => {
+  const tryModelOnce = async (candidateModel, allowThinkingTune = true) => {
     const startMs = Date.now();
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidateModel)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
-    const res = await fetchWithRetry(
-      endpoint,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody,
-      },
-      2,
-      2000,
-      GEMINI_REQUEST_TIMEOUT_MS
-    );
+    const tunedBody = buildRequestBodyForModel(requestBody, candidateModel, allowThinkingTune);
+
+    // Emit periodic progress logs so UI/CI logs visibly report progress during long Gemini calls
+    const heartbeatTimer = setInterval(() => {
+      const waitSec = Math.round((Date.now() - startMs) / 1000);
+      const hbMsg = `⏳ ${stepLabel}: กำลังรอผลจากโมเดล "${candidateModel}" (${waitSec}s)...`;
+      if (logger) void logger.log(hbMsg, { toDb: true });
+      else console.log(hbMsg);
+    }, 18000);
+
+    let res;
+    try {
+      res = await fetchWithRetry(
+        endpoint,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: tunedBody,
+        },
+        2,
+        2000,
+        GEMINI_REQUEST_TIMEOUT_MS,
+        { retryOnTimeout: false }
+      );
+    } catch (reqErr) {
+      clearInterval(heartbeatTimer);
+      lastEmptyReason = reqErr?.name === 'TimeoutError' ? `หมดเวลา ${Math.round(GEMINI_REQUEST_TIMEOUT_MS / 1000)}s` : reqErr.message;
+      const msg = `⚠️ ${stepLabel}: โมเดล "${candidateModel}" ขัดข้อง/หมดเวลา (${lastEmptyReason}) — สลับไปลองโมเดลสำรอง...`;
+      if (logger) await logger.log(msg, { level: 'warn', toDb: true });
+      else console.warn(msg);
+      return null;
+    } finally {
+      clearInterval(heartbeatTimer);
+    }
 
     if (res.ok) {
       const elapsedSec = ((Date.now() - startMs) / 1000).toFixed(1);
@@ -551,7 +598,7 @@ async function callGeminiWithFallback(requestBody, preferredModelName, logger = 
         const diag = inspectEmptyDiagnostic(data);
         lastEmptyReason = diag.summary;
         const msg = `⚠️ ${stepLabel}: โมเดล "${candidateModel}" ไม่ส่งข้อความกลับมา (${diag.summary}) — สลับไปลองโมเดลสำรอง...`;
-        if (logger) await logger.log(msg, { level: 'warn', toDb: false });
+        if (logger) await logger.log(msg, { level: 'warn', toDb: true });
         else console.warn(msg);
         return null;
       }
@@ -560,7 +607,7 @@ async function callGeminiWithFallback(requestBody, preferredModelName, logger = 
         if (invalidReason) {
           lastEmptyReason = invalidReason;
           const msg = `⚠️ ${stepLabel}: โมเดล "${candidateModel}" ส่งผลไม่ตรงเงื่อนไข (${invalidReason}) — สลับไปลองโมเดลสำรอง...`;
-          if (logger) await logger.log(msg, { level: 'warn', toDb: false });
+          if (logger) await logger.log(msg, { level: 'warn', toDb: true });
           else console.warn(msg);
           return null;
         }
@@ -573,10 +620,13 @@ async function callGeminiWithFallback(requestBody, preferredModelName, logger = 
 
     lastStatus = res.status;
     lastErrorText = await res.text();
+    if (allowThinkingTune && res.status === 400 && /thinking/i.test(lastErrorText)) {
+      return tryModelOnce(candidateModel, false);
+    }
     // Fall back across models on 404 (deprecated model), 429 (quota), or 5xx (503 high demand / transient backend error)
     if (res.status === 404 || res.status === 429 || res.status >= 500) {
       const msg = `⚠️ ${stepLabel}: โมเดล "${candidateModel}" ตอบกลับ HTTP ${res.status} — สลับไปลองโมเดลสำรอง...`;
-      if (logger) await logger.log(msg, { level: 'warn', toDb: false });
+      if (logger) await logger.log(msg, { level: 'warn', toDb: true });
       else console.warn(msg);
       return null;
     }

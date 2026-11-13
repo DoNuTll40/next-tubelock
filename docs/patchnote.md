@@ -22,6 +22,8 @@ updated: 13 พฤศจิกายน 2026
   - อัปเดต `parseSubtitleCues` และ `findActiveSubtitleCue` (`playerUtils.js`) บนตัวเล่นวิดีโอ `VideoPlayer.jsx` ให้ค้นหาคิวล่าสุดตาม `currentTime` แบบ Binary Search เพื่อไม่ให้คิวเก่าค้างทับคำพูดใหม่
 - **แปลภาษาไทยแบบล็อกรหัส `id` 1-ต่อ-1 (`subtitlePrompts.js` & `translateCuesToThaiWithGemini`):**
   - ปรับขั้นที่ 2 จากการให้ AI เขียน SRT ซ้ำทั้งไฟล์เป็นการแปล JSON `{ "id", "text" }` ชุดละ `65` ประโยค โดยล็อกเวลาจากขั้นที่ 1 100% พร้อมแบ่งครึ่งส่งซ้ำอัตโนมัติเมื่อได้คำแปลไม่ครบ และกำชับขั้นที่ 1 ไม่ให้แปลคำพูดภาษาต่างประเทศเป็นภาษาไทยปนในแทร็กต้นฉบับ
+- **ป้องกันอาการค้างนานระหว่างสลับโมเดล AI (`callGeminiWithFallback` & `buildRequestBodyForModel`):**
+  - ปิดโหมดคิดลึก (`thinkingBudget: 0` / `thinkingLevel: 'minimal'`) บนโมเดลสำรองตระกูล Gemini 2.5 และ Gemini 3 เพื่อลดเวลาตอบกลับจากหลายนาทีเหลือหลักสิบวินาที พร้อมลด Timeout ต่อคำขอลงเหลือ `95s` (ไม่รอซ้ำซ้อน) และส่ง Heartbeat Log สถานะขึ้น DB/Console ทุก `18s` ระหว่างรอผล
 
 ### 2. ความเสถียรของ Worker แปลงสตรีม HLS และระบบ AI จัดเรตเนื้อหา
 - **แก้ไข `ReferenceError: vidNum is not defined` (`scripts/transcode-worker.js`):** ประกาศ `vidNum` ที่ขอบเขตระดับโมดูลพร้อมรักษาสถานะความคืบหน้าแบบเดินหน้าอย่างต่อเนื่องระหว่างการแปลง HLS
