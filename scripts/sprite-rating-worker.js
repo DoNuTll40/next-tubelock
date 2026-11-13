@@ -30,7 +30,7 @@ const AUTO_APPLY = (process.env.AUTO_APPLY || 'true').trim().toLowerCase() !== '
 const GEMINI_MODEL_NAME = (
   process.env.GEMINI_MODEL_NAME ||
   process.env.AI_MODEL ||
-  'gemini-2.5-flash'
+  'gemini-3.5-flash-lite'
 ).replace(/['"]/g, '').trim();
 
 const DATABASE_URL = (process.env.DATABASE_URL || '').trim();
@@ -239,6 +239,30 @@ function probeDuration(videoPath) {
   });
 }
 
+function probeImageDimensions(imagePath) {
+  return new Promise((resolve) => {
+    const proc = spawn('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height',
+      '-of', 'json',
+      imagePath,
+    ]);
+    let out = '';
+    proc.stdout.on('data', (d) => { out += d.toString(); });
+    proc.on('close', () => {
+      try {
+        const parsed = JSON.parse(out);
+        const s = (parsed.streams || [])[0] || {};
+        resolve({ width: Number(s.width || 0), height: Number(s.height || 0) });
+      } catch {
+        resolve({ width: 0, height: 0 });
+      }
+    });
+    proc.on('error', () => resolve({ width: 0, height: 0 }));
+  });
+}
+
 async function analyzeSpriteWithGeminiVision(spriteImagePath, videoTitle, userRating, logger = null) {
   const log = async (msg, opts) => {
     if (logger) await logger.log(msg, opts);
@@ -280,7 +304,7 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
   "sexualContentFrameCount": <ตัวเลขจำนวนเฟรมที่พบเนื้อหาทางเพศจาก 25 เฟรม เช่น 12>,
   "recommendedCategory": "general" | "music" | "gaming" | "tech" | "entertainment" | "education" | "cinema" | "shorts" | "adult",
   "recommendedTags": ["แท็ก1", "แท็ก2", "แท็ก3"],
-  "summary": "สรุปสิ่งที่เห็นในเฟรมวิดีโอและเหตุผลของการจัดเรตเป็นภาษาไทยอย่างละเอียดและตรงไปตรงมา"
+  "summary": "สรุปสิ่งที่เห็นในเฟรมวิดีโอและเหตุผลของการจัดเรตเป็นภาษาไทยที่สะกดถูกต้อง อ่านง่าย และเว้นวรรคระหว่างคำและวลีให้ชัดเจน"
 }`;
 
   const safetySettings = [
@@ -313,18 +337,26 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
     safetySettings,
   });
 
-  const cleanedModel = String(GEMINI_MODEL_NAME || 'gemini-2.5-flash-lite')
+  const cleanedModel = String(GEMINI_MODEL_NAME || 'gemini-3.5-flash-lite')
     .replace(/^models\//i, '')
     .replace(/flesh/gi, 'flash')
     .trim();
+  const isLegacyDefault = !cleanedModel || cleanedModel === 'gemini-2.5-flash-lite' || cleanedModel.startsWith('gemini-2.0-');
+  const highQuotaModels = [
+    'gemini-3.5-flash-lite',
+    'gemini-flash-lite-latest',
+    'gemini-3.1-flash-lite',
+  ];
+  const rescueModels = [
+    'gemini-2.5-flash',
+    'gemini-3-flash-preview',
+    'gemini-3.8-flash',
+    'gemini-flash-latest',
+  ];
   const candidates = Array.from(
-    new Set([
-      cleanedModel,
-      'gemini-2.5-flash-lite',
-      'gemini-2.5-flash',
-      'gemini-2.0-flash-lite',
-      'gemini-2.0-flash',
-    ])
+    new Set(
+      (isLegacyDefault ? [...highQuotaModels, ...rescueModels, cleanedModel] : [cleanedModel, ...highQuotaModels, ...rescueModels]).filter(Boolean)
+    )
   );
 
   let data = null;
@@ -350,8 +382,8 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
 
     lastStatus = res.status;
     lastErrText = await res.text();
-    if (res.status === 404) {
-      await log(`⚠️ ไม่พบโมเดล Vision "${candidateModel}" (404) — กำลังสลับใช้โมเดลสำรอง...`, { level: 'warn' });
+    if (res.status === 404 || res.status === 429 || res.status >= 500) {
+      await log(`⚠️ โมเดล Vision "${candidateModel}" ตอบกลับ HTTP ${res.status} — กำลังสลับใช้โมเดลสำรอง...`, { level: 'warn' });
       continue;
     }
     throw new Error(`Gemini Vision API Error (${res.status}): ${lastErrText.slice(0, 400)}`);
@@ -441,6 +473,16 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
     normalizedRating = 'mature';
   }
 
+  const cleanSummary = String(
+    parsed.summary ||
+      (normalizedRating === 'mature'
+        ? 'ตรวจพบเนื้อหาสำหรับผู้ใหญ่หรือมีความล่อแหลมสูง จัดเรตติ้งเป็น Restricted / Mature'
+        : 'ตรวจสอบ Sprite Sheet ครบ 25 เฟรมเรียบร้อยแล้ว')
+  )
+    .replace(/กิจรรม/g, 'กิจกรรม')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
   return {
     suggestedRating: normalizedRating,
     suggestedRatingLabel: RATING_LABELS[normalizedRating] || 'ทั่วไป (All Ages)',
@@ -452,7 +494,7 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
     ],
     recommendedCategory: normalizedRating === 'mature' && (!parsed.recommendedCategory || parsed.recommendedCategory === 'general') ? 'adult' : (parsed.recommendedCategory || 'general'),
     recommendedTags: Array.isArray(parsed.recommendedTags) && parsed.recommendedTags.length > 0 ? parsed.recommendedTags : (normalizedRating === 'mature' ? ['18+', 'NSFW', 'Mature'] : []),
-    summary: parsed.summary || (normalizedRating === 'mature' ? 'ตรวจพบเนื้อหาสำหรับผู้ใหญ่หรือมีความล่อแหลมสูง จัดเรตติ้งเป็น Restricted / Mature' : 'ตรวจสอบ Sprite Sheet ครบ 25 เฟรมเรียบร้อยแล้ว'),
+    summary: cleanSummary,
   };
 }
 
@@ -527,29 +569,74 @@ async function main() {
 
       const duration = await probeDuration(localVideoPath);
       const stepSec = Math.max(0.5, duration / 25);
-      await logger.log(`📐 ความยาววิดีโอ ${formatDurationShort(duration)} -> กำลังสกัด Sprite Sheet 5x5 (25 เฟรม, ดึงทุก ${stepSec.toFixed(1)}s)...`);
+
+      // Decode 1 auto-rotated sample frame to detect true display orientation (portrait vs 16:9)
+      const sampleFramePath = path.join(tempDir, 'orientation_probe.jpg');
+      let useAmbientFill = false;
+      try {
+        await runFFmpeg([
+          '-y',
+          '-ss', String(Math.min(Math.max(1, Math.floor(duration * 0.1)), Math.max(1, duration - 1))),
+          '-i', localVideoPath,
+          '-frames:v', '1',
+          '-update', '1',
+          '-q:v', '4',
+          sampleFramePath,
+        ]);
+        const dims = await probeImageDimensions(sampleFramePath);
+        if (dims.width > 0 && dims.height > 0) {
+          const aspect = dims.width / dims.height;
+          useAmbientFill = dims.width < dims.height || Math.abs(aspect - (16 / 9)) > 0.08;
+          await logger.log(
+            `📐 ความยาววิดีโอ ${formatDurationShort(duration)} (${dims.width}x${dims.height}${dims.width < dims.height ? ' แนวตั้ง' : ''}) -> สร้าง Sprite Sheet 5x5 (25 เฟรม, ดึงทุก ${stepSec.toFixed(1)}s)...`
+          );
+        } else {
+          await logger.log(`📐 ความยาววิดีโอ ${formatDurationShort(duration)} -> กำลังสกัด Sprite Sheet 5x5 (25 เฟรม, ดึงทุก ${stepSec.toFixed(1)}s)...`);
+        }
+      } catch (_) {
+        await logger.log(`📐 ความยาววิดีโอ ${formatDurationShort(duration)} -> กำลังสกัด Sprite Sheet 5x5 (25 เฟรม, ดึงทุก ${stepSec.toFixed(1)}s)...`);
+      } finally {
+        try { if (fs.existsSync(sampleFramePath)) fs.unlinkSync(sampleFramePath); } catch (_) {}
+      }
 
       // High-detail 5x5 grid (320x180 per tile = 1600x900) for Gemini Vision
-      await runFFmpegWithProgress([
-        '-y', '-i', localVideoPath,
-        '-vf', `fps=1/${stepSec.toFixed(4)},scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2,tile=5x5`,
-        '-frames:v', '1',
-        '-q:v', '2',
-        gridHighPath,
-      ], {
-        durationSec: duration,
-        stepLabel: 'สร้าง Sprite Grid 5x5 (1600x900)',
-        logger,
-      });
+      // Portrait / non-16:9 clips use blurred ambient edge fill so tiles fill the grid without black pillarbox bars
+      const gridFilter = `[0:v]fps=1/${stepSec.toFixed(4)},setsar=1,split=2[bg_src][fg_src];[bg_src]scale=320:180:force_original_aspect_ratio=increase,crop=320:180,gblur=sigma=18,eq=brightness=-0.22:saturation=0.85[bg];[fg_src]scale=320:180:force_original_aspect_ratio=decrease,setsar=1[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,tile=5x5`;
+      await runFFmpegWithProgress(
+        useAmbientFill
+          ? [
+              '-y', '-i', localVideoPath,
+              '-filter_complex', gridFilter,
+              '-frames:v', '1',
+              '-update', '1',
+              '-q:v', '2',
+              gridHighPath,
+            ]
+          : [
+              '-y', '-i', localVideoPath,
+              '-vf', `fps=1/${stepSec.toFixed(4)},scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2,setsar=1,tile=5x5`,
+              '-frames:v', '1',
+              '-update', '1',
+              '-q:v', '2',
+              gridHighPath,
+            ],
+        {
+          durationSec: duration,
+          stepLabel: 'สร้าง Sprite Grid 5x5 (1600x900)',
+          logger,
+        }
+      );
 
-      // Compact preview grid (800x450) for instant UI preview in Upload Studio
+      // Sharp compact 16:9 preview (960x540) for full-width UI preview in Upload Studio
       await runFFmpegWithProgress([
         '-y', '-i', gridHighPath,
-        '-vf', 'scale=800:450',
-        '-q:v', '5',
+        '-vf', 'scale=960:540,setsar=1',
+        '-frames:v', '1',
+        '-update', '1',
+        '-q:v', '4',
         gridCompactPath,
       ], {
-        stepLabel: 'ย่อ Sprite Preview (800x450)',
+        stepLabel: 'ย่อ Sprite Preview (960x540)',
         logger,
       });
     } else {
@@ -577,8 +664,8 @@ async function main() {
         logger,
       });
       await runFFmpegWithProgress(
-        ['-y', '-i', gridHighPath, '-vf', 'scale=800:450', '-q:v', '5', gridCompactPath],
-        { stepLabel: 'ย่อ Sprite Preview (800x450)', logger }
+        ['-y', '-i', gridHighPath, '-vf', "scale='min(960,iw)':-2,setsar=1", '-frames:v', '1', '-update', '1', '-q:v', '4', gridCompactPath],
+        { stepLabel: 'ย่อ Sprite Preview (960px)', logger }
       );
     }
 

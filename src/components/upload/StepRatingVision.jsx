@@ -34,6 +34,14 @@ const CONTENT_RATINGS = [
   },
 ];
 
+function formatThaiModerationText(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/กิจรรม/g, 'กิจกรรม')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 export default function StepRatingVision({
   contentRating,
   setContentRating,
@@ -223,7 +231,7 @@ export default function StepRatingVision({
               <img
                 src={spritePreviewUrl}
                 alt="ภาพตัวอย่าง 25 เฟรม"
-                className="w-full max-h-72 object-contain mx-auto"
+                className="w-full h-auto block"
               />
             </div>
           )}
@@ -267,8 +275,11 @@ export default function StepRatingVision({
               </div>
 
               {visionResult.comparisonNote && (
-                <p className="text-xs text-[#212529] dark:text-[#E4E4E7] leading-relaxed">
-                  {visionResult.comparisonNote}
+                <p
+                  lang="th"
+                  className="text-xs text-[#212529] dark:text-[#E4E4E7] leading-relaxed [word-break:normal] [overflow-wrap:break-word]"
+                >
+                  {formatThaiModerationText(visionResult.comparisonNote)}
                 </p>
               )}
 
@@ -301,8 +312,11 @@ export default function StepRatingVision({
               )}
 
               {visionResult.summary && (
-                <p className="text-xs text-[#6C655D] dark:text-[#CCCCCC] bg-white dark:bg-[#181818] p-2.5 rounded-lg border border-[#EFECE6] dark:border-white/10">
-                  {visionResult.summary}
+                <p
+                  lang="th"
+                  className="text-xs leading-relaxed text-[#6C655D] dark:text-[#CCCCCC] bg-white dark:bg-[#181818] p-3 rounded-lg border border-[#EFECE6] dark:border-white/10 [word-break:normal] [overflow-wrap:break-word]"
+                >
+                  {formatThaiModerationText(visionResult.summary)}
                 </p>
               )}
             </div>
