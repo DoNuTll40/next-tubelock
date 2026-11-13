@@ -105,6 +105,7 @@ export default function UploadPage() {
   const [customPrompt, setCustomPrompt] = useState('');
   const [subtitleStatus, setSubtitleStatus] = useState('waiting'); // 'waiting' | 'processing' | 'ready' | 'failed'
   const [generatedSubtitleSrt, setGeneratedSubtitleSrt] = useState('');
+  const [subtitleTracks, setSubtitleTracks] = useState([]);
 
   // Step 3: Content Rating & Sprite Sheet Vision State
   const [contentRating, setContentRating] = useState('all'); // 'all' | '13+' | '18+' | 'mature' | 'auto'
@@ -222,6 +223,7 @@ export default function UploadPage() {
           if (vid.audioStatus) setAudioStatus(vid.audioStatus);
           if (vid.subtitleStatus) setSubtitleStatus(vid.subtitleStatus);
           if (vid.subtitleSrt) setGeneratedSubtitleSrt(vid.subtitleSrt);
+          if (Array.isArray(vid.subtitleTracks)) setSubtitleTracks(vid.subtitleTracks);
 
           // Workflow #2: Sprite Sheet Grid & Content Rating status
           if (vid.spriteStatus) setSpriteSheetStatus(vid.spriteStatus);
@@ -449,6 +451,7 @@ export default function UploadPage() {
         setAudioStatus(job.audioStatus);
         setSubtitleStatus(job.subtitleStatus);
         setGeneratedSubtitleSrt(job.subtitleSrt);
+        setSubtitleTracks(Array.isArray(job.subtitleTracks) ? job.subtitleTracks : []);
         setSpriteSheetStatus(job.spriteStatus);
         setSpritePreviewUrl(job.spritePreviewUrl);
         setRatingCheckStatus(job.ratingCheckStatus);
@@ -1426,6 +1429,7 @@ export default function UploadPage() {
                     audioStatus={audioStatus}
                     subtitleStatus={subtitleStatus}
                     generatedSubtitleSrt={generatedSubtitleSrt}
+                    subtitleTracks={subtitleTracks}
                     onDispatchAudioSubtitles={handleDispatchAudioSubtitles}
                     onAddLog={addLog}
                   />

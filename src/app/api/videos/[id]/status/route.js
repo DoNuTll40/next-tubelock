@@ -93,6 +93,7 @@ export async function GET(request, context) {
         subtitleStatus: video.subtitle_status || 'waiting',
         subtitleSrt: video.subtitle_srt || '',
         subtitleVtt: video.subtitle_vtt || '',
+        subtitleTracks: parseJsonSafe(video.subtitle_tracks) || [],
         subtitleModel: video.subtitle_model || '',
         spriteStatus: video.sprite_status || 'waiting',
         spritePreviewUrl: video.sprite_preview_url || '',

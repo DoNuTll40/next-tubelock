@@ -16,6 +16,10 @@ import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { neon } from '@neondatabase/serverless';
+import {
+  SUBTITLE_TRANSCRIPTION_PROMPT,
+  SUBTITLE_THAI_TRANSLATE_PROMPT,
+} from '../src/lib/subtitlePrompts.js';
 
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
 const RAW_FILE_NAME = process.env.RAW_FILE_NAME || process.argv[3] || '';
@@ -287,123 +291,19 @@ async function discoverAvailableGeminiModel() {
   }
 }
 
-function parseGeminiSubtitleResponse(rawText) {
+function parseJsonResponseSafe(rawText) {
   if (!rawText) return null;
   let cleaned = String(rawText).trim();
   cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-
   try {
     const parsed = JSON.parse(cleaned);
-    if (parsed && typeof parsed === 'object') {
-      const isThai = Boolean(parsed.is_thai);
-      let detectedLangCode = String(parsed.detected_lang_code || (isThai ? 'th' : 'und')).trim();
-      let detectedLangName = String(parsed.detected_lang_name || (isThai ? 'ไทย' : 'ภาษาต่างประเทศ')).trim();
-      let thaiSrt = String(parsed.thai_srt || '').trim();
-      let originalSrt = String(parsed.original_srt || '').trim();
-
-      // If audio was Thai, ensure thai_srt has text
-      if (isThai && !thaiSrt && originalSrt) {
-        thaiSrt = originalSrt;
-        originalSrt = '';
-      }
-
-      return {
-        isThai,
-        detectedLangCode,
-        detectedLangName,
-        thaiSrt,
-        originalSrt,
-      };
-    }
-  } catch (err) {
-    console.warn('⚠️ Subtitle JSON parse fallback:', err.message);
-  }
-
-  // Fallback: If AI returned raw SRT directly
-  if (cleaned.includes('-->')) {
-    return {
-      isThai: true,
-      detectedLangCode: 'th',
-      detectedLangName: 'ไทย',
-      thaiSrt: cleaned,
-      originalSrt: '',
-    };
-  }
-
-  return null;
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch (_) {}
+  return { rawFallbackText: cleaned };
 }
 
-async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName, customPrompt) {
-  if (!GEMINI_API_KEY) {
-    throw new Error('ไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ Environment / GitHub Secrets');
-  }
-
-  const audioBuffer = await fs.promises.readFile(audioFilePath);
-  const base64Audio = audioBuffer.toString('base64');
-
-  const systemInstruction = `คุณคือผู้เชี่ยวชาญระดับสูงด้านการถอดเสียง (Audio Transcription), ระบุภาษาพูด (Language Identification) และแปลภาษาทำคำบรรยาย (.SRT) สองแทร็ก (Dual-Track Subtitles) ความแม่นยำสูง
-
-ภารกิจหลักของคุณ:
-1. วิเคราะห์และตรวจจับภาษาพูดหลักในไฟล์เสียงนี้อย่างละเอียดและชัดเจน:
-   - หากเป็นภาษาไทย: กำหนด is_thai = true, detected_lang_code = "th", detected_lang_name = "ไทย"
-   - หากเป็นภาษาต่างประเทศอื่นๆ: กำหนด is_thai = false
-     * กรณีภาษาจีน ต้องระบุสำเนียง/รูปแบบตัวเขียนให้ชัดเจน เช่น:
-       - "จีนกลาง (ตัวย่อ)" (detected_lang_code: "zh-Hans")
-       - "จีนกลาง (ตัวเต็ม)" (detected_lang_code: "zh-Hant")
-       - "จีนกวางตุ้ง" (detected_lang_code: "yue")
-       - "จีนไต้หวัน" (detected_lang_code: "zh-TW")
-     * ภาษาอื่นๆ ระบุชื่อภาษาภาษาไทยให้ชัดเจน เช่น "ญี่ปุ่น" ("ja"), "อังกฤษ" ("en"), "เกาหลี" ("ko"), "เวียดนาม" ("vi"), "ฝรั่งเศส" ("fr") เป็นต้น
-2. สร้างคำบรรยาย .SRT แบบ 2 แทร็ก (Synchronized Dual Tracks):
-   - แทร็ก 1 (thai_srt): คำบรรยายภาษาไทยที่แปลอย่างสละสลวย เป็นธรรมชาติ ถูกต้องตามอารมณ์และบริบทของบทสนทนา (หากเสียงต้นฉบับเป็นภาษาไทยอยู่แล้ว ให้ถอดเสียงภาษาไทยลงใน thai_srt นี้)
-   - แทร็ก 2 (original_srt): คำบรรยายตามภาษาต้นฉบับที่พูดจริงในวิดีโอ (เช่น ข้อความภาษาจีน, ภาษาอังกฤษ, ภาษาญี่ปุ่น) พร้อมไทม์โค้ดตรงกับเสียงพูดเป๊ะๆ (หากเสียงต้นฉบับเป็นภาษาไทยอยู่แล้ว ให้เว้นว่าง original_srt เป็น "")
-3. กฎเหล็กของไฟล์ .SRT:
-   - ใช้ไทม์โค้ดมาตรฐาน 00:00:00,000 --> 00:00:00,000
-   - แบ่งวรรคตอนให้อ่านง่าย ไม่เกิน 2 บรรทัดต่อ 1 sequence
-   - ไทม์โค้ดระหว่าง thai_srt และ original_srt ต้องตรงกัน เพื่อให้ผู้ชมสามารถสลับแทร็กภาษาใน Player ได้อย่างราบรื่น
-4. ส่งผลลัพธ์กลับมาเป็น JSON ตามโครงสร้างนี้เท่านั้น (ห้ามใส่คำเกริ่นนำหรือ markdown code block):
-{
-  "is_thai": false,
-  "detected_lang_code": "zh-Hans",
-  "detected_lang_name": "จีนกลาง (ตัวย่อ)",
-  "thai_srt": "1\\n00:00:00,320 --> 00:00:02,500\\n...\\n",
-  "original_srt": "1\\n00:00:00,320 --> 00:00:02,500\\n...\\n"
-}`;
-
-  const userPrompt = customPrompt
-    ? `${systemInstruction}\n\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nกรุณาถอดเสียงและแปลคำบรรยายจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`
-    : `${systemInstruction}\n\nกรุณาถอดเสียงและแปลคำบรรยายจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`;
-
-  const safetySettings = [
-    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-    { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
-  ];
-
-  const requestBody = JSON.stringify({
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          {
-            inlineData: {
-              mimeType: 'audio/mp3',
-              data: base64Audio,
-            },
-          },
-          { text: userPrompt },
-        ],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      responseMimeType: 'application/json',
-    },
-    safetySettings,
-  });
-
-  const candidates = normalizeModelCandidates(modelName);
+async function callGeminiWithFallback(requestBody, preferredModelName) {
+  const candidates = normalizeModelCandidates(preferredModelName);
   let lastErrorText = '';
   let lastStatus = 0;
 
@@ -418,12 +318,8 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
     if (res.ok) {
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
-      if (!text) {
-        throw new Error('Gemini API ไม่ได้ส่งเนื้อหาคำบรรยายกลับมา');
-      }
-      const parsed = parseGeminiSubtitleResponse(text);
-      if (parsed) return parsed;
-      throw new Error('ไม่สามารถแปลงผลลัพธ์คำบรรยายจาก Gemini ให้เป็นโครงสร้างที่ถูกต้องได้');
+      if (!text) throw new Error('Gemini API ไม่ได้ส่งเนื้อหาคำบรรยายกลับมา');
+      return text;
     }
 
     lastStatus = res.status;
@@ -435,7 +331,6 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
     throw new Error(`Gemini API Error (${res.status}): ${lastErrorText.slice(0, 400)}`);
   }
 
-  // Dynamic fallback via ListModels if all static candidates returned 404
   const discoveredModel = await discoverAvailableGeminiModel();
   if (discoveredModel) {
     console.log(`🔄 Discovered available model from ListModels: ${discoveredModel}`);
@@ -448,14 +343,125 @@ async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName,
     if (res.ok) {
       const data = await res.json();
       const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('\n')?.trim();
-      if (text) {
-        const parsed = parseGeminiSubtitleResponse(text);
-        if (parsed) return parsed;
-      }
+      if (text) return text;
     }
   }
 
   throw new Error(`Gemini API Error (${lastStatus}): ${lastErrorText.slice(0, 400)}`);
+}
+
+const GEMINI_SAFETY_SETTINGS = [
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+  { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+];
+
+async function transcribeOriginalAudioWithGemini(audioFilePath, videoTitle, modelName, customPrompt) {
+  if (!GEMINI_API_KEY) {
+    throw new Error('ไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ Environment / GitHub Secrets');
+  }
+
+  const audioBuffer = await fs.promises.readFile(audioFilePath);
+  const base64Audio = audioBuffer.toString('base64');
+
+  const prompt = customPrompt
+    ? `${SUBTITLE_TRANSCRIPTION_PROMPT}\n\nข้อมูลบริบทชื่อวิดีโอ: "${videoTitle || ''}"\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nกรุณาถอดเสียงภาษาต้นฉบับจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`
+    : `${SUBTITLE_TRANSCRIPTION_PROMPT}\n\nข้อมูลบริบทชื่อวิดีโอ: "${videoTitle || ''}"\nกรุณาถอดเสียงภาษาต้นฉบับจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`;
+
+  const requestBody = JSON.stringify({
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'audio/mp3', data: base64Audio } },
+          { text: prompt },
+        ],
+      },
+    ],
+    generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+    safetySettings: GEMINI_SAFETY_SETTINGS,
+  });
+
+  const text = await callGeminiWithFallback(requestBody, modelName);
+  const parsed = parseJsonResponseSafe(text);
+  if (parsed?.rawFallbackText && parsed.rawFallbackText.includes('-->')) {
+    return {
+      isThai: true,
+      detectedLangCode: 'th',
+      detectedLangName: 'ไทย',
+      originalSrt: parsed.rawFallbackText,
+    };
+  }
+
+  const isThai = Boolean(parsed?.is_thai);
+  const detectedLangCode = String(parsed?.detected_lang_code || (isThai ? 'th' : 'und')).trim();
+  const detectedLangName = String(parsed?.detected_lang_name || (isThai ? 'ไทย' : 'ภาษาต่างประเทศ')).trim();
+  const originalSrt = String(parsed?.original_srt || parsed?.thai_srt || '').trim();
+
+  if (!originalSrt) {
+    throw new Error('ไม่สามารถถอดเสียงภาษาต้นฉบับเป็นไฟล์ .SRT ได้');
+  }
+
+  return { isThai, detectedLangCode, detectedLangName, originalSrt };
+}
+
+async function translateOriginalSrtToThaiWithGemini(originalSrt, detectedLangName, modelName, customPrompt) {
+  const prompt = customPrompt
+    ? `${SUBTITLE_THAI_TRANSLATE_PROMPT}\n\nภาษาต้นฉบับ: ${detectedLangName}\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nบทคำบรรยาย .SRT ภาษาต้นฉบับ:\n${originalSrt}`
+    : `${SUBTITLE_THAI_TRANSLATE_PROMPT}\n\nภาษาต้นฉบับ: ${detectedLangName}\n\nบทคำบรรยาย .SRT ภาษาต้นฉบับ:\n${originalSrt}`;
+
+  const requestBody = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+    safetySettings: GEMINI_SAFETY_SETTINGS,
+  });
+
+  const text = await callGeminiWithFallback(requestBody, modelName);
+  const parsed = parseJsonResponseSafe(text);
+  if (parsed?.rawFallbackText && parsed.rawFallbackText.includes('-->')) {
+    return parsed.rawFallbackText;
+  }
+
+  const thaiSrt = String(parsed?.thai_srt || '').trim();
+  if (!thaiSrt) {
+    throw new Error('ไม่สามารถแปลบทคำบรรยายจากภาษาต้นฉบับเป็นภาษาไทยได้');
+  }
+  return thaiSrt;
+}
+
+async function generateSubtitlesWithGemini(audioFilePath, videoTitle, modelName, customPrompt) {
+  // Step 1: Transcribe audio strictly in original spoken language + detect language
+  console.log('🎙️ Step 1/2: Transcribing original spoken audio & detecting language...');
+  const step1 = await transcribeOriginalAudioWithGemini(audioFilePath, videoTitle, modelName, customPrompt);
+
+  if (step1.isThai) {
+    return {
+      isThai: true,
+      detectedLangCode: 'th',
+      detectedLangName: 'ไทย',
+      originalSrt: step1.originalSrt,
+      thaiSrt: step1.originalSrt,
+    };
+  }
+
+  // Step 2: Translate transcribed original_srt into natural Thai .SRT
+  console.log(`🌐 Step 2/2: Detected "${step1.detectedLangName}" (${step1.detectedLangCode}) -> Translating original SRT to Thai...`);
+  const thaiSrt = await translateOriginalSrtToThaiWithGemini(
+    step1.originalSrt,
+    step1.detectedLangName,
+    modelName,
+    customPrompt
+  );
+
+  return {
+    isThai: false,
+    detectedLangCode: step1.detectedLangCode,
+    detectedLangName: step1.detectedLangName,
+    originalSrt: step1.originalSrt,
+    thaiSrt,
+  };
 }
 
 async function main() {
@@ -561,6 +567,15 @@ async function main() {
     if (!isThai && originalSrt) {
       tracks = [
         {
+          id: 'original',
+          label: `${detectedLangName} (ต้นฉบับ)`,
+          lang: detectedLangCode,
+          isAutoTranslate: false,
+          isOriginal: true,
+          srt: originalSrt,
+          vtt: originalVtt,
+        },
+        {
           id: 'th',
           label: 'ไทย (แปลอัตโนมัติ)',
           lang: 'th',
@@ -568,15 +583,6 @@ async function main() {
           isOriginal: false,
           srt: thaiSrt,
           vtt: thaiVtt,
-        },
-        {
-          id: 'original',
-          label: `${detectedLangName} (สร้างอัตโนมัติ)`,
-          lang: detectedLangCode,
-          isAutoTranslate: false,
-          isOriginal: true,
-          srt: originalSrt,
-          vtt: originalVtt,
         },
       ];
     } else {

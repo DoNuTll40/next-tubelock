@@ -27,13 +27,35 @@ function resizeThumbnailFile(file) {
       const img = new Image();
       img.onerror = () => reject(new Error('ไฟล์รูปภาพไม่ถูกต้อง'));
       img.onload = () => {
-        const maxWidth = 960;
-        const scale = img.width > maxWidth ? maxWidth / img.width : 1;
         const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round(img.width * scale));
-        canvas.height = Math.max(1, Math.round(img.height * scale));
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        if (img.width < img.height) {
+          // Format portrait cover onto 16:9 canvas with blurred dark backdrop + sharp centered frame
+          const targetW = 960;
+          const targetH = 540;
+          canvas.width = targetW;
+          canvas.height = targetH;
+
+          const bgScale = Math.max(targetW / img.width, targetH / img.height);
+          const bgW = img.width * bgScale;
+          const bgH = img.height * bgScale;
+          ctx.save();
+          ctx.filter = 'blur(26px) brightness(0.62) saturate(0.9)';
+          ctx.drawImage(img, (targetW - bgW) / 2, (targetH - bgH) / 2, bgW, bgH);
+          ctx.restore();
+
+          const fgScale = targetH / img.height;
+          const fgW = img.width * fgScale;
+          ctx.drawImage(img, (targetW - fgW) / 2, 0, fgW, targetH);
+        } else {
+          const maxWidth = 960;
+          const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
+
         resolve(canvas.toDataURL('image/jpeg', 0.86));
       };
       img.src = String(reader.result || '');
@@ -309,15 +331,22 @@ export default function StepDetails({
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={opt.dataUrl}
-                    alt={opt.label || `ตัวอย่างภาพปก ${idx + 1}`}
-                    className="w-full h-full object-cover group-hover:scale-[1.03] transition duration-200"
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 w-full h-full object-cover blur-md scale-110 opacity-50 pointer-events-none select-none"
                   />
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent px-2 py-1 flex items-center justify-between text-[10px] text-white">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={opt.dataUrl}
+                    alt={opt.label || `ตัวอย่างภาพปก ${idx + 1}`}
+                    className="relative z-10 w-full h-full object-contain group-hover:scale-[1.03] transition duration-200"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 via-black/30 to-transparent px-2 py-1 flex items-center justify-between text-[10px] text-white">
                     <span className="font-medium truncate">{opt.label || `ช่วงที่ ${idx + 1}`}</span>
                     <span className="font-mono opacity-85">{formatThumbTime(opt.timeSec)}</span>
                   </div>
                   {isSelected && (
-                    <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[#FF7A00] text-white flex items-center justify-center shadow">
+                    <span className="absolute top-1.5 right-1.5 z-20 w-5 h-5 rounded-full bg-[#FF7A00] text-white flex items-center justify-center shadow">
                       <Check className="w-3 h-3 stroke-[2.5]" />
                     </span>
                   )}

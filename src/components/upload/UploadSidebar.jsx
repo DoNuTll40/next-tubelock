@@ -76,14 +76,23 @@ export default function UploadSidebar({
     <div className="space-y-4 lg:sticky lg:top-28">
       <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
         {/* Video Preview */}
-        <div className="aspect-video rounded-xl overflow-hidden bg-[#212529] dark:bg-[#0d0d0d] relative flex items-center justify-center border border-[#EFECE6] dark:border-white/10">
+        <div className="aspect-video rounded-xl overflow-hidden bg-[#151413] dark:bg-[#0d0d0d] relative flex items-center justify-center border border-[#EFECE6] dark:border-white/10">
           {thumbnailUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={thumbnailUrl}
-              alt="ตัวอย่างวิดีโอ"
-              className="w-full h-full object-cover"
-            />
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={thumbnailUrl}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 w-full h-full object-cover blur-md scale-110 opacity-50 pointer-events-none select-none"
+              />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={thumbnailUrl}
+                alt="ตัวอย่างวิดีโอ"
+                className="relative z-10 w-full h-full object-contain"
+              />
+            </>
           ) : (
             <div className="flex flex-col items-center justify-center text-[#8C857B]">
               <Film className="w-10 h-10 stroke-[1.4] mb-1.5" />

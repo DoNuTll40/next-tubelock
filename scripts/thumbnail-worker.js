@@ -165,6 +165,86 @@ async function uploadFileToOneDrive(driveId, folderId, fileName, filePath, conte
   return await res.json();
 }
 
+const PORTRAIT_THUMB_FILTER =
+  '[0:v]scale=960:540:force_original_aspect_ratio=increase,crop=960:540,setsar=1,gblur=sigma=40,eq=brightness=-0.20:saturation=0.85[bg];' +
+  '[0:v]scale=960:540:force_original_aspect_ratio=decrease,setsar=1[fg];' +
+  '[bg][fg]overlay=(W-w)/2:(H-h)/2';
+
+function probeImageDimensions(imagePath) {
+  return new Promise((resolve) => {
+    const proc = spawn('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height',
+      '-of', 'json',
+      imagePath,
+    ]);
+    let out = '';
+    proc.stdout.on('data', (d) => {
+      out += d.toString();
+    });
+    proc.on('close', () => {
+      try {
+        const parsed = JSON.parse(out);
+        const s = (parsed.streams || [])[0] || {};
+        resolve({ width: Number(s.width || 0), height: Number(s.height || 0) });
+      } catch {
+        resolve({ width: 0, height: 0 });
+      }
+    });
+    proc.on('error', () => resolve({ width: 0, height: 0 }));
+  });
+}
+
+async function extractFormattedThumbnail(localVideoPath, seekSec, tempDir, outFileName) {
+  const rawFramePath = path.join(tempDir, `raw_${outFileName}`);
+  const outPath = path.join(tempDir, outFileName);
+
+  try {
+    // Decode 1 auto-rotated source frame first so iw/ih reflect actual display orientation
+    await runFFmpeg([
+      '-y',
+      '-ss', String(seekSec),
+      '-i', localVideoPath,
+      '-frames:v', '1',
+      '-update', '1',
+      '-q:v', '2',
+      rawFramePath,
+    ]);
+
+    const { width, height } = await probeImageDimensions(rawFramePath);
+    const isPortrait = width > 0 && height > 0 && width < height;
+
+    if (isPortrait) {
+      await runFFmpeg([
+        '-y',
+        '-i', rawFramePath,
+        '-filter_complex', PORTRAIT_THUMB_FILTER,
+        '-frames:v', '1',
+        '-update', '1',
+        '-q:v', '3',
+        outPath,
+      ]);
+    } else {
+      await runFFmpeg([
+        '-y',
+        '-i', rawFramePath,
+        '-vf', "scale='min(960,iw)':-2,setsar=1",
+        '-frames:v', '1',
+        '-update', '1',
+        '-q:v', '3',
+        outPath,
+      ]);
+    }
+
+    return { outPath, isPortrait };
+  } finally {
+    try {
+      if (fs.existsSync(rawFramePath)) fs.unlinkSync(rawFramePath);
+    } catch (_) {}
+  }
+}
+
 function runFFmpeg(args) {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', args);
@@ -289,17 +369,7 @@ async function main() {
     const options = [];
     for (const seg of segmentRatios) {
       const seekSec = Number(Math.min(Math.max(0.5, totalSec * seg.ratio), Math.max(0.5, totalSec - 0.5)).toFixed(2));
-      const outPath = path.join(tempDir, seg.file);
-
-      await runFFmpeg([
-        '-y',
-        '-ss', String(seekSec),
-        '-i', localVideoPath,
-        '-frames:v', '1',
-        '-vf', "scale='min(640,iw)':-2",
-        '-q:v', '3',
-        outPath,
-      ]);
+      const { outPath } = await extractFormattedThumbnail(localVideoPath, seekSec, tempDir, seg.file);
 
       await uploadFileToOneDrive(driveId, streamFolderId, seg.file, outPath, 'image/jpeg');
       const base64 = `data:image/jpeg;base64,${(await fs.promises.readFile(outPath)).toString('base64')}`;

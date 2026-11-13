@@ -661,10 +661,47 @@ async function main() {
             await fs.promises.writeFile(posterPath, Buffer.from(dataImageMatch[1], 'base64'));
         } else if (!existingThumbnailUrl) {
             shouldSetThumbUrl = true;
-            await runFFmpeg([
-                '-y', '-threads', '0', '-ss', seekTime, '-i', rawFilePath,
-                '-vframes', '1', '-q:v', '2', posterPath,
-            ]);
+            const rawPosterPath = path.join(hlsOutputDir, 'poster_raw.jpg');
+            try {
+                await runFFmpeg([
+                    '-y', '-threads', '0', '-ss', seekTime, '-i', rawFilePath,
+                    '-vframes', '1', '-update', '1', '-q:v', '2', rawPosterPath,
+                ]);
+                const posterDims = await new Promise((resolve) => {
+                    const p = spawn('ffprobe', [
+                        '-v', 'error', '-select_streams', 'v:0',
+                        '-show_entries', 'stream=width,height', '-of', 'json', rawPosterPath,
+                    ]);
+                    let sOut = '';
+                    p.stdout.on('data', (d) => { sOut += d.toString(); });
+                    p.on('close', () => {
+                        try {
+                            const st = (JSON.parse(sOut).streams || [])[0] || {};
+                            resolve({ w: Number(st.width || 0), h: Number(st.height || 0) });
+                        } catch {
+                            resolve({ w: 0, h: 0 });
+                        }
+                    });
+                    p.on('error', () => resolve({ w: 0, h: 0 }));
+                });
+                if (posterDims.w > 0 && posterDims.h > 0 && posterDims.w < posterDims.h) {
+                    const portraitFilter =
+                        '[0:v]scale=960:540:force_original_aspect_ratio=increase,crop=960:540,setsar=1,gblur=sigma=40,eq=brightness=-0.20:saturation=0.85[bg];' +
+                        '[0:v]scale=960:540:force_original_aspect_ratio=decrease,setsar=1[fg];' +
+                        '[bg][fg]overlay=(W-w)/2:(H-h)/2';
+                    await runFFmpeg([
+                        '-y', '-i', rawPosterPath,
+                        '-filter_complex', portraitFilter,
+                        '-frames:v', '1', '-update', '1', '-q:v', '2', posterPath,
+                    ]);
+                } else {
+                    await fs.promises.rename(rawPosterPath, posterPath);
+                }
+            } finally {
+                if (fs.existsSync(rawPosterPath)) {
+                    try { fs.unlinkSync(rawPosterPath); } catch (_) {}
+                }
+            }
         }
 
         const masterPlaylistPath = `/streams/${streamFolderName}/master.m3u8`;
