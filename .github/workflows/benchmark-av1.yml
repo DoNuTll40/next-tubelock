@@ -3,9 +3,11 @@ name: Benchmark AV1 HLS
 on:
   workflow_dispatch:
     inputs:
-      source_url:
-        description: 'Public direct video URL. Leave blank to use the AV1_BENCHMARK_SOURCE_URL secret.'
+      source_file:
+        description: 'OneDrive filename or path relative to My files, e.g. raw/video.mp4'
         type: string
+        required: true
+        default: 'ด้วยความคิดถึง - Drama Stream ｜ Cover by โจอี้ ภูวศิษฐ์.mp4'
       sample_seconds:
         description: 'Seconds from start. Set 0 for the entire source.'
         type: number
@@ -35,14 +37,12 @@ jobs:
 
       - name: Download test source
         env:
-          SOURCE_URL: ${{ inputs.source_url || secrets.AV1_BENCHMARK_SOURCE_URL }}
-        run: |
-          if [[ "$SOURCE_URL" != https://* ]]; then
-            echo "::error::Provide a direct HTTPS video URL through the input or repository secret."
-            exit 1
-          fi
-          time curl --fail --silent --show-error --location --proto '=https' --retry 3 \
-            --output "$RUNNER_TEMP/av1-source" -- "$SOURCE_URL"
+          SOURCE_FILE: ${{ inputs.source_file }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
+        run: time node scripts/download-benchmark-source.mjs "$RUNNER_TEMP/av1-source"
 
       - name: Encode AV1 HLS renditions
         env:
