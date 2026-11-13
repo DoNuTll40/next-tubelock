@@ -2,7 +2,16 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
-import { formatTime, formatTimePair, parseSubtitleCues, findActiveSubtitleCue, DEFAULT_SUBTITLE_STYLE, computeSubtitleStyles } from './player/playerUtils';
+import {
+  formatTime,
+  formatTimePair,
+  parseSubtitleCues,
+  findActiveSubtitleCue,
+  DEFAULT_SUBTITLE_STYLE,
+  computeSubtitleStyles,
+  buildMediaSessionArtwork,
+  normalizeMediaSessionTitle,
+} from './player/playerUtils';
 import PlayerTopBar from './player/PlayerTopBar';
 import PlayerCenterControls from './player/PlayerCenterControls';
 import PlayerBottomBar from './player/PlayerBottomBar';
@@ -1908,6 +1917,137 @@ export default function VideoPlayer({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, setIsCcActive]);
 
+  // Sync position progress & playback speed with OS media controls (Android / Lockscreen / Bluetooth)
+  const syncMediaPositionState = useCallback((positionOverride = null) => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    if (typeof navigator.mediaSession.setPositionState !== 'function') return;
+    const v = video.current;
+    if (!v || isSwitchingVideo) return;
+    const dur = Number(v.duration || duration || 0);
+    const pos = Number(
+      positionOverride !== null && positionOverride !== undefined
+        ? positionOverride
+        : (v.currentTime || 0)
+    );
+    const rate = Number(v.playbackRate || playbackRate || 1);
+    if (Number.isFinite(dur) && dur > 0 && Number.isFinite(pos) && pos >= 0 && Number.isFinite(rate) && rate > 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: dur,
+          playbackRate: rate,
+          position: Math.min(pos, dur),
+        });
+      } catch (_) { }
+    }
+  }, [video, duration, playbackRate, isSwitchingVideo]);
+
+  // Register Media Session metadata (title, artist, thumbnail artwork)
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') {
+      return;
+    }
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const docTitle = typeof document !== 'undefined' ? document.title : '';
+    const resolvedTitle = normalizeMediaSessionTitle(title, docTitle);
+    const resolvedArtist = (typeof channelName === 'string' && channelName.trim()) ? channelName.trim() : 'TubeLock';
+    const artwork = buildMediaSessionArtwork({
+      poster,
+      videoId,
+      videoSlug,
+      origin,
+      keepScrubPreviewOnLoad,
+    });
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: resolvedTitle,
+        artist: resolvedArtist,
+        album: 'TubeLock',
+        artwork,
+      });
+    } catch (_) { }
+  }, [title, channelName, poster, videoId, videoSlug, keepScrubPreviewOnLoad]);
+
+  // Keep OS Media Notification playbackState & timeline synced
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = (!src || isSwitchingVideo)
+        ? 'none'
+        : (isPlaying && !isEnded ? 'playing' : 'paused');
+    } catch (_) { }
+    syncMediaPositionState();
+  }, [src, isSwitchingVideo, isPlaying, isEnded, syncMediaPositionState]);
+
+  // Bind OS notification, lockscreen, and Bluetooth media transport buttons
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+    const safeSetHandler = (action, handler) => {
+      try {
+        ms.setActionHandler(action, handler);
+      } catch (_) { }
+    };
+
+    safeSetHandler('play', () => {
+      const v = video.current;
+      if (!v) return;
+      if (v.paused || v.ended || isEndedRef.current) {
+        togglePlay();
+      }
+    });
+    safeSetHandler('pause', () => {
+      const v = video.current;
+      if (!v || v.paused) return;
+      isUserPausedRef.current = true;
+      v.pause();
+      setIsPlaying(false);
+      syncMediaPositionState(v.currentTime);
+    });
+    safeSetHandler('seekbackward', (details) => {
+      const v = video.current;
+      if (!v) return;
+      const offset = Number(details?.seekOffset) || seekStep || 10;
+      const target = Math.max(0, (v.currentTime || 0) - offset);
+      commitSeek(target);
+      syncMediaPositionState(target);
+    });
+    safeSetHandler('seekforward', (details) => {
+      const v = video.current;
+      if (!v) return;
+      const offset = Number(details?.seekOffset) || seekStep || 10;
+      const maxDur = v.duration || duration || 0;
+      const rawTarget = (v.currentTime || 0) + offset;
+      const target = maxDur > 0 ? Math.min(maxDur, rawTarget) : rawTarget;
+      commitSeek(target);
+      syncMediaPositionState(target);
+    });
+    safeSetHandler('seekto', (details) => {
+      if (!details || typeof details.seekTime !== 'number' || Number.isNaN(details.seekTime)) return;
+      const maxDur = video.current?.duration || duration || 0;
+      const clamped = maxDur > 0
+        ? Math.min(Math.max(details.seekTime, 0), maxDur)
+        : Math.max(details.seekTime, 0);
+      commitSeek(clamped);
+      syncMediaPositionState(clamped);
+    });
+    safeSetHandler('stop', () => {
+      const v = video.current;
+      if (!v) return;
+      isUserPausedRef.current = true;
+      v.pause();
+      setIsPlaying(false);
+    });
+
+    return () => {
+      ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'stop'].forEach((action) => {
+        safeSetHandler(action, null);
+      });
+      try {
+        ms.playbackState = 'none';
+      } catch (_) { }
+    };
+  }, [video, togglePlay, commitSeek, seekStep, duration, syncMediaPositionState]);
+
 
   const is4K = (resolution && resolution.toString().includes('2160')) ||
     (activeLevelLabel && (activeLevelLabel.includes('4K') || activeLevelLabel.includes('2160p')));
@@ -1983,6 +2123,7 @@ export default function VideoPlayer({
         controlsList="nodownload nofullscreen noremoteplayback"
         disablePictureInPicture={false}
         disableRemotePlayback
+        onRateChange={() => syncMediaPositionState()}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => {
           if (isSwitchingVideo) return;
@@ -2142,6 +2283,7 @@ export default function VideoPlayer({
               fadeBlackOverlayRef.current.style.transition = 'none';
               fadeBlackOverlayRef.current.style.opacity = '0';
             }
+            syncMediaPositionState(v.currentTime);
           }
 
           setTimeout(() => {
@@ -2184,6 +2326,7 @@ export default function VideoPlayer({
               timeDisplayRef.current.textContent = formatTimePair(startSec, dur);
             }
           }
+          syncMediaPositionState(startSec);
 
           if (onLoadedMetadata) onLoadedMetadata(e);
         }}

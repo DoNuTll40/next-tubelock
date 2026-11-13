@@ -201,3 +201,94 @@ export function computeSubtitleStyles(style = DEFAULT_SUBTITLE_STYLE, isMobile =
     },
   };
 }
+
+/**
+ * Resolve a poster/URL into an absolute URL when an origin is supplied.
+ */
+function toAbsoluteMediaUrl(url, origin = '') {
+  if (typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  if (/^(https?:|data:|blob:)/i.test(trimmed)) return trimmed;
+  const baseOrigin = typeof origin === 'string' ? origin.trim().replace(/\/+$/, '') : '';
+  if (!baseOrigin) return trimmed;
+  return trimmed.startsWith('/') ? `${baseOrigin}${trimmed}` : `${baseOrigin}/${trimmed}`;
+}
+
+/**
+ * Infer raster image MIME type for MediaMetadata artwork entries.
+ */
+function inferMediaArtworkType(url = '') {
+  const lower = String(url).trim().toLowerCase();
+  if (lower.startsWith('data:')) {
+    const match = lower.match(/^data:(image\/[a-z0-9.+-]+)/);
+    return match ? match[1] : 'image/jpeg';
+  }
+  const cleanPath = lower.split(/[?#]/)[0];
+  if (cleanPath.endsWith('.png')) return 'image/png';
+  if (cleanPath.endsWith('.webp')) return 'image/webp';
+  if (cleanPath.endsWith('.avif')) return 'image/avif';
+  if (cleanPath.endsWith('.gif')) return 'image/gif';
+  return 'image/jpeg';
+}
+
+/**
+ * Clean up page-suffix titles for OS media notifications and lockscreen cards.
+ */
+export function normalizeMediaSessionTitle(title, documentTitle = '') {
+  const rawTitle = typeof title === 'string' ? title.trim() : '';
+  if (rawTitle) return rawTitle;
+  const fallback = typeof documentTitle === 'string'
+    ? documentTitle.replace(/\s*-\s*TubeLock$/i, '').trim()
+    : '';
+  return fallback || 'TubeLock';
+}
+
+/**
+ * Build browser-safe MediaMetadata artwork descriptors.
+ * Uses raster icons when restricted/SVG posters are active (Android cannot decode SVG artwork),
+ * and prefers same-origin /api/og JPEGs so redirect/Content-Disposition headers never break artwork.
+ */
+export function buildMediaSessionArtwork({
+  poster = '',
+  videoId = null,
+  videoSlug = '',
+  origin = '',
+  keepScrubPreviewOnLoad = false,
+} = {}) {
+  const fallbackArtwork = [
+    { src: toAbsoluteMediaUrl('/images/pwa-512.png', origin), sizes: '512x512', type: 'image/png' },
+    { src: toAbsoluteMediaUrl('/images/pwa-192.png', origin), sizes: '192x192', type: 'image/png' },
+  ].filter((item) => item.src);
+
+  const trimmedPoster = typeof poster === 'string' ? poster.trim() : '';
+  const isSvgPoster = /\.svg(?:[?#].*)?$/i.test(trimmedPoster) || /^data:image\/svg\+xml/i.test(trimmedPoster);
+
+  if (keepScrubPreviewOnLoad || !trimmedPoster || isSvgPoster) {
+    return fallbackArtwork;
+  }
+
+  if (trimmedPoster.startsWith('blob:') || trimmedPoster.startsWith('/api/videos/')) {
+    return [{ src: toAbsoluteMediaUrl(trimmedPoster, origin), type: inferMediaArtworkType(trimmedPoster) }];
+  }
+
+  if (trimmedPoster.startsWith('/api/og/')) {
+    return [{ src: toAbsoluteMediaUrl(trimmedPoster, origin), sizes: '1200x630', type: 'image/jpeg' }];
+  }
+
+  const rawArtworkId = (typeof videoSlug === 'string' && videoSlug.trim() && videoSlug.trim() !== 'undefined')
+    ? videoSlug.trim()
+    : (videoId !== null && videoId !== undefined && String(videoId).trim() !== '' && String(videoId).trim() !== 'undefined'
+      ? String(videoId).trim()
+      : '');
+
+  if (rawArtworkId) {
+    return [{
+      src: toAbsoluteMediaUrl(`/api/og/${encodeURIComponent(rawArtworkId)}.jpg`, origin),
+      sizes: '1200x630',
+      type: 'image/jpeg',
+    }];
+  }
+
+  return [{ src: toAbsoluteMediaUrl(trimmedPoster, origin), type: inferMediaArtworkType(trimmedPoster) }];
+}

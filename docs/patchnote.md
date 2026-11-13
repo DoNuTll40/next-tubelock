@@ -25,7 +25,8 @@ updated: 13 พฤศจิกายน 2026
 - **ป้องกันอาการค้างนานระหว่างสลับโมเดล AI (`callGeminiWithFallback` & `buildRequestBodyForModel`):**
   - ปิดโหมดคิดลึก (`thinkingBudget: 0` / `thinkingLevel: 'minimal'`) บนโมเดลสำรองตระกูล Gemini 2.5 และ Gemini 3 เพื่อลดเวลาตอบกลับจากหลายนาทีเหลือหลักสิบวินาที พร้อมลด Timeout ต่อคำขอลงเหลือ `95s` (ไม่รอซ้ำซ้อน) และส่ง Heartbeat Log สถานะขึ้น DB/Console ทุก `18s` ระหว่างรอผล
 
-### 2. ความเสถียรของ Worker แปลงสตรีม HLS และระบบ AI จัดเรตเนื้อหา
+### 2. ความเสถียรของ Worker แปลงสตรีม HLS, หน้าต่างแจ้งเตือนสื่อ และระบบ AI จัดเรตเนื้อหา
+- **แสดงภาพปกและชื่อช่องบนแถบแจ้งเตือนเล่นสื่อ (`VideoPlayer.jsx` & `playerUtils.js`):** เชื่อมต่อ Media Session API (`MediaMetadata`, `playbackState`, `setPositionState` และปุ่มควบคุม `play`/`pause`/`seekbackward`/`seekforward`/`seekto`) ให้แถบแจ้งเตือนบน Android/เดสก์ท็อปและหูฟังบลูทูธแสดงภาพ Thumbnail ของวิดีโอ (ผ่าน `/api/og/*.jpg` ที่ไม่มีปัญหารีไดเรกต์/Content-Disposition พร้อมปิดบังเป็นไอคอนแอปสำหรับวิดีโอ 18+ ที่ซ่อนภาพปก), ชื่อคลิปสะอาด และชื่อช่องแทนชื่อแท็บกับโลโก้เว็บ
 - **แก้ไข `ReferenceError: vidNum is not defined` (`scripts/transcode-worker.js`):** ประกาศ `vidNum` ที่ขอบเขตระดับโมดูลพร้อมรักษาสถานะความคืบหน้าแบบเดินหน้าอย่างต่อเนื่องระหว่างการแปลง HLS
 - **ปรับปรุงหน้าพรีวิวจัดเรตและความเสถียรโควตา AI (`StepRatingVision.jsx` & `scripts/sprite-rating-worker.js`):** ปรับการแสดงผลภาพตาราง 5x5 ของคลิปแนวตั้งให้เต็มกรอบ ปรับปรุงการตัดคำภาษาไทยบนหน้า UI และจัดลำดับความสำคัญโมเดล Gemini รุ่นโควตา 500 RPD ก่อนสลับใช้โมเดลสำรอง
 
