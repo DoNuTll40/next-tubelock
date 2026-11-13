@@ -181,24 +181,98 @@ export function computeSubtitleStyles(style = DEFAULT_SUBTITLE_STYLE, isMobile =
 
   return {
     windowStyle: {
-      backgroundColor: `rgba(${winColorObj.rgb}, ${winAlpha})`,
+      backgroundColor: winAlpha > 0 ? `rgba(${winColorObj.rgb}, ${winAlpha})` : 'transparent',
       padding: winAlpha > 0 ? '6px 10px' : '0px',
-      borderRadius: '6px',
+      borderRadius: '10px',
     },
     textStyle: {
-      display: 'inline',
+      display: 'inline-block',
       fontFamily: fontObj.css,
       fontVariant: fontObj.smallCaps ? 'small-caps' : 'normal',
       color: `rgba(${fontColorObj.rgb}, ${fontAlpha})`,
-      backgroundColor: `rgba(${bgColorObj.rgb}, ${bgAlpha})`,
+      backgroundColor: bgAlpha > 0 ? `rgba(${bgColorObj.rgb}, ${bgAlpha})` : 'transparent',
       fontSize: `${fontSizePx}px`,
-      lineHeight: 1.85,
+      lineHeight: 1.44,
       textShadow,
-      padding: bgAlpha > 0 ? '0.12em 0.45em' : '0px 4px',
-      borderRadius: '4px',
-      boxDecorationBreak: 'clone',
-      WebkitBoxDecorationBreak: 'clone',
+      padding: bgAlpha > 0 ? '0.26em 0.62em' : '0px 6px',
+      borderRadius: '8px',
+      whiteSpace: 'pre-line',
     },
+  };
+}
+
+/**
+ * Normalize multi-line subtitle cue text so stray blank lines do not introduce awkward gaps.
+ */
+export function normalizeDisplayCueText(text) {
+  if (typeof text !== 'string' || !text) return '';
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Compute subtitle overlay offsets so captions remain inside the rendered video picture
+ * rather than dropping into letterbox/pillarbox black bars on tall screens.
+ */
+export function computeSubtitleBoxLayout({
+  containerWidth = 0,
+  containerHeight = 0,
+  videoRatio = 16 / 9,
+  aspectMode = 'fit',
+  showControls = false,
+  isPlaying = false,
+  isMobile = false,
+} = {}) {
+  const defaultSideInset = isMobile ? 12 : 16;
+  const controlsClearance = isMobile ? 48 : 56;
+  const defaultRestPadding = isMobile ? 12 : 16;
+  const controlsVisible = Boolean(showControls || !isPlaying);
+
+  const w = Number(containerWidth) || 0;
+  const h = Number(containerHeight) || 0;
+  const ratio = Number(videoRatio);
+
+  if (w <= 0 || h <= 0 || !Number.isFinite(ratio) || ratio <= 0 || aspectMode !== 'fit') {
+    return {
+      bottomPx: controlsVisible ? controlsClearance : defaultRestPadding,
+      sideInsetPx: defaultSideInset,
+      maxWidthPx: null,
+    };
+  }
+
+  const containerRatio = w / h;
+  let letterboxY = 0;
+  let renderedHeight = h;
+  let renderedWidth = w;
+  let pillarboxX = 0;
+
+  if (ratio > containerRatio + 0.005) {
+    renderedHeight = w / ratio;
+    letterboxY = Math.max(0, (h - renderedHeight) / 2);
+  } else if (containerRatio > ratio + 0.005) {
+    renderedWidth = h * ratio;
+    pillarboxX = Math.max(0, (w - renderedWidth) / 2);
+  }
+
+  const pictureInset = Math.min(defaultRestPadding, Math.max(8, Math.round(renderedHeight * 0.05)));
+  const pictureBottomPx = letterboxY + pictureInset;
+  const rawBottomPx = controlsVisible
+    ? Math.max(controlsClearance, pictureBottomPx)
+    : pictureBottomPx;
+  const maxSafeBottomPx = Math.max(12, Math.round(h - letterboxY - 40));
+  const bottomPx = Math.round(Math.min(rawBottomPx, maxSafeBottomPx));
+
+  const maxWidthPx = pillarboxX > 16
+    ? Math.floor(Math.max(renderedWidth * 0.92, Math.min(w - defaultSideInset * 2, 300)))
+    : null;
+
+  return {
+    bottomPx,
+    sideInsetPx: defaultSideInset,
+    maxWidthPx,
   };
 }
 

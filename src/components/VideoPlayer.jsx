@@ -9,6 +9,8 @@ import {
   findActiveSubtitleCue,
   DEFAULT_SUBTITLE_STYLE,
   computeSubtitleStyles,
+  computeSubtitleBoxLayout,
+  normalizeDisplayCueText,
   buildMediaSessionArtwork,
   normalizeMediaSessionTitle,
 } from './player/playerUtils';
@@ -255,6 +257,7 @@ export default function VideoPlayer({
 
   // Responsive device view & popup placement
   const [isMobileView, setIsMobileView] = useState(false);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [settingsPlacement, setSettingsPlacement] = useState('bottom'); // 'bottom' | 'top'
 
   useEffect(() => {
@@ -268,6 +271,41 @@ export default function VideoPlayer({
     window.addEventListener('resize', checkIsMobile);
     return () => window.removeEventListener('resize', checkIsMobile);
   }, []);
+
+  // Measure actual rendered player box so subtitles stay inside the video frame on tall screens
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof window === 'undefined') return;
+
+    const updateSize = (nextW, nextH) => {
+      const w = Math.round(nextW || 0);
+      const h = Math.round(nextH || 0);
+      setContainerSize((prev) => (prev.width === w && prev.height === h ? prev : { width: w, height: h }));
+    };
+
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      updateSize(rect.width, rect.height);
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+
+    let observer = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        updateSize(entry.contentRect.width, entry.contentRect.height);
+      });
+      observer.observe(el);
+    }
+
+    return () => {
+      window.removeEventListener('resize', measure);
+      if (observer) observer.disconnect();
+    };
+  }, [isFullscreen, videoRatio, isMobileView]);
 
   // YouTube Mobile UI states & Subtitles (Direct from DB)
   const [isAutoplay, setIsAutoplay] = useState(defaultAutoplay);
@@ -2067,6 +2105,19 @@ export default function VideoPlayer({
       ? formatTimePair(previewTime, duration)
       : formatTimePair(currentVideoTime, duration);
 
+  const subtitleLayout = useMemo(
+    () => computeSubtitleBoxLayout({
+      containerWidth: containerSize.width,
+      containerHeight: containerSize.height,
+      videoRatio,
+      aspectMode,
+      showControls,
+      isPlaying,
+      isMobile: isMobileView,
+    }),
+    [containerSize.width, containerSize.height, videoRatio, aspectMode, showControls, isPlaying, isMobileView]
+  );
+
   const initialBufferPct = 0;
 
   return (
@@ -2508,34 +2559,35 @@ export default function VideoPlayer({
       {/* 💬 YouTube-Style Subtitle (CC) Overlay */}
       {(() => {
         const isEditingSubStyle = showSettingsMenu && activeMenuTab?.startsWith('subtitle_opt');
-        const displayCue = (isCcActive && hasSubtitles && activeCueText)
+        const rawDisplayCue = (isCcActive && hasSubtitles && activeCueText)
           ? activeCueText
           : isEditingSubStyle
-            ? (activeCueText || 'ตัวอย่างคำบรรยาย TubeLock (CC)')
+            ? (activeCueText || 'ตัวอย่างคำบรรยาย TubeLock (CC)\nปรับระยะห่างบรรทัดให้คมชัดสมดุล')
             : '';
+        const displayCue = normalizeDisplayCueText(rawDisplayCue);
         if (!displayCue || isEnded) return null;
         return (
           <div
-            className={`absolute left-4 right-4 z-25 flex justify-center pointer-events-none transition-all duration-200 ${
-              showControls || !isPlaying
-                ? isMobileView
-                  ? 'bottom-12 sm:bottom-14'
-                  : 'bottom-13 sm:bottom-14'
-                : 'bottom-3 sm:bottom-4'
-            }`}
+            className="absolute z-25 flex justify-center pointer-events-none transition-all duration-200"
+            style={{
+              bottom: `${subtitleLayout.bottomPx}px`,
+              left: `${subtitleLayout.sideInsetPx}px`,
+              right: `${subtitleLayout.sideInsetPx}px`,
+            }}
           >
             <div
-              className="max-w-[92%] sm:max-w-[80%] text-center transition-all duration-150 flex flex-col items-center gap-1.5"
-              style={computedSubStyles.windowStyle}
+              className="max-w-[92%] sm:max-w-[80%] text-center transition-all duration-150 inline-flex justify-center"
+              style={{
+                ...computedSubStyles.windowStyle,
+                ...(subtitleLayout.maxWidthPx ? { maxWidth: `${subtitleLayout.maxWidthPx}px` } : {}),
+              }}
             >
-              {displayCue.split('\n').map((line, idx) => (
-                <span
-                  key={idx}
-                  style={computedSubStyles.textStyle}
-                >
-                  {line}
-                </span>
-              ))}
+              <span
+                className="inline-block max-w-full whitespace-pre-line text-center break-words"
+                style={computedSubStyles.textStyle}
+              >
+                {displayCue}
+              </span>
             </div>
           </div>
         );
