@@ -12,9 +12,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
 import { neon } from '@neondatabase/serverless';
+import {
+  createWorkerLogger,
+  downloadFileWithProgress,
+  ensureWorkerLogsColumn,
+  formatDurationShort,
+} from './worker-utils.js';
 
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
 const RAW_FILE_NAME = process.env.RAW_FILE_NAME || process.argv[3] || '';
@@ -43,6 +47,7 @@ async function ensureThumbnailColumns() {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(50) DEFAULT 'waiting';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_options JSONB DEFAULT '[]'::jsonb;`;
     await sql`ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);`;
+    await ensureWorkerLogsColumn(sql);
   } catch (err) {
     console.warn('[Schema check warning]:', err.message);
   }
@@ -310,8 +315,10 @@ async function main() {
   const vidNum = Number(VIDEO_ID);
   const tempDir = path.resolve('./temp_thumbnails', String(vidNum));
   fs.mkdirSync(tempDir, { recursive: true });
+  const logger = createWorkerLogger(sql, vidNum, 'thumb', 'ภาพปก 3 ช่วง');
 
   try {
+    await logger.log(`🖼️ เริ่มงานสกัดภาพปก 3 ช่วงสำหรับวิดีโอ #${vidNum}...`, { toDb: true });
     await ensureThumbnailColumns();
 
     const rows = await sql`
@@ -337,11 +344,12 @@ async function main() {
       WHERE id = ${vidNum};
     `;
 
+    await logger.log('🔑 กำลังยืนยันตัวตนกับ Microsoft OneDrive...', { toDb: false });
     const token = await getGraphToken();
     const driveId = await getUserDriveId();
     const streamFolderId = await ensureStreamFolder(driveId, vidNum);
 
-    const rawUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(activeRawName)}?select=id,name,@microsoft.graph.downloadUrl`;
+    const rawUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(activeRawName)}?select=id,name,size,@microsoft.graph.downloadUrl`;
     const rawRes = await fetchWithRetry(rawUrl, { headers: { Authorization: `Bearer ${token}` } });
     if (!rawRes.ok) {
       throw new Error(`ไม่พบไฟล์ต้นฉบับบน OneDrive /raw/${activeRawName} (${rawRes.status})`);
@@ -351,13 +359,24 @@ async function main() {
     if (!rawDownloadUrl) throw new Error('ไม่สามารถรับลิงก์ดาวน์โหลดไฟล์ต้นฉบับได้');
 
     const localVideoPath = path.join(tempDir, 'input_video.mp4');
-    console.log(`⬇️ Downloading raw video /raw/${activeRawName} for 3-segment thumbnails...`);
-    const fileRes = await fetchWithRetry(rawDownloadUrl);
-    if (!fileRes.ok || !fileRes.body) throw new Error(`Failed to download raw video (${fileRes.status})`);
-    await pipeline(Readable.fromWeb(fileRes.body), fs.createWriteStream(localVideoPath));
+    await downloadFileWithProgress(rawDownloadUrl, localVideoPath, {
+      label: activeRawName,
+      expectedSizeBytes: rawData.size || 0,
+      logger,
+    });
 
+    await logger.log('🔍 กำลังวิเคราะห์สเปกวิดีโอด้วย ffprobe...', { toDb: false });
     const specs = await probeVideoSpecs(localVideoPath);
     const totalSec = Math.max(3, specs.duration || 10);
+    const safeDuration = Math.max(0, Math.round(Number(specs.duration) || 0));
+    const safeWidth = Math.max(0, Math.round(Number(specs.width) || 0));
+    const safeFps = Number((Number(specs.fps) || 0).toFixed(3)) || 0;
+    const safeBitrate = Math.max(0, Math.round(Number(specs.bitrate) || 0));
+
+    await logger.log(
+      `📊 สเปกวิดีโอ: ${specs.width}x${specs.height} [${specs.resolution}] • ยาว ${formatDurationShort(totalSec)} • ${safeFps} fps • ${specs.codec}`,
+      { toDb: true }
+    );
 
     // Divide video into 3 balanced segments: Start (~15%), Middle (~50%), End (~85%)
     const segmentRatios = [
@@ -367,12 +386,20 @@ async function main() {
     ];
 
     const options = [];
-    for (const seg of segmentRatios) {
+    for (let idx = 0; idx < segmentRatios.length; idx++) {
+      const seg = segmentRatios[idx];
       const seekSec = Number(Math.min(Math.max(0.5, totalSec * seg.ratio), Math.max(0.5, totalSec - 0.5)).toFixed(2));
-      const { outPath } = await extractFormattedThumbnail(localVideoPath, seekSec, tempDir, seg.file);
+      const { outPath, isPortrait } = await extractFormattedThumbnail(localVideoPath, seekSec, tempDir, seg.file);
 
+      const fileStat = await fs.promises.stat(outPath);
+      const kb = (fileStat.size / 1024).toFixed(1);
       await uploadFileToOneDrive(driveId, streamFolderId, seg.file, outPath, 'image/jpeg');
       const base64 = `data:image/jpeg;base64,${(await fs.promises.readFile(outPath)).toString('base64')}`;
+
+      await logger.log(
+        `📸 [${idx + 1}/3] สกัดและอัปโหลด "${seg.label}" (${formatDurationShort(seekSec)} • ${isPortrait ? 'แนวตั้ง -> 16:9 เบลอข้าง' : 'แนวนอน'} • ${kb} KB)`,
+        { toDb: true }
+      );
 
       options.push({
         id: seg.id,
@@ -414,18 +441,19 @@ async function main() {
           thumbnail_options = ${JSON.stringify(options)}::jsonb,
           thumbnail_url = ${nextThumbUrl || ''},
           onedrive_folder_id = COALESCE(NULLIF(onedrive_folder_id, ''), ${streamFolderId}),
-          duration = CASE WHEN ${specs.duration} > 0 THEN ${specs.duration} ELSE duration END,
-          resolution = CASE WHEN ${specs.width} > 0 THEN ${specs.resolution} ELSE resolution END,
-          fps = CASE WHEN ${specs.fps} > 0 THEN ${specs.fps} ELSE fps END,
+          duration = CASE WHEN CAST(${safeDuration} AS INTEGER) > 0 THEN CAST(${safeDuration} AS INTEGER) ELSE duration END,
+          resolution = CASE WHEN CAST(${safeWidth} AS INTEGER) > 0 THEN ${specs.resolution} ELSE resolution END,
+          fps = CASE WHEN CAST(${safeFps} AS NUMERIC) > 0 THEN CAST(${safeFps} AS NUMERIC) ELSE fps END,
           codec = CASE WHEN ${specs.codec} <> '' THEN ${specs.codec} ELSE codec END,
-          bitrate = CASE WHEN ${specs.bitrate} > 0 THEN ${specs.bitrate} ELSE bitrate END,
+          bitrate = CASE WHEN CAST(${safeBitrate} AS INTEGER) > 0 THEN CAST(${safeBitrate} AS INTEGER) ELSE bitrate END,
           updated_at = NOW()
       WHERE id = ${vidNum};
     `;
 
-    console.log(`✅ Extracted 3 thumbnails (15% / 50% / 85%) for video #${vidNum}`);
+    await logger.log(`✅ สร้างและบันทึกภาพปก 3 ช่วง (15% / 50% / 85%) เสร็จสมบูรณ์`, { level: 'success', toDb: true });
   } catch (err) {
     console.error('❌ [Thumbnail Worker Error]:', err);
+    await logger.log(`❌ สกัดภาพปกไม่สำเร็จ: ${err.message}`, { level: 'error', toDb: true });
     try {
       await sql`
         UPDATE videos

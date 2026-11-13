@@ -45,6 +45,7 @@ export default function StepRatingVision({
   visionResult,
   onDispatchSpriteRating,
   onApplyRecommendation,
+  workerDetail = '',
 }) {
   const [isDispatching, setIsDispatching] = useState(false);
   const isDispatchingRef = useRef(false);
@@ -118,6 +119,19 @@ export default function StepRatingVision({
           </span>
         </button>
       </div>
+
+      {isVisionAnalyzing && (
+        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs font-mono text-amber-800 dark:text-amber-300 flex items-center gap-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#FF7A00] shrink-0" />
+          <span className="break-words">{workerDetail || 'กำลังสร้าง Sprite Grid 5x5 และส่งให้ Gemini Vision วิเคราะห์...'}</span>
+        </div>
+      )}
+
+      {(ratingCheckStatus === 'failed' || spriteSheetStatus === 'failed') && !isVisionAnalyzing && (
+        <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-600 dark:text-rose-400">
+          {workerDetail || 'การตรวจสอบเรตเนื้อหาล้มเหลว — สามารถกด "ให้ AI จัดเรต" ด้านบนเพื่อลองใหม่อีกครั้ง'}
+        </div>
+      )}
 
       {/* 4 Manual Rating Cards */}
       <div className="space-y-2.5">

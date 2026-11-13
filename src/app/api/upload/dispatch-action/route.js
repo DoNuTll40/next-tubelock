@@ -1,6 +1,7 @@
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
 
 async function ensureAiColumns(sql) {
   try {
@@ -18,6 +19,7 @@ async function ensureAiColumns(sql) {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS vision_analysis JSONB;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(50) DEFAULT 'waiting';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_options JSONB DEFAULT '[]'::jsonb;`;
+    await ensureWorkerLogsColumn(sql);
   } catch (_) {}
 }
 
@@ -144,6 +146,11 @@ export async function POST(request) {
         model: String(resolvedModel),
         custom_prompt: String(customPrompt || ''),
       });
+      await appendWorkerLog(sql, videoId, {
+        source: 'subtitles',
+        label: 'Audio & Sub',
+        message: `🚀 ส่งคำสั่ง GitHub Actions (extract-audio-subtitles.yml) โมเดล ${resolvedModel} — รอ Ubuntu Runner รับงาน...`,
+      });
 
       return NextResponse.json({
         success: true,
@@ -186,6 +193,11 @@ export async function POST(request) {
         auto_apply: autoApply ? 'true' : 'false',
         model: String(resolvedModel),
       });
+      await appendWorkerLog(sql, videoId, {
+        source: 'rating',
+        label: 'Sprite & Rating',
+        message: `🚀 ส่งคำสั่ง GitHub Actions (sprite-content-rating.yml) ตรวจเรต "${targetUserRating}" — รอ Runner รับงาน...`,
+      });
 
       return NextResponse.json({
         success: true,
@@ -213,6 +225,11 @@ export async function POST(request) {
         video_id: String(videoId),
         raw_file_name: String(effectiveRawName),
         title: String(video.title || ''),
+      });
+      await appendWorkerLog(sql, videoId, {
+        source: 'hls',
+        label: 'HLS Engine',
+        message: `🚀 ส่งคำสั่ง GitHub Actions (transcode.yml) สำหรับ ${effectiveRawName}`,
       });
 
       return NextResponse.json({
@@ -247,8 +264,21 @@ export async function POST(request) {
           video_id: String(videoId),
           raw_file_name: String(effectiveRawName),
         });
+        await appendWorkerLog(sql, videoId, {
+          source: 'thumbnail',
+          label: 'Thumbnails',
+          message: `🚀 ส่งคำสั่ง GitHub Actions (extract-thumbnails.yml) สกัดภาพปก 3 ช่วงสำหรับ ${effectiveRawName}`,
+        });
       } catch (wfErr) {
         const isNotFound = /404|Not Found/i.test(wfErr.message || '');
+        await appendWorkerLog(sql, videoId, {
+          source: 'thumbnail',
+          label: 'Thumbnails',
+          level: isNotFound ? 'warn' : 'error',
+          message: isNotFound
+            ? '⚠️ ยังไม่พบ workflow extract-thumbnails.yml บน GitHub branch main'
+            : `❌ ส่งคำสั่ง extract-thumbnails.yml ล้มเหลว: ${wfErr.message}`,
+        });
         await sql`
           UPDATE videos
           SET thumbnail_status = ${isNotFound ? 'waiting' : 'failed'},

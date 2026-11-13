@@ -95,6 +95,7 @@ export default function StepDetails({
   onDispatchThumbnails,
   visionResult,
   onAddLog,
+  workerDetail = '',
 }) {
   const [tagInputValue, setTagInputValue] = useState('');
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
@@ -367,6 +368,19 @@ export default function StepDetails({
             ))
           )}
         </div>
+
+        {thumbnailStatus === 'generating' && (
+          <div className="px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] font-mono text-amber-800 dark:text-amber-300 flex items-center gap-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-[#FF7A00]" />
+            <span className="truncate">{workerDetail || 'กำลังส่งงานเข้า GitHub Actions เพื่อสกัดภาพปก 3 ช่วง...'}</span>
+          </div>
+        )}
+
+        {thumbnailStatus === 'failed' && thumbnailOptions.length === 0 && (
+          <div className="px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-600 dark:text-rose-400">
+            {workerDetail || 'สกัดภาพปก 3 ช่วงไม่สำเร็จ — สามารถกด "ดึง 3 ภาพจากวิดีโอ" ด้านบนเพื่อลองใหม่ หรืออัปโหลดภาพปกเอง'}
+          </div>
+        )}
 
         {thumbError && (
           <div className="text-[11px] text-rose-600 dark:text-rose-400">{thumbError}</div>

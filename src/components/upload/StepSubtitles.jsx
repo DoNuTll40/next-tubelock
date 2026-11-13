@@ -26,6 +26,7 @@ export default function StepSubtitles({
   subtitleTracks = [],
   onDispatchAudioSubtitles,
   onAddLog,
+  workerDetail = '',
 }) {
   const [isDispatching, setIsDispatching] = useState(false);
   const [previewTrackId, setPreviewTrackId] = useState('th');
@@ -181,11 +182,13 @@ export default function StepSubtitles({
                     ? 'พร้อมสั่ง AI ถอดเสียงทันที'
                     : `กำลังอัปโหลดไฟล์วิดีโอ (${uploadPercent}%)`}
                 </div>
-                <div className="text-xs text-[#6C655D] dark:text-[#9A9A9A] mt-0.5">
+                <div className="text-xs text-[#6C655D] dark:text-[#9A9A9A] mt-0.5 break-words">
                   {isSubtitleReady
                     ? 'บันทึกไฟล์คำบรรยาย .SRT / .VTT เรียบร้อย'
                     : isRunningWorkflow
-                    ? `กำลังประมวลผลด้วย ${selectedModel || 'Gemini AI'} กรุณารอสักครู่`
+                    ? workerDetail || `กำลังประมวลผลด้วย ${selectedModel || 'Gemini AI'} กรุณารอสักครู่`
+                    : subtitleStatus === 'failed' || audioStatus === 'failed'
+                    ? workerDetail || 'เกิดข้อผิดพลาดในการสร้างซับ — กดปุ่มด้านล่างเพื่อลองใหม่อีกครั้ง'
                     : 'กดปุ่มด้านล่างเพื่อถอดเสียงทันที หรือข้ามไปให้ระบบรันอัตโนมัติตอนกดเผยแพร่ใน Step 4'}
                 </div>
               </div>

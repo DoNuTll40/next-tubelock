@@ -88,6 +88,7 @@ export async function GET(request, context) {
         thumbnailOptions: parseJsonSafe(video.thumbnail_options) || [],
         fileSizeBytes: video.file_size_bytes || 0,
         runnerSpecs: parseJsonSafe(video.runner_specs),
+        workerLogs: parseJsonSafe(video.worker_logs) || [],
         // AI Workflows Real-time Fields
         audioStatus: video.audio_status || 'waiting',
         subtitleStatus: video.subtitle_status || 'waiting',

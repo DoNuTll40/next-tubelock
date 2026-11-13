@@ -25,6 +25,8 @@ export default function StepPublish({
   isStartingPipeline = false,
   errorMsg,
   ratingCheckStatus,
+  stageDetail = '',
+  workerDetail = '',
 }) {
   const hasTitle = Boolean(title && title.trim().length > 0);
   const hasRating = Boolean(contentRating);
@@ -161,13 +163,18 @@ export default function StepPublish({
         currentStatus === 'PROCESSING' ||
         currentStatus === 'TRANSCODING' ||
         currentStatus === 'QUEUED') && !completedVideo && (
-        <div className="p-4 rounded-xl bg-[#FF7A00]/10 border border-[#FF7A00]/30 flex items-center justify-between gap-3">
+        <div className="p-4 rounded-xl bg-[#FF7A00]/10 border border-[#FF7A00]/30 space-y-1.5">
           <div className="flex items-center gap-2.5 text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1]">
             <Loader2 className="w-4 h-4 text-[#FF7A00] animate-spin shrink-0" />
             <span>
               กำลังแปลงสตรีม HLS และตรวจสอบอัตโนมัติ ({transcodeProgress}%)...
             </span>
           </div>
+          {(workerDetail || stageDetail) && (
+            <div className="pl-6.5 text-xs font-mono text-[#6C655D] dark:text-[#CCCCCC] break-words">
+              {workerDetail || stageDetail}
+            </div>
+          )}
         </div>
       )}
 

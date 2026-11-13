@@ -2,6 +2,7 @@ import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { triggerGitHubWorkflow } from '@/app/api/upload/dispatch-action/route';
+import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
 
 /**
  * POST /api/upload/complete
@@ -61,6 +62,7 @@ export async function POST(request) {
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS rating_check_status VARCHAR(50) DEFAULT 'pending';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS vision_analysis JSONB;`;
       await sql`ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);`;
+      await ensureWorkerLogsColumn(sql);
     } catch (_) {}
 
     // 1. Verify video exists in DB
@@ -103,6 +105,10 @@ export async function POST(request) {
 
     // Handle manual subtitle upload if provided
     const hasManualSub = subtitleMode === 'manual' && (manualSubtitleSrt || manualSubtitleVtt);
+    const rawDurNum = Number(clientMeta?.duration || 0);
+    const safeDuration = Number.isFinite(rawDurNum) && rawDurNum > 0 ? Math.floor(rawDurNum) : 0;
+    const rawFpsNum = Number(clientMeta?.fps || 0);
+    const safeFps = Number.isFinite(rawFpsNum) && rawFpsNum > 0 ? Math.round(rawFpsNum * 1000) / 1000 : 0;
 
     // 2. Mark as QUEUED in Neon DB and save comprehensive client metadata
     const claimed = await sql`
@@ -121,9 +127,9 @@ export async function POST(request) {
         subtitle_srt = CASE WHEN ${hasManualSub} THEN ${manualSubtitleSrt} ELSE subtitle_srt END,
         subtitle_vtt = CASE WHEN ${hasManualSub} THEN ${manualSubtitleVtt} ELSE subtitle_vtt END,
         raw_file_name = ${finalRawFileName},
-        duration = CASE WHEN ${clientMeta.duration || 0} > 0 THEN ${Math.floor(clientMeta.duration || 0)} ELSE duration END,
+        duration = CASE WHEN CAST(${safeDuration} AS INTEGER) > 0 THEN CAST(${safeDuration} AS INTEGER) ELSE duration END,
         resolution = CASE WHEN ${clientMeta.resolution || ''} <> '' THEN ${clientMeta.resolution} ELSE resolution END,
-        fps = CASE WHEN ${clientMeta.fps || 0} > 0 THEN ${clientMeta.fps} ELSE fps END,
+        fps = CASE WHEN CAST(${safeFps} AS NUMERIC) > 0 THEN CAST(${safeFps} AS NUMERIC) ELSE fps END,
         codec = CASE WHEN ${clientMeta.codec || ''} <> '' THEN ${clientMeta.codec} ELSE codec END,
         thumbnail_url = CASE 
           WHEN ${clientMeta.thumbnailDataUrl || ''} <> '' THEN ${clientMeta.thumbnailDataUrl}
@@ -166,13 +172,30 @@ export async function POST(request) {
 
     // 3. Dispatch Workflow #3: HLS Multi-bitrate Transcoder (transcode.yml)
     try {
+      await appendWorkerLog(sql, videoId, {
+        source: 'hls',
+        label: 'HLS Engine',
+        message: `🚀 กำลังส่งคำสั่งหั่น HLS Multi-bitrate (transcode.yml) สำหรับไฟล์ ${finalRawFileName}`,
+      });
       await triggerGitHubWorkflow('transcode.yml', {
         video_id: String(videoId),
         raw_file_name: String(finalRawFileName),
         title: String(finalTitle),
       });
+      await appendWorkerLog(sql, videoId, {
+        source: 'hls',
+        label: 'HLS Engine',
+        level: 'success',
+        message: '✅ ส่งคิวเข้า GitHub Actions (transcode.yml) สำเร็จ รอ Ubuntu Runner รับงาน (~10-20 วิ)',
+      });
     } catch (dispatchErr) {
       const failMsg = dispatchErr.message;
+      await appendWorkerLog(sql, videoId, {
+        source: 'hls',
+        label: 'HLS Engine',
+        level: 'error',
+        message: `❌ ส่งคำสั่ง transcode.yml ไม่สำเร็จ: ${failMsg}`,
+      });
       await sql`
         UPDATE videos 
         SET 
@@ -210,8 +233,19 @@ export async function POST(request) {
           model: String(resolvedModel),
           custom_prompt: String(customPrompt || ''),
         });
+        await appendWorkerLog(sql, videoId, {
+          source: 'subtitles',
+          label: 'Audio & Sub',
+          message: `🚀 ส่งคำสั่งถอดเสียงและซับอัตโนมัติ (${resolvedModel}) เข้าคิว GitHub Actions`,
+        });
       } catch (subErr) {
         console.warn('[Auto-dispatch Audio Subtitle Warning]:', subErr.message);
+        await appendWorkerLog(sql, videoId, {
+          source: 'subtitles',
+          label: 'Audio & Sub',
+          level: 'warn',
+          message: `⚠️ Auto-dispatch ซับล้มเหลว: ${subErr.message}`,
+        });
       }
     }
 
@@ -239,8 +273,19 @@ export async function POST(request) {
           auto_apply: finalRating === 'auto' ? 'true' : 'false',
           model: String(resolvedModel),
         });
+        await appendWorkerLog(sql, videoId, {
+          source: 'rating',
+          label: 'Sprite & Rating',
+          message: `🚀 ส่งคำสั่งตรวจเรตเนื้อหาด้วย Gemini Vision (เรต: ${finalRating})`,
+        });
       } catch (spErr) {
         console.warn('[Auto-dispatch Sprite Rating Warning]:', spErr.message);
+        await appendWorkerLog(sql, videoId, {
+          source: 'rating',
+          label: 'Sprite & Rating',
+          level: 'warn',
+          message: `⚠️ Auto-dispatch ตรวจเรตล้มเหลว: ${spErr.message}`,
+        });
       }
     }
 

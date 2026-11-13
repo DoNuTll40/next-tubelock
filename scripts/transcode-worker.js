@@ -15,10 +15,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
 import os from 'node:os';
 import { neon } from '@neondatabase/serverless';
+import {
+    ensureWorkerLogsColumn,
+    createWorkerLogger,
+    downloadFileWithProgress,
+    formatDurationShort,
+} from './worker-utils.js';
 
 // จำนวนไฟล์ที่อัปโหลดขึ้น OneDrive พร้อมกัน (8 คือจุดที่เร็วสุดโดยไม่ติด 429 Throttle ของ Microsoft Graph)
 const UPLOAD_CONCURRENCY = 8;
@@ -135,6 +139,7 @@ if (!DATABASE_URL || !AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRE
 // 2. Initialize Database Client
 const dbUrl = (DATABASE_URL || '').trim();
 const sql = neon(dbUrl);
+const logger = createWorkerLogger(sql, Number(VIDEO_ID), 'hls', 'HLS Engine');
 let schemaChecked = false;
 
 async function ensureDbSchemaOnce() {
@@ -149,6 +154,7 @@ async function ensureDbSchemaOnce() {
     try {
         await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS runner_specs JSONB;`;
     } catch (_) { }
+    await ensureWorkerLogsColumn(sql);
 }
 
 // Network Resilience: รองรับ Retry เมื่อเจอ Rate Limit (429) หรือ Timeout
@@ -183,14 +189,28 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
     const vidNum = Number(VIDEO_ID);
     await ensureDbSchemaOnce();
 
+    const safeDuration = extra.duration != null && Number.isFinite(Number(extra.duration))
+        ? Math.max(0, Math.round(Number(extra.duration)))
+        : null;
+    const safeFps = extra.fps != null && Number.isFinite(Number(extra.fps)) && Number(extra.fps) > 0
+        ? Math.round(Number(extra.fps) * 1000) / 1000
+        : null;
+    const safeBitrate = extra.bitrate != null && Number.isFinite(Number(extra.bitrate))
+        ? Math.max(0, Math.round(Number(extra.bitrate)))
+        : null;
+    const safeFileSize = extra.file_size_bytes != null && Number.isFinite(Number(extra.file_size_bytes))
+        ? Math.max(0, Math.round(Number(extra.file_size_bytes)))
+        : null;
+    const safeProgress = Number.isFinite(Number(progress)) ? Math.round(Number(progress)) : 0;
+
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
-            console.log(`[DB UPDATE] Video #${vidNum} Status: ${status} | Progress: ${progress}% | ${stageDetail}`);
+            console.log(`[DB UPDATE] Video #${vidNum} Status: ${status} | Progress: ${safeProgress}% | ${stageDetail}`);
             await sql`
                 UPDATE videos 
                 SET 
                   status = ${status},
-                  transcode_progress = ${progress},
+                  transcode_progress = ${safeProgress},
                   stage_detail = ${stageDetail},
                   error_message = ${errorMsg},
                   source_cache = NULL,
@@ -199,12 +219,12 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
                   onedrive_folder_id = COALESCE(${extra.onedrive_folder_id ?? null}, onedrive_folder_id),
                   master_playlist_path = COALESCE(${extra.master_playlist_path ?? null}, master_playlist_path),
                   storyboard_vtt_path = COALESCE(${extra.storyboard_vtt_path ?? null}, storyboard_vtt_path),
-                  duration = COALESCE(${extra.duration ?? null}, duration),
+                  duration = COALESCE(CAST(${safeDuration} AS INTEGER), duration),
                   resolution = COALESCE(${extra.resolution ?? null}, resolution),
-                  fps = COALESCE(${extra.fps ?? null}, fps),
+                  fps = COALESCE(CAST(${safeFps} AS NUMERIC), fps),
                   codec = COALESCE(${extra.codec ?? null}, codec),
-                  bitrate = COALESCE(${extra.bitrate ?? null}, bitrate),
-                  file_size_bytes = COALESCE(${extra.file_size_bytes ?? null}, file_size_bytes),
+                  bitrate = COALESCE(CAST(${safeBitrate} AS INTEGER), bitrate),
+                  file_size_bytes = COALESCE(CAST(${safeFileSize} AS BIGINT), file_size_bytes),
                   updated_at = NOW()
                 WHERE id = ${vidNum};
             `;
@@ -431,14 +451,25 @@ async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
 }
 
 // อัปโหลดไฟล์ทั้งหมดใน Pass แบบ Parallel Concurrency โดยอัปโหลด .ts ก่อน แล้วค่อยอัปโหลด .m3u8 ปิดท้ายเสมอ
-async function uploadBatchFilesAndCleanup(driveId, folderId, hlsOutputDir, fileNames, cleanupTsAfterUpload = true) {
+async function uploadBatchFilesAndCleanup(driveId, folderId, hlsOutputDir, fileNames, cleanupTsAfterUpload = true, passLabel = '') {
     const segmentAndAssetFiles = fileNames.filter((f) => !f.endsWith('.m3u8'));
     const playlistFiles = fileNames.filter((f) => f.endsWith('.m3u8'));
 
+    if (passLabel) {
+        await logger.log(`⬆️ ${passLabel}: กำลังอัปโหลด ${segmentAndAssetFiles.length} เซกเมนต์ + ${playlistFiles.length} playlist ขึ้น OneDrive (${UPLOAD_CONCURRENCY}x parallel)...`, { toDb: false });
+    }
+
+    let uploadedCount = 0;
+    let lastUploadLogAt = Date.now();
     // 1. อัปโหลดชิ้นส่วน .ts, .jpg, .vtt พร้อมกันทีละ 8 ไฟล์
     await runWithConcurrency(segmentAndAssetFiles, UPLOAD_CONCURRENCY, async (f) => {
         const fullPath = path.join(hlsOutputDir, f);
         await uploadFileToOneDrive(driveId, folderId, f, fullPath);
+        uploadedCount++;
+        if (Date.now() - lastUploadLogAt > 5000 && segmentAndAssetFiles.length > 10) {
+            lastUploadLogAt = Date.now();
+            console.log(`   📤 Upload progress${passLabel ? ` (${passLabel})` : ''}: ${uploadedCount}/${segmentAndAssetFiles.length} files`);
+        }
         if (cleanupTsAfterUpload && (f.endsWith('.ts') || f.startsWith('sprite_'))) {
             try { fs.unlinkSync(fullPath); } catch (_) { }
         }
@@ -457,25 +488,40 @@ function formatTime(sec) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
-function runFFmpeg(args, onProgress) {
+function runFFmpeg(args, onProgress, stepLabel = '', durationSec = 0) {
     return new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+        let lastConsoleLogAt = 0;
+        if (stepLabel) {
+            console.log(`🎞️ [FFmpeg Start] ${stepLabel}...`);
+        }
         const proc = spawn('ffmpeg', args);
         let stderr = '';
         proc.stderr.on('data', (d) => {
             const str = d.toString();
             stderr += str;
             if (stderr.length > 10000) stderr = stderr.slice(-5000);
-            if (onProgress) {
-                const timeMatch = str.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-                if (timeMatch) {
-                    const sec = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
-                    onProgress(sec);
+            const timeMatch = str.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+            if (timeMatch) {
+                const sec = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseFloat(timeMatch[3]);
+                const speedMatch = str.match(/speed=\s*([\d.]+x)/);
+                const speedText = speedMatch ? ` (${speedMatch[1]})` : '';
+                if (stepLabel && Date.now() - lastConsoleLogAt >= 6000) {
+                    lastConsoleLogAt = Date.now();
+                    const pctText = durationSec > 0 ? `${Math.min(99, Math.round((sec / durationSec) * 100))}% ` : '';
+                    console.log(`   ⏱️ [${stepLabel}] ${pctText}${formatDurationShort(sec)}${durationSec > 0 ? ` / ${formatDurationShort(durationSec)}` : ''}${speedText}`);
                 }
+                if (onProgress) onProgress(sec);
             }
         });
         proc.on('close', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+            const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+            if (code === 0) {
+                if (stepLabel) console.log(`✅ [FFmpeg Done] ${stepLabel} (${elapsedSec}s)`);
+                resolve();
+            } else {
+                reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+            }
         });
         proc.on('error', reject);
     });
@@ -530,6 +576,8 @@ async function main() {
         // Step 0: Collect & Report Runner Machine Specs
         const runnerSpecs = getRunnerSpecs();
         console.log('🖥️ Runner Machine Specs:', JSON.stringify(runnerSpecs, null, 2));
+        await ensureDbSchemaOnce();
+        await logger.log(`🎬 เริ่ม HLS Progressive Worker #${VIDEO_ID} บน ${runnerSpecs.cpuModel} (${runnerSpecs.cpuCores} Cores, RAM ${runnerSpecs.totalRamGb})`);
 
         await updateDbStatus({
             status: 'PROCESSING',
@@ -545,6 +593,7 @@ async function main() {
             stageDetail: 'กำลังยืนยันตัวตนกับ Microsoft Graph API',
         });
 
+        await logger.log('🔑 กำลังยืนยันตัวตนกับ Microsoft Graph API & OneDrive...');
         const token = await getGraphToken();
         const driveId = await getUserDriveId();
 
@@ -575,14 +624,14 @@ async function main() {
         const hlsOutputDir = path.join(tempDir, 'hls');
         fs.mkdirSync(tempDir, { recursive: true });
         fs.mkdirSync(hlsOutputDir, { recursive: true });
+        await logger.log(`📂 โฟลเดอร์ทำงาน: ${tempDir.startsWith('/dev/shm') ? '/dev/shm (RAM Disk)' : tempDir} | ขนาดต้นฉบับ ${(rawFileSize / (1024 * 1024)).toFixed(1)} MB`, { toDb: false });
 
-        console.log(`⬇️ Stream-downloading raw file (${(rawFileSize / (1024 * 1024)).toFixed(1)} MB)...`);
-        const fileRes = await fetchWithRetry(downloadUrl);
-        if (!fileRes.ok || !fileRes.body) throw new Error(`ดาวน์โหลดไฟล์ต้นฉบับไม่สำเร็จ (${fileRes.status})`);
-
-        // ใช้ Stream Pipeline แทน arrayBuffer() เพื่อประหยัด RAM และเขียนลงดิสก์ทันที
-        await pipeline(Readable.fromWeb(fileRes.body), fs.createWriteStream(rawFilePath));
-        console.log(`✅ Raw file downloaded.`);
+        await downloadFileWithProgress(downloadUrl, rawFilePath, {
+            label: `ไฟล์ต้นฉบับ (${RAW_FILE_NAME})`,
+            expectedSizeBytes: rawFileSize,
+            logger,
+            stallTimeoutMs: 120000,
+        });
 
         // Step 3: Video Probe & Create OneDrive Folder in Parallel!
         await updateDbStatus({
@@ -621,7 +670,7 @@ async function main() {
         let fps = 30;
         if (vStream.r_frame_rate) {
             const [num, den] = String(vStream.r_frame_rate).split('/').map(Number);
-            fps = den ? Math.round(num / den) : Math.round(num || 30);
+            fps = den ? Math.round((num / den) * 1000) / 1000 : Math.round((num || 30) * 1000) / 1000;
         }
         const codec = vStream.codec_name || 'h264';
         const bitrate = probeData.format?.bit_rate ? Math.round(parseInt(probeData.format.bit_rate)) : (vStream.bit_rate ? Math.round(parseInt(vStream.bit_rate)) : 0);
@@ -642,7 +691,7 @@ async function main() {
         }
 
         const gopSize = String(fps > 0 ? Math.round(fps * 2) : 60);
-        console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, bitrate: ${bitrate}, GOP: ${gopSize}, codec: ${codec}`);
+        await logger.log(`📐 สเปกจาก ffprobe: ${srcWidth}x${srcHeight} (${resolutionLabel}), ยาว ${formatDurationShort(duration)}, ${fps} fps, Codec: ${codec}, Bitrate: ${Math.round(bitrate / 1000)} kbps`);
 
         // Ensure HLS Destination Folder on OneDrive (preserve pre-extracted thumbnails, subtitles & sprites)
         const posterPath = path.join(hlsOutputDir, 'poster.jpg');
@@ -706,6 +755,7 @@ async function main() {
 
         const masterPlaylistPath = `/streams/${streamFolderName}/master.m3u8`;
         const thumbnailUrl = `/streams/${streamFolderName}/poster.jpg`;
+        const shouldPromotePosterUrl = shouldSetThumbUrl || Boolean(dataImageMatch);
 
         console.log(`⬆️ Syncing poster.jpg & video metadata...`);
         const uploadPosterPromise = fs.existsSync(posterPath)
@@ -724,7 +774,7 @@ async function main() {
                     fps,
                     codec,
                     bitrate,
-                    thumbnail_url: shouldSetThumbUrl ? thumbnailUrl : null,
+                    thumbnail_url: shouldPromotePosterUrl ? thumbnailUrl : null,
                     onedrive_folder_id: streamFolderId,
                 },
             }),
@@ -742,7 +792,7 @@ async function main() {
             stageDetail: '⚡ กำลังแปลงความละเอียดแรก (144p) พร้อมสร้าง Storyboard ในรอบเดียว...',
         });
 
-        console.log('⚡ Running combined Fast-Pass (144p + Two-Tier Storyboards SD & HD)...');
+        await logger.log('⚡ Pass 1: กำลังหั่น HLS 144p + Storyboard SD/HD (Ultra-fast unlock)...');
         let lastProgressUpdate = 0;
         let hasStoryboard = false;
 
@@ -779,10 +829,10 @@ async function main() {
                         stageDetail: `กำลังหั่น 144p + Storyboard (เร็วสุด): ${pct}% (${formatTime(sec)} / ${formatTime(duration)})`,
                     });
                 }
-            });
+            }, 'Pass 1: 144p + Storyboard', duration);
             hasStoryboard = true;
         } catch (combinedErr) {
-            console.warn('⚠️ Combined pass fallback to 144p only:', combinedErr.message);
+            await logger.log(`⚠️ Combined pass fallback -> หั่น 144p เดี่ยว: ${combinedErr.message}`, { level: 'warn' });
             await runFFmpeg([
                 '-y', '-threads', '0', '-i', rawFilePath,
                 '-vf', 'scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2',
@@ -794,7 +844,7 @@ async function main() {
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_144p_%03d.ts'),
                 path.join(hlsOutputDir, '144p.m3u8'),
-            ]);
+            ], null, 'Pass 1 Fallback: 144p', duration);
         }
 
         if (hasStoryboard) {
@@ -818,10 +868,9 @@ async function main() {
         const pass1Files = fs.readdirSync(hlsOutputDir).filter((f) =>
             f.includes('144p') || f === 'master.m3u8' || f.includes('thumbnails') || f.startsWith('sprite_')
         );
-        console.log(`⬆️ Parallel uploading ${pass1Files.length} files for Pass 1 (${UPLOAD_CONCURRENCY}x concurrency)...`);
-        await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass1Files);
+        await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass1Files, true, 'Pass 1 (144p)');
 
-        console.log(`🎉 144p is READY! Unlocking video for instant playback!`);
+        await logger.log('🎉 144p + Storyboard พร้อมเล่นแล้ว! กำลังหั่นความละเอียด 360p-4K ต่อในพื้นหลัง', { level: 'success' });
         await updateDbStatus({
             status: 'READY',
             progress: 25,
@@ -834,7 +883,7 @@ async function main() {
                 resolution: resolutionLabel,
                 fps,
                 codec,
-                thumbnail_url: thumbnailUrl,
+                thumbnail_url: shouldPromotePosterUrl ? thumbnailUrl : null,
             },
         });
 
@@ -842,7 +891,7 @@ async function main() {
         // PASS 2 & 3 COMBINED: 360p + 480p in a SINGLE Decode Pass!
         // =========================================================================
         if (srcHeight >= 480) {
-            console.log('⚡ Slicing 360p + 480p simultaneously in a single FFmpeg pass...');
+            await logger.log('⚡ Pass 2/3: กำลังหั่น 360p + 480p SD พร้อมกัน...');
             await runFFmpeg([
                 '-y', '-threads', '0',
                 '-i', rawFilePath,
@@ -881,7 +930,7 @@ async function main() {
                         stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 360p & 480p SD พร้อมกัน: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                     });
                 }
-            });
+            }, 'Pass 2/3: 360p + 480p', duration);
 
             readyQualities.push(
                 { name: '360p', width: 640, height: 360, bitrate: 600000 },
@@ -890,10 +939,10 @@ async function main() {
             fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
             const sdFiles = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('360p') || f.includes('480p') || f === 'master.m3u8');
-            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, sdFiles);
-            console.log('✅ 360p & 480p uploaded in parallel and master.m3u8 updated.');
+            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, sdFiles, true, '360p & 480p');
+            await logger.log('✅ อัปโหลด 360p + 480p SD และอัปเดต master.m3u8 เรียบร้อย', { level: 'success' });
         } else if (srcHeight >= 360) {
-            console.log('⚡ Slicing 360p in background...');
+            await logger.log('⚡ Pass 2: กำลังหั่น 360p SD...');
             await runFFmpeg([
                 '-y', '-threads', '0', '-i', rawFilePath,
                 '-vf', 'scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2',
@@ -905,18 +954,19 @@ async function main() {
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', path.join(hlsOutputDir, 'stream_360p_%03d.ts'),
                 path.join(hlsOutputDir, '360p.m3u8'),
-            ]);
+            ], null, 'Pass 2: 360p', duration);
             readyQualities.push({ name: '360p', width: 640, height: 360, bitrate: 600000 });
             fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
             const pass2Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('360p') || f === 'master.m3u8');
-            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass2Files);
+            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass2Files, true, '360p');
+            await logger.log('✅ อัปโหลด 360p SD สำเร็จ', { level: 'success' });
         }
 
         // =========================================================================
         // PASS 4: 720p (HD) in background (if source >= 720p)
         // =========================================================================
         if (srcHeight >= 720) {
-            console.log('⚡ Slicing 720p in background...');
+            await logger.log('⚡ Pass 4: กำลังหั่น 720p HD...');
             await runFFmpeg([
                 '-y', '-threads', '0', '-i', rawFilePath,
                 '-vf', 'scale=w=1280:h=720:force_original_aspect_ratio=decrease:force_divisible_by=2',
@@ -940,21 +990,21 @@ async function main() {
                         stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 720p HD: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                     });
                 }
-            });
+            }, 'Pass 4: 720p HD', duration);
 
             readyQualities.push({ name: '720p', width: 1280, height: 720, bitrate: 3500000 });
             fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
             const pass4Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('720p') || f === 'master.m3u8');
-            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass4Files);
-            console.log('✅ 720p uploaded and master.m3u8 updated.');
+            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass4Files, true, '720p HD');
+            await logger.log('✅ อัปโหลด 720p HD และอัปเดต master.m3u8 เรียบร้อย', { level: 'success' });
         }
 
         // =========================================================================
         // PASS 5: 1080p (Full HD) in background (if source >= 1080p)
         // =========================================================================
         if (srcHeight >= 1080) {
-            console.log('⚡ Slicing 1080p in background...');
+            await logger.log('⚡ Pass 5: กำลังหั่น 1080p Full HD...');
             await runFFmpeg([
                 '-y', '-threads', '0', '-i', rawFilePath,
                 '-vf', 'scale=w=1920:h=1080:force_original_aspect_ratio=decrease:force_divisible_by=2',
@@ -978,21 +1028,21 @@ async function main() {
                         stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 1080p Full HD (Premium): ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                     });
                 }
-            });
+            }, 'Pass 5: 1080p Full HD', duration);
 
             readyQualities.push({ name: '1080p', width: 1920, height: 1080, bitrate: 8500000 });
             fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
             const pass5Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1080p') || f === 'master.m3u8');
-            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass5Files);
-            console.log('✅ 1080p uploaded and master.m3u8 updated.');
+            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass5Files, true, '1080p Full HD');
+            await logger.log('✅ อัปโหลด 1080p Full HD และอัปเดต master.m3u8 เรียบร้อย', { level: 'success' });
         }
 
         // =========================================================================
         // PASS 6: 1440p (2K Quad HD) in background (if source >= 1440p)
         // =========================================================================
         if (srcHeight >= 1440 || srcWidth >= 2560) {
-            console.log('⚡ Slicing 1440p (2K) in background...');
+            await logger.log('⚡ Pass 6: กำลังหั่น 1440p (2K Quad HD)...');
             await runFFmpeg([
                 '-y', '-threads', '0', '-i', rawFilePath,
                 '-vf', 'scale=w=2560:h=1440:force_original_aspect_ratio=decrease:force_divisible_by=2',
@@ -1016,21 +1066,21 @@ async function main() {
                         stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 2K Quad HD (1440p): ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                     });
                 }
-            });
+            }, 'Pass 6: 1440p 2K', duration);
 
             readyQualities.push({ name: '1440p', width: 2560, height: 1440, bitrate: 12000000 });
             fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
             const pass6Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1440p') || f === 'master.m3u8');
-            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass6Files);
-            console.log('✅ 1440p (2K) uploaded and master.m3u8 updated.');
+            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass6Files, true, '1440p 2K');
+            await logger.log('✅ อัปโหลด 1440p (2K) สำเร็จ', { level: 'success' });
         }
 
         // =========================================================================
         // PASS 7: 2160p (4K Ultra HD) in background (if source >= 2160p)
         // =========================================================================
         if (srcHeight >= 2160 || srcWidth >= 3840) {
-            console.log('⚡ Slicing 2160p (4K UHD) in background...');
+            await logger.log('⚡ Pass 7: กำลังหั่น 2160p (4K Ultra HD)...');
             await runFFmpeg([
                 '-y', '-threads', '0', '-i', rawFilePath,
                 '-vf', 'scale=w=3840:h=2160:force_original_aspect_ratio=decrease:force_divisible_by=2',
@@ -1054,14 +1104,14 @@ async function main() {
                         stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 4K UHD (2160p): ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                     });
                 }
-            });
+            }, 'Pass 7: 2160p 4K', duration);
 
             readyQualities.push({ name: '2160p', width: 3840, height: 2160, bitrate: 20000000 });
             fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
 
             const pass7Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('2160p') || f === 'master.m3u8');
-            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass7Files);
-            console.log('✅ 2160p (4K UHD) uploaded and master.m3u8 updated.');
+            await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass7Files, true, '2160p 4K');
+            await logger.log('✅ อัปโหลด 2160p (4K UHD) สำเร็จ', { level: 'success' });
         }
 
         // =========================================================================
@@ -1083,9 +1133,9 @@ async function main() {
                 st.rating_check_status === 'analyzing';
 
             if (otherWorkersBusy) {
-                console.log(`ℹ️ Keeping /raw/${RAW_FILE_NAME} temporarily because AI Audio/Vision worker is still active.`);
+                await logger.log(`ℹ️ เก็บไฟล์ดิบ /raw/${RAW_FILE_NAME} ไว้ชั่วคราวเพราะ AI Audio/Vision Worker กำลังใช้งานอยู่`);
             } else {
-                console.log(`🗑️ Deleting raw file /raw/${RAW_FILE_NAME}...`);
+                await logger.log(`🗑️ กำลังลบไฟล์ต้นฉบับ /raw/${RAW_FILE_NAME} หลังหั่น HLS ครบถ้วน...`, { toDb: false });
                 await fetchWithRetry(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${rawItemId}`, {
                     method: 'DELETE',
                     headers: { Authorization: `Bearer ${await getGraphToken()}` },
@@ -1102,14 +1152,15 @@ async function main() {
             progress: 100,
             stageDetail: `เสร็จสมบูรณ์ทุกความละเอียด (${finalQualitiesText}) พร้อมรับชมแบบเต็มประสิทธิภาพ`,
             extra: {
-                thumbnail_url: thumbnailUrl,
+                thumbnail_url: shouldPromotePosterUrl ? thumbnailUrl : null,
             },
         });
 
-        console.log(`🎉 All progressive passes finished for Video #${VIDEO_ID}!`);
+        await logger.log(`🎉 เสร็จสมบูรณ์ 100% (${finalQualitiesText}) พร้อมรับชมแล้ว!`, { level: 'success' });
 
     } catch (err) {
         console.error('❌ [Transcode Worker Fatal Error]:', err);
+        await logger.log(`❌ การแปลง HLS ล้มเหลว: ${err.message}`, { level: 'error' }).catch(() => {});
         await updateDbStatus({
             status: 'FAILED',
             progress: 0,

@@ -14,9 +14,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
 import { neon } from '@neondatabase/serverless';
+import {
+  ensureWorkerLogsColumn,
+  createWorkerLogger,
+  downloadFileWithProgress,
+  runFFmpegWithProgress,
+  formatDurationShort,
+} from './worker-utils.js';
 
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
 const RAW_FILE_NAME = process.env.RAW_FILE_NAME || process.argv[3] || '';
@@ -234,12 +239,17 @@ function probeDuration(videoPath) {
   });
 }
 
-async function analyzeSpriteWithGeminiVision(spriteImagePath, videoTitle, userRating) {
+async function analyzeSpriteWithGeminiVision(spriteImagePath, videoTitle, userRating, logger = null) {
+  const log = async (msg, opts) => {
+    if (logger) await logger.log(msg, opts);
+    else console.log(msg);
+  };
   if (!GEMINI_API_KEY) {
     throw new Error('ไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ Environment / GitHub Secrets');
   }
 
   const imageBuffer = await fs.promises.readFile(spriteImagePath);
+  const imageKb = Math.max(1, Math.round(imageBuffer.length / 1024));
   const base64Image = imageBuffer.toString('base64');
 
   const isAutoMode = !userRating || userRating === 'auto';
@@ -322,6 +332,8 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
   let lastErrText = '';
 
   for (const candidateModel of candidates) {
+    const tReqStart = Date.now();
+    await log(`📡 กำลังส่ง Sprite Sheet (${imageKb} KB) ให้ Gemini Vision (${candidateModel}) วิเคราะห์...`);
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidateModel)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
     const res = await fetchWithRetry(endpoint, {
       method: 'POST',
@@ -330,6 +342,8 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
     });
 
     if (res.ok) {
+      const elapsedSec = ((Date.now() - tReqStart) / 1000).toFixed(1);
+      await log(`✅ ได้รับผลวิเคราะห์จาก Gemini Vision (${candidateModel}) ใน ${elapsedSec}s`);
       data = await res.json();
       break;
     }
@@ -337,7 +351,7 @@ ${isAutoMode ? 'ผู้ใช้งานเลือกโหมด: ให�
     lastStatus = res.status;
     lastErrText = await res.text();
     if (res.status === 404) {
-      console.warn(`⚠️ Vision Model "${candidateModel}" not found (404), trying next fallback model...`);
+      await log(`⚠️ ไม่พบโมเดล Vision "${candidateModel}" (404) — กำลังสลับใช้โมเดลสำรอง...`, { level: 'warn' });
       continue;
     }
     throw new Error(`Gemini Vision API Error (${res.status}): ${lastErrText.slice(0, 400)}`);
@@ -446,9 +460,12 @@ async function main() {
   const vidNum = Number(VIDEO_ID);
   const tempDir = path.resolve('./temp_sprite_rating', String(vidNum));
   fs.mkdirSync(tempDir, { recursive: true });
+  const logger = createWorkerLogger(sql, vidNum, 'rating', 'Sprite & Rating');
 
   try {
     await ensureSpriteRatingColumns();
+    await ensureWorkerLogsColumn(sql);
+    await logger.log(`🛡️ เริ่ม Worker #2 (Sprite 5x5 + Gemini Vision Rating) สำหรับ Video #${vidNum} | โมเดล: ${GEMINI_MODEL_NAME}`);
 
     const rows = await sql`
       SELECT id, title, raw_file_name, duration, content_rating, user_selected_rating
@@ -474,7 +491,9 @@ async function main() {
           updated_at = NOW()
       WHERE id = ${vidNum};
     `;
+    await logger.log(`⚙️ ตั้งค่าเรตเริ่มต้น: ${effectiveUserRating} | ต้นฉบับ OneDrive: ${activeRawName || '(ไม่มี — ใช้ภาพในสตรีม)'}`);
 
+    await logger.log('🔑 กำลังขอ Access Token จาก Microsoft Graph และตรวจสอบโฟลเดอร์ OneDrive...');
     const token = await getGraphToken();
     const driveId = await getUserDriveId();
     const streamFolderId = await ensureStreamFolder(driveId, vidNum);
@@ -484,46 +503,60 @@ async function main() {
 
     // 1. Check if raw video exists in /raw/{activeRawName}
     let rawDownloadUrl = null;
+    let rawExpectedBytes = 0;
     if (activeRawName) {
-      const rawUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(activeRawName)}?select=id,name,@microsoft.graph.downloadUrl`;
+      const rawUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(activeRawName)}?select=id,name,size,@microsoft.graph.downloadUrl`;
       const rawRes = await fetchWithRetry(rawUrl, { headers: { Authorization: `Bearer ${token}` } });
       if (rawRes.ok) {
         const rawData = await rawRes.json();
         rawDownloadUrl = rawData['@microsoft.graph.downloadUrl'];
+        rawExpectedBytes = Number(rawData.size || 0);
+      } else {
+        await logger.log(`ℹ️ ไม่พบไฟล์ดิบ /raw/${activeRawName} (${rawRes.status}) — จะใช้ Sprite Sheet ที่มีอยู่แทน`, { level: 'warn' });
       }
     }
 
     if (rawDownloadUrl) {
       const localVideoPath = path.join(tempDir, 'input_video.mp4');
-      console.log(`⬇️ Downloading raw video /raw/${activeRawName} for detailed Sprite Sheet Grid...`);
-      const fileRes = await fetchWithRetry(rawDownloadUrl);
-      if (!fileRes.ok || !fileRes.body) throw new Error(`Failed to download raw video (${fileRes.status})`);
-      await pipeline(Readable.fromWeb(fileRes.body), fs.createWriteStream(localVideoPath));
+      await downloadFileWithProgress(rawDownloadUrl, localVideoPath, {
+        label: `วิดีโอต้นฉบับ (${activeRawName})`,
+        expectedSizeBytes: rawExpectedBytes,
+        logger,
+        stallTimeoutMs: 90000,
+      });
 
       const duration = await probeDuration(localVideoPath);
       const stepSec = Math.max(0.5, duration / 25);
-      console.log(`🖼️ Generating Detailed 5x5 Sprite Sheet Grid (duration: ${duration}s, 1 frame every ${stepSec.toFixed(2)}s)...`);
+      await logger.log(`📐 ความยาววิดีโอ ${formatDurationShort(duration)} -> กำลังสกัด Sprite Sheet 5x5 (25 เฟรม, ดึงทุก ${stepSec.toFixed(1)}s)...`);
 
       // High-detail 5x5 grid (320x180 per tile = 1600x900) for Gemini Vision
-      await runFFmpeg([
+      await runFFmpegWithProgress([
         '-y', '-i', localVideoPath,
         '-vf', `fps=1/${stepSec.toFixed(4)},scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2,tile=5x5`,
         '-frames:v', '1',
         '-q:v', '2',
         gridHighPath,
-      ]);
+      ], {
+        durationSec: duration,
+        stepLabel: 'สร้าง Sprite Grid 5x5 (1600x900)',
+        logger,
+      });
 
       // Compact preview grid (800x450) for instant UI preview in Upload Studio
-      await runFFmpeg([
+      await runFFmpegWithProgress([
         '-y', '-i', gridHighPath,
         '-vf', 'scale=800:450',
         '-q:v', '5',
         gridCompactPath,
-      ]);
+      ], {
+        stepLabel: 'ย่อ Sprite Preview (800x450)',
+        logger,
+      });
     } else {
       // Fallback if video is already READY and /raw/ was cleaned up: use sprite_hd_001.jpg or sprite_sd_001.jpg from stream folder
-      console.log('ℹ️ Raw file not in /raw/, checking existing sprite sheet in stream folder...');
+      await logger.log('🔎 กำลังค้นหาไฟล์ Sprite Sheet เดิมจากโฟลเดอร์ /streams...');
       let existingSpriteDl = null;
+      let matchedSpriteName = '';
       for (const candidate of ['vision_sprite_grid.jpg', 'sprite_hd_001.jpg', 'sprite_sd_001.jpg', 'poster.jpg']) {
         const spRes = await fetchWithRetry(
           `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${streamFolderId}:/${candidate}?select=id,@microsoft.graph.downloadUrl`,
@@ -532,18 +565,26 @@ async function main() {
         if (spRes.ok) {
           const spData = await spRes.json();
           existingSpriteDl = spData['@microsoft.graph.downloadUrl'];
+          matchedSpriteName = candidate;
           break;
         }
       }
       if (!existingSpriteDl) {
         throw new Error('ไม่พบไฟล์วิดีโอต้นฉบับหรือภาพ Sprite Sheet บน OneDrive');
       }
-      const spFetch = await fetchWithRetry(existingSpriteDl);
-      await pipeline(Readable.fromWeb(spFetch.body), fs.createWriteStream(gridHighPath));
-      await runFFmpeg(['-y', '-i', gridHighPath, '-vf', 'scale=800:450', '-q:v', '5', gridCompactPath]);
+      await downloadFileWithProgress(existingSpriteDl, gridHighPath, {
+        label: `ภาพ Sprite เดิม (${matchedSpriteName})`,
+        logger,
+      });
+      await runFFmpegWithProgress(
+        ['-y', '-i', gridHighPath, '-vf', 'scale=800:450', '-q:v', '5', gridCompactPath],
+        { stepLabel: 'ย่อ Sprite Preview (800x450)', logger }
+      );
     }
 
     // 2. Upload vision_sprite_grid.jpg to OneDrive & save preview data URL in DB
+    const gridStats = fs.statSync(gridHighPath);
+    await logger.log(`⬆️ กำลังอัปโหลด vision_sprite_grid.jpg (${Math.round(gridStats.size / 1024)} KB) ขึ้น OneDrive...`);
     await uploadFileToOneDrive(driveId, streamFolderId, 'vision_sprite_grid.jpg', gridHighPath, 'image/jpeg');
     const previewBase64 = `data:image/jpeg;base64,${(await fs.promises.readFile(gridCompactPath)).toString('base64')}`;
 
@@ -554,11 +595,10 @@ async function main() {
           updated_at = NOW()
       WHERE id = ${vidNum};
     `;
-    console.log('✅ Detailed Sprite Sheet Grid uploaded and marked READY in DB.');
+    await logger.log('✅ สร้าง & อัปโหลด Sprite Sheet 5x5 สำเร็จแล้ว กำลังเริ่มตรวจสอบเนื้อหาด้วย AI', { level: 'success' });
 
     // 3. Send Sprite Sheet Grid to Gemini Vision AI for Content Rating Verification
-    console.log('🤖 Sending Detailed Sprite Sheet Grid to Gemini Vision AI...');
-    const visionResult = await analyzeSpriteWithGeminiVision(gridHighPath, video.title, effectiveUserRating);
+    const visionResult = await analyzeSpriteWithGeminiVision(gridHighPath, video.title, effectiveUserRating, logger);
 
     const userSeverity = RATING_SEVERITY[effectiveUserRating] ?? -1;
     const aiSeverity = RATING_SEVERITY[visionResult.suggestedRating] ?? 0;
@@ -605,9 +645,13 @@ async function main() {
       WHERE id = ${vidNum};
     `;
 
-    console.log(`🎉 Gemini Vision Content Rating completed: ${verificationStatus} -> Final Rating: ${finalRating}`);
+    await logger.log(
+      `🎉 จัดเรตเนื้อหาด้วย Gemini Vision สำเร็จ: ${verificationStatus} -> เรตสุดท้าย "${finalRating}" (หมวด ${visionResult.recommendedCategory || 'general'})`,
+      { level: 'success' }
+    );
   } catch (err) {
     console.error('❌ [Sprite & Content Rating Worker Error]:', err);
+    await logger.log(`❌ ตรวจสอบเรต & Sprite Sheet ล้มเหลว: ${err.message}`, { level: 'error' }).catch(() => {});
     try {
       await sql`
         UPDATE videos

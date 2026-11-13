@@ -24,6 +24,7 @@ export default function UploadSidebar({
   contentRating,
   thumbnailStatus = 'waiting',
   runnerSpecs,
+  workerDetails = {},
 }) {
   const [showTechDetails, setShowTechDetails] = useState(false);
 
@@ -40,18 +41,21 @@ export default function UploadSidebar({
 
   // Task 1: Subtitle
   const getSubBadge = () => {
-    if (subtitleStatus === 'ready') return { label: 'เสร็จแล้ว', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'สร้างซับ .SRT / .VTT สำเร็จ' };
-    if (subtitleStatus === 'processing' || audioStatus === 'extracting') return { label: 'กำลังทำ', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'กำลังสกัดเสียงและสร้างซับ...' };
-    if (audioStatus === 'failed' || subtitleStatus === 'failed') return { label: 'ไม่สำเร็จ', cls: 'bg-rose-500/15 text-rose-700 dark:text-rose-400', desc: 'ลองสั่งใหม่อีกครั้งใน Step 2' };
+    const liveSub = workerDetails?.subtitles?.message || '';
+    if (subtitleStatus === 'ready') return { label: 'เสร็จแล้ว', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: liveSub || 'สร้างซับ .SRT / .VTT สำเร็จ' };
+    if (subtitleStatus === 'processing' || audioStatus === 'extracting') return { label: 'กำลังทำ', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: liveSub || 'กำลังสกัดเสียงและสร้างซับ...' };
+    if (audioStatus === 'failed' || subtitleStatus === 'failed') return { label: 'ไม่สำเร็จ', cls: 'bg-rose-500/15 text-rose-700 dark:text-rose-400', desc: liveSub || 'ลองสั่งใหม่อีกครั้งใน Step 2' };
     return { label: 'รอสั่งงาน', cls: 'bg-white dark:bg-[#181818] text-[#8C857B] dark:text-[#9A9A9A] border border-[#EFECE6] dark:border-white/10', desc: 'สั่งงานได้ที่ Step 2 หรือรันตอนเผยแพร่' };
   };
 
   // Task 2: Rating & HLS verification
   const getRatingBadge = () => {
+    const liveRating = workerDetails?.rating?.message || '';
     if (ratingCheckStatus === 'AI_AUTO_SELECTED') return { label: 'AI จัดเรตแล้ว', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'AI ประเมินและตั้งเรตให้อัตโนมัติแล้ว' };
     if (ratingCheckStatus === 'VERIFIED_MATCH') return { label: 'ตรวจสอบแล้ว', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'AI ตรวจยืนยันเรตตรงตามที่เลือก' };
     if (ratingCheckStatus === 'MISMATCH_WARNING') return { label: 'แจ้งเตือนเรต', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'ผลตรวจต่างจากที่เลือก — ตรวจดูใน Step 3' };
-    if (spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing') return { label: 'กำลังจัดเรต', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'กำลังสร้างภาพและวิเคราะห์เรต...' };
+    if (ratingCheckStatus === 'failed' || spriteSheetStatus === 'failed') return { label: 'ไม่สำเร็จ', cls: 'bg-rose-500/15 text-rose-700 dark:text-rose-400', desc: liveRating || 'ลองกดให้ AI จัดเรตใหม่ใน Step 3' };
+    if (spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing') return { label: 'กำลังจัดเรต', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: liveRating || 'กำลังสร้างภาพและวิเคราะห์เรต...' };
     return {
       label: contentRating === 'auto' ? 'รอ AI จัดเรต' : 'ตรวจหลัง HLS',
       cls: 'bg-[#FF7A00]/10 text-[#FF7A00]',
@@ -61,9 +65,11 @@ export default function UploadSidebar({
 
   // Task 3: HLS Stream
   const getHlsBadge = () => {
-    if (currentStatus === 'READY') return { label: 'พร้อมเล่น', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'สตรีมหลายความละเอียดพร้อมใช้งาน' };
-    if (currentStatus === 'TRANSCODING') return { label: `${transcodeProgress}%`, cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: `กำลังแปลงสตรีม HLS (${transcodeProgress}%)` };
-    if (currentStatus === 'PROCESSING' || currentStatus === 'QUEUED') return { label: 'กำลังเตรียม', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'กำลังเตรียมประมวลผลบนคลาวด์...' };
+    const liveHls = workerDetails?.hls?.message || '';
+    if (currentStatus === 'READY') return { label: 'พร้อมเล่น', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: liveHls || stageDetail || 'สตรีมหลายความละเอียดพร้อมใช้งาน' };
+    if (currentStatus === 'FAILED') return { label: 'ล้มเหลว', cls: 'bg-rose-500/15 text-rose-700 dark:text-rose-400', desc: liveHls || stageDetail || 'เกิดข้อผิดพลาดในการส่งหรือแปลง HLS' };
+    if (currentStatus === 'TRANSCODING') return { label: `${transcodeProgress}%`, cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: liveHls || stageDetail || `กำลังแปลงสตรีม HLS (${transcodeProgress}%)` };
+    if (currentStatus === 'PROCESSING' || currentStatus === 'QUEUED') return { label: 'กำลังเตรียม', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: liveHls || stageDetail || 'กำลังเตรียมประมวลผลบนคลาวด์...' };
     return { label: 'รอเผยแพร่', cls: 'bg-white dark:bg-[#181818] text-[#8C857B] dark:text-[#9A9A9A] border border-[#EFECE6] dark:border-white/10', desc: 'เริ่มหั่นไฟล์เมื่อกดยืนยันใน Step 4' };
   };
 
@@ -94,10 +100,14 @@ export default function UploadSidebar({
               />
             </>
           ) : (
-            <div className="flex flex-col items-center justify-center text-[#8C857B]">
+            <div className="flex flex-col items-center justify-center text-[#8C857B] px-3 text-center">
               <Film className="w-10 h-10 stroke-[1.4] mb-1.5" />
-              <span className="text-xs">
-                {thumbnailStatus === 'generating' ? 'กำลังสร้างภาพตัวอย่าง 3 ช่วง...' : 'รอสร้างภาพตัวอย่าง'}
+              <span className="text-xs line-clamp-2">
+                {thumbnailStatus === 'generating'
+                  ? workerDetails?.thumbnail?.message || 'กำลังสร้างภาพตัวอย่าง 3 ช่วง...'
+                  : thumbnailStatus === 'failed'
+                  ? workerDetails?.thumbnail?.message || 'สร้างภาพตัวอย่างไม่สำเร็จ'
+                  : 'รอสร้างภาพตัวอย่าง'}
               </span>
             </div>
           )}

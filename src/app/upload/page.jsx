@@ -184,13 +184,38 @@ export default function UploadPage() {
   const isDispatchingAudioRef = useRef(false);
   const isDispatchingSpriteRef = useRef(false);
 
-  // System Activity Logs
+  // System Activity Logs & Live GitHub Worker Telemetry
   const [logs, setLogs] = useState([]);
+  const [latestWorkerBySource, setLatestWorkerBySource] = useState({});
+  const seenWorkerLogIdsRef = useRef(new Set());
   const [isDragOver, setIsDragOver] = useState(false);
 
   const addLog = useCallback((msg) => {
     const time = new Date().toLocaleTimeString('th-TH');
     setLogs((prev) => [...prev, `[${time}] ${msg}`]);
+  }, []);
+
+  const syncWorkerLogs = useCallback((workerLogs) => {
+    if (!Array.isArray(workerLogs) || workerLogs.length === 0) return;
+    const nextEntries = [];
+    const latestMap = {};
+    for (const entry of workerLogs) {
+      if (!entry || !entry.message) continue;
+      const src = entry.source || 'system';
+      latestMap[src] = entry;
+      const uid = entry.id || `${entry.ts || ''}_${src}_${entry.message}`;
+      if (seenWorkerLogIdsRef.current.has(uid)) continue;
+      seenWorkerLogIdsRef.current.add(uid);
+      const timeLabel = entry.time || new Date().toLocaleTimeString('th-TH');
+      const srcLabel = entry.label ? `[${entry.label}] ` : '';
+      nextEntries.push(`[${timeLabel}] ${srcLabel}${entry.message}`);
+    }
+    if (Object.keys(latestMap).length > 0) {
+      setLatestWorkerBySource((prev) => ({ ...prev, ...latestMap }));
+    }
+    if (nextEntries.length > 0) {
+      setLogs((prev) => [...prev, ...nextEntries].slice(-200));
+    }
   }, []);
 
   useEffect(() => {
@@ -246,6 +271,10 @@ export default function UploadPage() {
             }
           }
 
+          if (Array.isArray(vid.workerLogs)) {
+            syncWorkerLogs(vid.workerLogs);
+          }
+
           if (vid.thumbnailStatus) setThumbnailStatus(vid.thumbnailStatus);
           if (Array.isArray(vid.thumbnailOptions) && vid.thumbnailOptions.length > 0) {
             setThumbnailOptions(vid.thumbnailOptions);
@@ -266,16 +295,20 @@ export default function UploadPage() {
             }));
           }
 
+          const isSubStillRunning = vid.subtitleStatus === 'processing' || vid.audioStatus === 'extracting';
+          const isRatingStillRunning = vid.ratingCheckStatus === 'analyzing' || vid.spriteStatus === 'generating';
+          const isThumbStillRunning = vid.thumbnailStatus === 'generating';
+
           if (vid.status === 'READY') {
             setCompletedVideo(vid);
-            const isSubStillRunning = vid.subtitleStatus === 'processing' || vid.audioStatus === 'extracting';
-            const isRatingStillRunning = vid.ratingCheckStatus === 'analyzing' || vid.spriteStatus === 'generating';
-            if (vid.transcodeProgress >= 100 && !isSubStillRunning && !isRatingStillRunning) {
+            if (vid.transcodeProgress >= 100 && !isSubStillRunning && !isRatingStillRunning && !isThumbStillRunning) {
               clearInterval(pollingTimerRef.current);
               addLog(`🎉 การประมวลผลวิดีโอ "${vid.title}" เสร็จสมบูรณ์ครบทุกขั้นตอน 100%!`);
             }
           } else if (vid.status === 'FAILED') {
-            clearInterval(pollingTimerRef.current);
+            if (!isSubStillRunning && !isRatingStillRunning && !isThumbStillRunning) {
+              clearInterval(pollingTimerRef.current);
+            }
             setErrorMsg(vid.errorMessage || 'การประมวลผลล้มเหลวใน GitHub Actions');
             addLog(`❌ การแปลงไฟล์ล้มเหลว: ${vid.errorMessage || 'ไม่ทราบสาเหตุ'}`);
           }
@@ -284,7 +317,7 @@ export default function UploadPage() {
         }
       }, 3000);
     },
-    [addLog]
+    [addLog, syncWorkerLogs]
   );
 
   useEffect(() => {
@@ -457,6 +490,7 @@ export default function UploadPage() {
         setRatingCheckStatus(job.ratingCheckStatus);
         setVisionResult(job.visionAnalysis);
         setRunnerSpecs(job.runnerSpecs);
+        if (Array.isArray(job.workerLogs)) syncWorkerLogs(job.workerLogs);
         if (job.status === 'READY') setCompletedVideo(job);
         setFileDetails(prev => ({
           ...prev,
@@ -481,7 +515,7 @@ export default function UploadPage() {
     }
     void restore();
     return () => controller.abort();
-  }, [startPollingStatus, persistVideoPatch, handleDispatchThumbnails]);
+  }, [startPollingStatus, persistVideoPatch, handleDispatchThumbnails, syncWorkerLogs]);
 
   useEffect(() => {
     if (!activeVideoId || isRestoring) return;
@@ -992,11 +1026,18 @@ export default function UploadPage() {
       return;
     }
 
+    const prevStatus = currentStatus;
+    const prevStageDetail = stageDetail;
+
     isStartingPipelineRef.current = true;
     setIsStartingPipeline(true);
     setErrorMsg(null);
     setCurrentStatus('QUEUED');
     setStageDetail('กำลังส่งคำสั่งรัน GitHub Actions (HLS Multi-bitrate + AI Subtitles + Sprite Rating)...');
+    setLatestWorkerBySource((prev) => ({
+      ...prev,
+      hls: { message: '🚀 กำลังส่งคำสั่งรัน GitHub Actions (transcode.yml)...' },
+    }));
     addLog(`เรียก POST /api/upload/complete เพื่อสั่งรัน GitHub Actions...`);
 
     try {
@@ -1004,6 +1045,11 @@ export default function UploadPage() {
       const finalDesc = (descriptionRef.current || description || '').trim();
       const finalCategory = categoryRef.current || category || 'general';
       const finalTags = tagsRef.current || tags || [];
+
+      const safeDurationSec = Math.max(0, Math.floor(Number(fileDetails.durationSec) || 0));
+      const safeFpsVal = Number.isFinite(Number(fileDetails.fps)) && Number(fileDetails.fps) > 0
+        ? Math.round(Number(fileDetails.fps) * 1000) / 1000
+        : 0;
 
       const completeRes = await fetch('/api/upload/complete', {
         method: 'POST',
@@ -1029,10 +1075,10 @@ export default function UploadPage() {
           customPrompt,
           runAiRatingVerify: true,
           clientMeta: {
-            duration: fileDetails.durationSec,
-            resolution: fileDetails.resolution,
-            fps: fileDetails.fps,
-            codec: fileDetails.codec,
+            duration: safeDurationSec,
+            resolution: fileDetails.resolution || '',
+            fps: safeFpsVal,
+            codec: fileDetails.codec || '',
             thumbnailDataUrl: thumbnailUrl || '',
           },
         }),
@@ -1064,6 +1110,12 @@ export default function UploadPage() {
       startPollingStatus(vidId);
     } catch (err) {
       console.error('[Complete Pipeline Error]:', err);
+      setCurrentStatus(prevStatus === 'QUEUED' || prevStatus === 'PROCESSING' || prevStatus === 'TRANSCODING' ? 'FAILED' : prevStatus);
+      setStageDetail(prevStageDetail || '');
+      setLatestWorkerBySource((prev) => ({
+        ...prev,
+        hls: { level: 'error', message: `❌ ${err.message}` },
+      }));
       setErrorMsg(err.message);
       addLog(`❌ เกิดข้อผิดพลาด: ${err.message}`);
     } finally {
@@ -1410,6 +1462,7 @@ export default function UploadPage() {
                     }
                     visionResult={visionResult}
                     onAddLog={addLog}
+                    workerDetail={latestWorkerBySource.thumbnail?.message || ''}
                   />
                 )}
 
@@ -1432,6 +1485,7 @@ export default function UploadPage() {
                     subtitleTracks={subtitleTracks}
                     onDispatchAudioSubtitles={handleDispatchAudioSubtitles}
                     onAddLog={addLog}
+                    workerDetail={latestWorkerBySource.subtitles?.message || ''}
                   />
                 )}
 
@@ -1450,6 +1504,7 @@ export default function UploadPage() {
                       setContentRating(result.suggestedRating);
                       addLog(`นำเรตติ้ง "${result.suggestedRatingLabel}" ไปใช้กับวิดีโอเรียบร้อย`);
                     }}
+                    workerDetail={latestWorkerBySource.rating?.message || ''}
                   />
                 )}
 
@@ -1471,6 +1526,8 @@ export default function UploadPage() {
                     isStartingPipeline={isStartingPipeline}
                     errorMsg={errorMsg}
                     ratingCheckStatus={ratingCheckStatus}
+                    stageDetail={stageDetail}
+                    workerDetail={latestWorkerBySource.hls?.message || ''}
                   />
                 )}
 
@@ -1557,6 +1614,7 @@ export default function UploadPage() {
                   contentRating={contentRating}
                   thumbnailStatus={thumbnailStatus}
                   runnerSpecs={runnerSpecs}
+                  workerDetails={latestWorkerBySource}
                 />
               </div>
             </div>
