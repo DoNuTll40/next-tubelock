@@ -28,7 +28,7 @@ export async function POST(request) {
       clientMeta = {},
     } = body;
 
-    const envModelName = (process.env.GEMINI_MODEL_NAME || 'gemini-2.5-flash-lite')
+    const envModelName = (process.env.GEMINI_MODEL_NAME || 'gemini-3.5-flash-lite')
       .replace(/['"]/g, '')
       .replace(/flesh/gi, 'flash')
       .trim();
