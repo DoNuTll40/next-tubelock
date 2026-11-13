@@ -131,6 +131,12 @@ if (!VIDEO_ID || !RAW_FILE_NAME) {
     process.exit(1);
 }
 
+const vidNum = Number(VIDEO_ID);
+if (!Number.isFinite(vidNum) || vidNum <= 0) {
+    console.error(`❌ Invalid VIDEO_ID: "${VIDEO_ID}". Expected a positive integer.`);
+    process.exit(1);
+}
+
 if (!DATABASE_URL || !AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRET || !ONEDRIVE_USER_ID) {
     console.error('❌ Missing required environment secrets. Check GitHub Actions secrets configuration.');
     process.exit(1);
@@ -139,7 +145,7 @@ if (!DATABASE_URL || !AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRE
 // 2. Initialize Database Client
 const dbUrl = (DATABASE_URL || '').trim();
 const sql = neon(dbUrl);
-const logger = createWorkerLogger(sql, Number(VIDEO_ID), 'hls', 'HLS Engine');
+const logger = createWorkerLogger(sql, vidNum, 'hls', 'HLS Engine');
 let schemaChecked = false;
 
 async function ensureDbSchemaOnce() {
@@ -186,7 +192,6 @@ async function fetchWithRetry(url, options = {}, retries = 5, delay = 2000) {
 }
 
 async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', extra = {} }) {
-    const vidNum = Number(VIDEO_ID);
     await ensureDbSchemaOnce();
 
     const safeDuration = extra.duration != null && Number.isFinite(Number(extra.duration))
@@ -636,11 +641,11 @@ async function main() {
         // Step 3: Video Probe & Create OneDrive Folder in Parallel!
         await updateDbStatus({
             status: 'PROCESSING',
-            progress: 25,
+            progress: 18,
             stageDetail: 'ดาวน์โหลดไฟล์สำเร็จ กำลังวิเคราะห์ข้อมูลวิดีโอ (ffprobe)',
         });
 
-        const streamFolderName = `stream_vid_${VIDEO_ID}`;
+        const streamFolderName = `stream_vid_${vidNum}`;
         const streamsParentFolder = '/streams';
 
         const [probeData, parentFolderId] = await Promise.all([
@@ -766,7 +771,7 @@ async function main() {
             uploadPosterPromise,
             updateDbStatus({
                 status: 'PROCESSING',
-                progress: 25,
+                progress: 20,
                 stageDetail: `วิเคราะห์สเปกสำเร็จ: ${srcWidth}x${srcHeight} (${resolutionLabel}), ${duration}s, ${fps}fps พร้อมบันทึกภาพหน้าปก`,
                 extra: {
                     duration,
@@ -788,7 +793,7 @@ async function main() {
         // =========================================================================
         await updateDbStatus({
             status: 'TRANSCODING',
-            progress: 15,
+            progress: 21,
             stageDetail: '⚡ กำลังแปลงความละเอียดแรก (144p) พร้อมสร้าง Storyboard ในรอบเดียว...',
         });
 
@@ -825,7 +830,7 @@ async function main() {
                     const pct = Math.min(99, Math.round((sec / duration) * 100));
                     updateDbStatus({
                         status: 'TRANSCODING',
-                        progress: Math.min(22, 12 + Math.round(pct * 0.1)),
+                        progress: Math.min(24, 21 + Math.round(pct * 0.03)),
                         stageDetail: `กำลังหั่น 144p + Storyboard (เร็วสุด): ${pct}% (${formatTime(sec)} / ${formatTime(duration)})`,
                     });
                 }
@@ -878,7 +883,7 @@ async function main() {
             extra: {
                 onedrive_folder_id: streamFolderId,
                 master_playlist_path: masterPlaylistPath,
-                storyboard_vtt_path: hasStoryboard ? `/streams/stream_vid_${VIDEO_ID}/thumbnails.vtt` : null,
+                storyboard_vtt_path: hasStoryboard ? `/streams/stream_vid_${vidNum}/thumbnails.vtt` : null,
                 duration,
                 resolution: resolutionLabel,
                 fps,
@@ -1121,7 +1126,7 @@ async function main() {
             const checkRows = await sql`
                 SELECT audio_status, sprite_status, rating_check_status
                 FROM videos
-                WHERE id = ${Number(VIDEO_ID)}
+                WHERE id = ${vidNum}
                 LIMIT 1;
             `.catch(() => []);
             const st = checkRows?.[0] || {};
