@@ -288,7 +288,7 @@ export default async function WatchPage({ params, searchParams }) {
   return (
     <WatchClient
       initialVideo={video}
-      initialShowAdultPosters={cookieStore.get(POSTER_PREFERENCE)?.value === '1'}
+      initialShowAdultPosters={Boolean(userId) && cookieStore.get(POSTER_PREFERENCE)?.value === '1'}
       initialRelated={relatedVideos}
       initialTime={resolvedTime}
     />

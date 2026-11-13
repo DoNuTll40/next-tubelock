@@ -21,6 +21,7 @@ import { prewarmVideoSourceClient } from '@/lib/playbackResolver';
 import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
+import { useSession } from '@/context/SessionContext';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
 const preWarmedIds = new Set();
@@ -43,33 +44,54 @@ export default function VideoCard({
 
   // 18+ / Mature Content Filter preference (Global settings + per-card reveal)
   const isMature = isMatureVideo(video);
+  const isLoggedIn = Boolean(useSession());
   const allow18Plus = usePosterPreference(isMature);
   const videoId = video.id;
   const { poster: currentPoster, revealPoster } = usePosterReveal(isMature ? videoId : null, !allow18Plus);
   const posterReady = currentPoster?.status === 'ready';
   const showRestriction = isMature && !allow18Plus && !posterReady;
+  const canRevealPoster = showRestriction && isLoggedIn;
 
-  const renderRestriction = (small = false) => showRestriction && (
-    <button
-      type="button"
-      onClick={() => void revealPoster(currentPoster?.status === 'failed')}
-      onMouseDown={(event) => event.stopPropagation()}
-      onTouchStart={(event) => event.stopPropagation()}
-      disabled={currentPoster?.status === 'loading'}
-      aria-busy={currentPoster?.status === 'loading'}
-      className={`absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 bg-[url('/images/restricted-poster.svg')] bg-cover bg-center p-2 text-white focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-[#FF7A00] ${small ? 'text-[11px]' : 'text-sm'} disabled:cursor-wait cursor-pointer group/reveal`}
-    >
+  const renderRestriction = (small = false) => {
+    if (!showRestriction) return null;
+
+    const badgeLabel = (
       <span className={`flex items-center gap-1.5 font-semibold ${small ? '' : 'mb-1'}`}>
         <LockKeyhole aria-hidden="true" className="size-3.5 text-[#FF9A40]" />
         เนื้อหาจำกัดอายุ 18+
       </span>
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A00]/35 bg-[#21160f] px-3 py-1 text-[11px] font-medium transition-colors group-hover/reveal:bg-[#38200f]" aria-live="polite">
-        {currentPoster?.status === 'loading' ? (
-          <><Loader2 aria-hidden="true" className="size-3 animate-spin" />กำลังโหลดภาพปก</>
-        ) : currentPoster?.status === 'failed' ? 'ลองโหลดภาพปกอีกครั้ง' : 'แสดงภาพปก'}
-      </span>
-    </button>
-  );
+    );
+
+    if (!isLoggedIn) {
+      return (
+        <div
+          aria-hidden="true"
+          className={`absolute inset-0 z-20 flex flex-col items-center justify-center bg-[url('/images/restricted-poster.svg')] bg-cover bg-center p-2 text-white pointer-events-none ${small ? 'text-[11px]' : 'text-sm'}`}
+        >
+          {badgeLabel}
+        </div>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={() => void revealPoster(currentPoster?.status === 'failed')}
+        onMouseDown={(event) => event.stopPropagation()}
+        onTouchStart={(event) => event.stopPropagation()}
+        disabled={currentPoster?.status === 'loading'}
+        aria-busy={currentPoster?.status === 'loading'}
+        className={`absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 bg-[url('/images/restricted-poster.svg')] bg-cover bg-center p-2 text-white focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-[#FF7A00] ${small ? 'text-[11px]' : 'text-sm'} disabled:cursor-wait cursor-pointer group/reveal`}
+      >
+        {badgeLabel}
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A00]/35 bg-[#21160f] px-3 py-1 text-[11px] font-medium transition-colors group-hover/reveal:bg-[#38200f]" aria-live="polite">
+          {currentPoster?.status === 'loading' ? (
+            <><Loader2 aria-hidden="true" className="size-3 animate-spin" />กำลังโหลดภาพปก</>
+          ) : currentPoster?.status === 'failed' ? 'ลองโหลดภาพปกอีกครั้ง' : 'แสดงภาพปก'}
+        </span>
+      </button>
+    );
+  };
 
   const renderCardLink = () => (
     <Link
@@ -187,7 +209,7 @@ export default function VideoCard({
         {renderCardLink()}
         {/* Thumbnail ฝั่งซ้าย */}
         <div
-          className={`relative isolate aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${showRestriction ? 'z-20' : ''}`}
+          className={`relative isolate aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${canRevealPoster ? 'z-20' : ''}`}
         >
           {effectiveThumbnail && !imgError ? (
             <img
@@ -300,7 +322,7 @@ export default function VideoCard({
       >
         {renderCardLink()}
         <div
-          className={`relative isolate aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${showRestriction ? 'z-20' : ''}`}
+          className={`relative isolate aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${canRevealPoster ? 'z-20' : ''}`}
         >
           {effectiveThumbnail && !imgError ? (
             <img
@@ -397,7 +419,7 @@ export default function VideoCard({
       style={cardHoverStyle}
     >
       {renderCardLink()}
-      <div className={`relative isolate aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs ${showRestriction ? 'z-20' : ''}`}>
+      <div className={`relative isolate aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs ${canRevealPoster ? 'z-20' : ''}`}>
         {effectiveThumbnail && !imgError ? (
           <>
             <img

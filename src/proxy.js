@@ -34,7 +34,6 @@ export async function proxy(request) {
       (pathname === '/api/videos' ||
         (/^\/api\/videos\/[^/]+(?:\/poster)?$/.test(pathname) &&
           pathname !== '/api/videos/queue'))) ||
-    (request.method === 'POST' && /^\/api\/videos\/[^/]+\/poster$/.test(pathname)) ||
     pathname.startsWith('/api/og') ||
     isPublicStreamImage ||
     pathname.startsWith('/images') ||

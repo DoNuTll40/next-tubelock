@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar';
 import Sidebar from '@/components/Sidebar';
 import SidebarDrawer from '@/components/SidebarDrawer';
 import BottomNav from '@/components/BottomNav';
+import { SessionProvider } from '@/context/SessionContext';
 import { useViewMode } from '@/context/ViewModeContext';
 import { usePathname } from 'next/navigation';
 
@@ -21,23 +22,15 @@ export default function AppShell({ session, children }) {
   const isLoginPage = pathname?.startsWith('/login');
   const isTubelockDoc = pathname?.startsWith('/tubelock');
 
-  if (isLoginPage) {
-    return (
-      <main className="min-h-screen w-full relative bg-[#FBF9F5] text-[#212529] dark:bg-[#0F0F0F] dark:text-[#F1F1F1]">
-        {children}
-      </main>
-    );
-  }
-
-  if (isTubelockDoc) {
-    return (
-      <main className="min-h-screen w-full relative bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1]">
-        {children}
-      </main>
-    );
-  }
-
-  return (
+  const shellContent = isLoginPage ? (
+    <main className="min-h-screen w-full relative bg-[#FBF9F5] text-[#212529] dark:bg-[#0F0F0F] dark:text-[#F1F1F1]">
+      {children}
+    </main>
+  ) : isTubelockDoc ? (
+    <main className="min-h-screen w-full relative bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1]">
+      {children}
+    </main>
+  ) : (
     <div className="flex flex-col min-h-screen w-full relative bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1] transition-colors duration-200">
       {/* Top Navigation */}
       <Navbar session={session} />
@@ -59,4 +52,6 @@ export default function AppShell({ session, children }) {
       {showMobileLayout && <BottomNav />}
     </div>
   );
+
+  return <SessionProvider session={session}>{shellContent}</SessionProvider>;
 }

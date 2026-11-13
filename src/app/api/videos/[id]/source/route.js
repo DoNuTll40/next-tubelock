@@ -1,3 +1,4 @@
+import { getSessionUserId } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { decodeVideoSlug } from '@/lib/videoUtils';
@@ -35,10 +36,11 @@ export async function GET(request, context) {
 
     const { searchParams } = new URL(request.url);
     const forceFresh = searchParams.get('fresh') === '1' || searchParams.get('refresh') === '1';
-    const showAdultPreviews = searchParams.get('previews') === '1' &&
-      request.cookies.get(POSTER_PREFERENCE)?.value === '1';
-
     const sql = getDb();
+    const wantsAdultPreviews = searchParams.get('previews') === '1' &&
+      request.cookies.get(POSTER_PREFERENCE)?.value === '1';
+    const showAdultPreviews = wantsAdultPreviews && Boolean(await getSessionUserId(sql));
+
     const [{ data, path, notReady }, [rating]] = await Promise.all([
       resolveVideoSourceServer(id, { forceFresh, showAdultPreviews }),
       sql`SELECT category, content_rating FROM videos WHERE id = ${id} AND (status = 'READY' OR status IS NULL)`,

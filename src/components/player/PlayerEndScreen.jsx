@@ -6,6 +6,7 @@ import { Play, RotateCcw, Loader2, LockKeyhole } from 'lucide-react';
 import { encodeVideoSlug, getVideoResumeTime, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
+import { useSession } from '@/context/SessionContext';
 import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
 import { extractDominantColor } from '@/lib/colorExtractor';
 
@@ -159,9 +160,11 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
   const viewsStr = formatThaiViews(v.views_count);
   const timeAgoStr = formatThaiTimeAgo(v.created_at);
   const isMature = isMatureVideo(v);
+  const isLoggedIn = Boolean(useSession());
   const showAdultPoster = usePosterPreference(isMature);
   const { poster, revealPoster } = usePosterReveal(isMature ? v.id : null, !showAdultPoster);
   const showRestriction = isMature && !showAdultPoster && poster?.status !== 'ready';
+  const canRevealPoster = showRestriction && isLoggedIn;
   const { isMusic, pos, progressPct } = useVideoWatchProgress(v);
   const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, v.duration);
   const watchUrl = `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}`;
@@ -213,7 +216,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
       />
       {/* Thumbnail Container */}
       <div
-        className={`relative w-full aspect-video rounded-xl overflow-hidden bg-zinc-900 transition-all duration-300 shadow-2xl ${showRestriction ? 'z-20' : ''}`}
+        className={`relative w-full aspect-video rounded-xl overflow-hidden bg-zinc-900 transition-all duration-300 shadow-2xl ${canRevealPoster ? 'z-20' : ''}`}
       >
         {thumbnail ? (
           <img
@@ -231,7 +234,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
           </div>
         )}
 
-        {showRestriction && (
+        {showRestriction && (isLoggedIn ? (
           <button
             type="button"
             disabled={poster?.status === 'loading'}
@@ -249,7 +252,17 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
               ) : poster?.status === 'failed' ? 'ลองโหลดภาพปกอีกครั้ง' : 'แสดงภาพปก'}
             </span>
           </button>
-        )}
+        ) : (
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center text-white pointer-events-none"
+          >
+            <span className="flex items-center gap-1 text-xs font-semibold">
+              <LockKeyhole aria-hidden="true" className="size-3.5 text-[#FF9A40]" />
+              เนื้อหาจำกัดอายุ 18+
+            </span>
+          </div>
+        ))}
 
         {progressPct > 0 && (
           <div

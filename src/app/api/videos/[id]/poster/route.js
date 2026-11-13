@@ -1,3 +1,4 @@
+import { getSessionUserId } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
@@ -20,14 +21,22 @@ function respondWithPoster(url, asImage) {
   return new Response(null, { status: 307, headers: { ...headers, Location: url } });
 }
 
-export function GET(request, { params }) {
+export async function GET(request, { params }) {
   if (request.cookies.get(POSTER_PREFERENCE)?.value !== '1') {
+    return respondWithPoster(RESTRICTED_POSTER, true);
+  }
+  const userId = await getSessionUserId();
+  if (!userId) {
     return respondWithPoster(RESTRICTED_POSTER, true);
   }
   return loadPoster(request, params, true);
 }
 
-export function POST(request, { params }) {
+export async function POST(request, { params }) {
+  const userId = await getSessionUserId();
+  if (!userId) {
+    return Response.json({ error: 'Authentication required' }, { status: 401, headers });
+  }
   return loadPoster(request, params, false);
 }
 

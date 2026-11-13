@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useSession } from '@/context/SessionContext';
 
 const posters = new Map();
 const listeners = new Set();
@@ -42,10 +43,11 @@ async function reveal(id, fresh) {
 const getServerSnapshot = () => null;
 
 export function usePosterReveal(videoId, restore = true) {
-  const id = videoId ? String(videoId) : null;
-  const getSnapshot = useCallback(() => posters.get(id) ?? null, [id]);
+  const isLoggedIn = Boolean(useSession());
+  const id = isLoggedIn && videoId ? String(videoId) : null;
+  const getSnapshot = useCallback(() => (id ? posters.get(id) ?? null : null), [id]);
   const poster = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const revealPoster = useCallback((fresh = false) => reveal(id, fresh), [id]);
+  const revealPoster = useCallback((fresh = false) => (id ? reveal(id, fresh) : Promise.resolve()), [id]);
 
   useEffect(() => {
     if (!id || !restore) return;

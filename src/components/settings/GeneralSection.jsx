@@ -2,6 +2,7 @@
 
 import { savePosterPreference } from '@/lib/posterPreference';
 import React from 'react';
+import { useSession } from '@/context/SessionContext';
 import { useTheme } from '@/context/ThemeContext';
 import SettingCard from '@/components/ui/SettingCard';
 import SettingRow from '@/components/ui/SettingRow';
@@ -52,6 +53,7 @@ export default function GeneralSection({
   setAllow18Plus,
   onToggle18Plus,
 }) {
+  const isLoggedIn = Boolean(useSession());
   const { theme, resolvedTheme, setTheme } = useTheme();
 
   const [local18Plus, setLocal18Plus] = React.useState(() => {
@@ -66,6 +68,7 @@ export default function GeneralSection({
   const current18Plus = allow18Plus !== undefined ? allow18Plus : local18Plus;
 
   const handle18PlusChange = (checked) => {
+    if (!isLoggedIn) return;
     if (onToggle18Plus) {
       onToggle18Plus(checked);
     } else if (setAllow18Plus) {
@@ -192,18 +195,23 @@ export default function GeneralSection({
       >
         <SettingRow
           title="แสดงภาพปกเนื้อหา 18+ และหมวดผู้ใหญ่ (Adult Content Display)"
-          description="เปิดเพื่อแสดงภาพปกจริงของคลิป 18+ โดยอัตโนมัติ การตั้งค่านี้บันทึกในเบราว์เซอร์นี้และปิดไว้โดยค่าเริ่มต้น"
+          description={isLoggedIn
+            ? 'เปิดเพื่อแสดงภาพปกจริงของคลิป 18+ โดยอัตโนมัติ การตั้งค่านี้บันทึกในเบราว์เซอร์นี้และปิดไว้โดยค่าเริ่มต้น'
+            : 'เข้าสู่ระบบก่อนจึงจะสามารถเปิดแสดงภาพปกเนื้อหา 18+ หรือกดดูภาพปกบนการ์ดวิดีโอได้'}
         >
           <Switch
-            checked={current18Plus}
+            checked={isLoggedIn && current18Plus}
             onChange={handle18PlusChange}
+            disabled={!isLoggedIn}
           />
         </SettingRow>
 
         <div className="p-3.5 bg-[#FFF8F2] dark:bg-[#FF7A00]/10 border-t border-[#EFECE6] dark:border-white/10 flex items-start gap-2.5 text-xs">
           <ShieldAlert className="w-4 h-4 text-[#FF7A00] shrink-0 mt-0.5" />
           <span className="text-[#8C857B] dark:text-[#CCCCCC] leading-relaxed">
-            เมื่อปิด ระบบจะแสดงภาพแทนของคลิป 18+ คุณยังเลือกแสดงภาพปกจริงเป็นรายคลิปได้จากการ์ดที่มีปุ่มแสดงภาพปก
+            {isLoggedIn
+              ? 'เมื่อปิด ระบบจะแสดงภาพแทนของคลิป 18+ คุณยังเลือกแสดงภาพปกจริงเป็นรายคลิปได้จากการ์ดที่มีปุ่มแสดงภาพปก'
+              : 'ผู้ชมที่ยังไม่ได้เข้าสู่ระบบจะเห็นเฉพาะหน้ากากจำกัดอายุ 18+ และไม่สามารถกดแสดงภาพปกจริงได้'}
           </span>
         </div>
       </SettingCard>

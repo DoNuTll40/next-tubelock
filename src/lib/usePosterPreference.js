@@ -1,13 +1,15 @@
 'use client';
 
 import { useLayoutEffect, useState } from 'react';
+import { useSession } from '@/context/SessionContext';
 import { POSTER_PREFERENCE, syncPosterPreferenceCookie } from './posterPreference';
 
 export function usePosterPreference(isMature, initiallyEnabled = false) {
-  const [enabled, setEnabled] = useState(initiallyEnabled);
+  const isLoggedIn = Boolean(useSession());
+  const [enabled, setEnabled] = useState(isLoggedIn && initiallyEnabled);
 
   useLayoutEffect(() => {
-    if (!isMature) return;
+    if (!isLoggedIn || !isMature) return;
 
     const update = () => {
       try {
@@ -25,7 +27,7 @@ export function usePosterPreference(isMature, initiallyEnabled = false) {
       window.removeEventListener('tubelock_18plus_changed', update);
       window.removeEventListener('storage', update);
     };
-  }, [isMature]);
+  }, [isLoggedIn, isMature]);
 
-  return isMature && enabled;
+  return isLoggedIn && isMature && enabled;
 }
