@@ -1,3 +1,4 @@
+import { isMatureVideo, isPreviewImage, protectVideoPoster } from './videoUtils';
 import { after } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
@@ -137,7 +138,19 @@ function scheduleAfterOrBackground(fn) {
   }
 }
 
-export function formatSourceForClient(data) {
+export function protectSourcePreviews(data, rating = data?.video) {
+  if (!data || !isMatureVideo(rating)) return data;
+  return {
+    ...data,
+    video: protectVideoPoster(data.video && { ...data.video, ...rating }),
+    ...(Array.isArray(data.items) && {
+      items: data.items.filter(({ name }) => !isPreviewImage(name) && !/^thumbnails.*\.vtt$/i.test(name)),
+    }),
+  };
+}
+
+export function formatSourceForClient(data, showAdultPreviews = false) {
+  if (!showAdultPreviews) data = protectSourcePreviews(data);
   if (!data || !Array.isArray(data.items)) return data;
   return {
     ...data,
@@ -154,7 +167,7 @@ export function formatSourceForClient(data) {
  * 2. In-Flight Request Coalescing (shares active promise across SSR & API calls)
  * 3. Persistent Neon DB Cache (< 50ms) with OneDrive Graph fallback (~2.5s)
  */
-export async function resolveVideoSourceServer(numericId, { forceFresh = false } = {}) {
+export async function resolveVideoSourceServer(numericId, { forceFresh = false, showAdultPreviews = false } = {}) {
   const id = Number(numericId);
   if (!id || isNaN(id)) {
     throw new Error('Video ID is required');
@@ -175,7 +188,7 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false }
     ) {
       const sampleUrl = cached.data.items[0]?.downloadUrl || cached.data.url;
       if (isTempauthValid(sampleUrl)) {
-        return { data: formatSourceForClient(cached.data), path: 'memory-hit' };
+        return { data: formatSourceForClient(cached.data, showAdultPreviews), path: 'memory-hit' };
       } else {
         sourceCache.delete(cacheKey);
       }
@@ -188,7 +201,7 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false }
     if (data?.status && data.status !== 'READY' && !data.success) {
       return { data, path: 'inflight', notReady: true };
     }
-    return { data: formatSourceForClient(data), path: 'inflight' };
+    return { data: formatSourceForClient(data, showAdultPreviews), path: 'inflight' };
   }
 
   // ⚡ 3. Cold Fetch with Promise Coalescing & Database Persistent Cache
@@ -476,7 +489,7 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false }
     if (data?.status && data.status !== 'READY' && !data.success) {
       return { data, path: hitPath, notReady: true };
     }
-    return { data: formatSourceForClient(data), path: hitPath };
+    return { data: formatSourceForClient(data, showAdultPreviews), path: hitPath };
   } finally {
     inFlightRequests.delete(cacheKey);
   }

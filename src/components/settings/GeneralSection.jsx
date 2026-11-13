@@ -1,5 +1,6 @@
 'use client';
 
+import { savePosterPreference } from '@/lib/posterPreference';
 import React from 'react';
 import { useTheme } from '@/context/ThemeContext';
 import SettingCard from '@/components/ui/SettingCard';
@@ -73,8 +74,7 @@ export default function GeneralSection({
       setLocal18Plus(checked);
     }
     try {
-      localStorage.setItem('tubelock_allow_18plus', checked ? '1' : '0');
-      window.dispatchEvent(new Event('tubelock_18plus_changed'));
+      savePosterPreference(checked);
     } catch (_) { }
   };
 
@@ -192,7 +192,7 @@ export default function GeneralSection({
       >
         <SettingRow
           title="แสดงภาพปกเนื้อหา 18+ และหมวดผู้ใหญ่ (Adult Content Display)"
-          description="เมื่อเปิดใช้งาน ภาพปกของวิดีโอเรต 18+ จะแสดงตามปกติโดยไม่เบลอ (ค่าเริ่มต้น: ปิด - เบลอภาพปกเพื่อความปลอดภัยและความเป็นส่วนตัว)"
+          description="เปิดเพื่อแสดงภาพปกจริงของคลิป 18+ โดยอัตโนมัติ การตั้งค่านี้บันทึกในเบราว์เซอร์นี้และปิดไว้โดยค่าเริ่มต้น"
         >
           <Switch
             checked={current18Plus}
@@ -203,7 +203,7 @@ export default function GeneralSection({
         <div className="p-3.5 bg-[#FFF8F2] dark:bg-[#FF7A00]/10 border-t border-[#EFECE6] dark:border-white/10 flex items-start gap-2.5 text-xs">
           <ShieldAlert className="w-4 h-4 text-[#FF7A00] shrink-0 mt-0.5" />
           <span className="text-[#8C857B] dark:text-[#CCCCCC] leading-relaxed">
-            หากปิดใช้งาน ระบบจะเบลอภาพปกของวิดีโอ 18+ ในทุกหน้าฟีด (หน้าแรก, แนะนำ, ค้นหา) โดยคุณยังสามารถกดแตะที่ตัวการ์ดเพื่อดูภาพปกเป็นรายคลิปได้ตลอดเวลา
+            เมื่อปิด ระบบจะแสดงภาพแทนของคลิป 18+ คุณยังเลือกแสดงภาพปกจริงเป็นรายคลิปได้จากการ์ดที่มีปุ่มแสดงภาพปก
           </span>
         </div>
       </SettingCard>

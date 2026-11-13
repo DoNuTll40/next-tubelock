@@ -22,7 +22,11 @@ export default function AppShell({ session, children }) {
   const isTubelockDoc = pathname?.startsWith('/tubelock');
 
   if (isLoginPage) {
-    return <main className="min-h-screen w-full relative bg-[#0F0F0F]">{children}</main>;
+    return (
+      <main className="min-h-screen w-full relative bg-[#FBF9F5] text-[#212529] dark:bg-[#0F0F0F] dark:text-[#F1F1F1]">
+        {children}
+      </main>
+    );
   }
 
   if (isTubelockDoc) {

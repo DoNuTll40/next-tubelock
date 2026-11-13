@@ -1,3 +1,4 @@
+import { protectVideoPoster } from '@/lib/videoUtils';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
 import { isMusicVideo } from '@/lib/videoUtils';
@@ -52,6 +53,7 @@ export default async function HistoryPage() {
             v.views_count,
             v.created_at AS video_created_at,
             v.category,
+            v.content_rating,
             v.source_type,
             u.name AS author_name,
             u.email AS author_email,
@@ -65,7 +67,7 @@ export default async function HistoryPage() {
         `;
 
         history = rows.map((r) => ({
-          ...r,
+          ...protectVideoPoster(r),
           history_id: r.history_id,
           video_id: r.video_id,
           last_position_seconds: isMusicVideo(r) ? 0 : Number(r.last_position_seconds || 0),

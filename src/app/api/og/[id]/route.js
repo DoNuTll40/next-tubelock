@@ -2,7 +2,7 @@ import sharp from 'sharp';
 import fs from 'fs/promises';
 import path from 'path';
 import { getDb } from '@/lib/db';
-import { decodeVideoSlug } from '@/lib/videoUtils';
+import { decodeVideoSlug, isMatureVideo } from '@/lib/videoUtils';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,21 +19,9 @@ export async function GET(request, context) {
       return await fallbackImage();
     }
 
-    const cacheKey = `og_vid_${numericId}`;
-    const cached = ogCache.get(cacheKey);
-    if (cached && (Date.now() - cached.time < 3600000)) { // 1 hr memory cache
-      return new Response(cached.buffer, {
-        headers: {
-          'Content-Type': 'image/jpeg',
-          'Content-Length': String(cached.buffer.byteLength),
-          'Cache-Control': 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400',
-        },
-      });
-    }
-
     const sql = getDb();
     const rows = await sql`
-      SELECT id, title, thumbnail_url
+      SELECT id, title, thumbnail_url, content_rating, category
       FROM videos
       WHERE id = ${numericId} AND (status = 'READY' OR status IS NULL)
       LIMIT 1;
@@ -44,6 +32,21 @@ export async function GET(request, context) {
     }
 
     const video = rows[0];
+    if (isMatureVideo(video)) {
+      return fallbackImage();
+    }
+
+    const cacheKey = `og_vid_${numericId}`;
+    const cached = ogCache.get(cacheKey);
+    if (cached && (Date.now() - cached.time < 3600000)) { // 1 hr memory cache
+      return new Response(cached.buffer, {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': String(cached.buffer.byteLength),
+          'Cache-Control': 'private, no-store',
+        },
+      });
+    }
     let posterUrl = video.thumbnail_url || `/streams/stream_vid_${video.id}/poster.jpg`;
 
     // Fetch or decode poster image buffer
@@ -97,7 +100,7 @@ export async function GET(request, context) {
       headers: {
         'Content-Type': 'image/jpeg',
         'Content-Length': String(optimizedBuffer.byteLength),
-        'Cache-Control': 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400',
+        'Cache-Control': 'private, no-store',
       },
     });
   } catch (err) {
@@ -122,7 +125,7 @@ async function fallbackImage() {
       headers: {
         'Content-Type': 'image/jpeg',
         'Content-Length': String(resized.byteLength),
-        'Cache-Control': 'public, max-age=86400, s-maxage=604800',
+        'Cache-Control': 'private, no-store',
       },
     });
   } catch {

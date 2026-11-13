@@ -16,7 +16,7 @@ import {
   Bookmark,
   ListPlus
 } from 'lucide-react';
-import { formatResolutionBadge, encodeVideoSlug, isMusicVideo } from '@/lib/videoUtils';
+import { formatResolutionBadge, encodeVideoSlug, isMusicVideo, getVideoResumeTime } from '@/lib/videoUtils';
 
 const FILTER_CHIPS = [
   { id: 'all', label: 'ทั้งหมด' },
@@ -506,7 +506,8 @@ function HorizontalVideoCard({ video }) {
   const isMusic = isMusicVideo(video);
   const pos = Number(video?.last_position_seconds || 0);
   const dur = Number(video?.duration || 0);
-  const watchUrl = videoSlug ? `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}` : '/';
+  const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, dur);
+  const watchUrl = videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/';
 
   const resBadge = formatResolutionBadge(video.resolution);
   const effectiveThumbnail =

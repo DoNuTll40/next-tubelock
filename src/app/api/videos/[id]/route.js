@@ -1,7 +1,8 @@
+import { protectVideoPoster } from '@/lib/videoUtils';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
+import { getGraphToken, getUserDriveId, ensureFolderExists } from '@/lib/onedriveServer';
 import { decodeVideoSlug } from '@/lib/videoUtils';
 
 export const dynamic = 'force-dynamic';
@@ -41,7 +42,7 @@ export async function GET(request, context) {
     }
 
     return NextResponse.json(
-      { success: true, video: rows[0] },
+      { success: true, video: protectVideoPoster(rows[0]) },
       {
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -159,5 +160,134 @@ export async function DELETE(request, context) {
       { success: false, error: err.message },
       { status: 500 }
     );
+  }
+}
+
+const DATA_IMAGE_RE = /^data:(image\/(?:jpe?g|png|webp));base64,(.+)$/i;
+
+/**
+ * PATCH /api/videos/[id]
+ * Saves thumbnail choice/custom cover, extracted options, and draft metadata for the video owner
+ */
+export async function PATCH(request, context) {
+  try {
+    const { id: rawId } = await context.params;
+    const numericId = decodeVideoSlug(rawId) || parseInt(rawId, 10);
+    const id = numericId;
+    if (!id || isNaN(id)) {
+      return NextResponse.json({ success: false, error: 'Video ID is required' }, { status: 400 });
+    }
+
+    const sql = getDb();
+    const userId = await getSessionUserId(sql);
+    if (userId == null) return accessError(401);
+    const admin = isAdmin(userId);
+
+    try {
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(50) DEFAULT 'waiting';`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_options JSONB DEFAULT '[]'::jsonb;`;
+    } catch (_) {}
+
+    const existing = await sql`
+      SELECT id, onedrive_folder_id, thumbnail_url, thumbnail_status
+      FROM videos
+      WHERE id = ${id} AND (${admin} OR user_id = ${userId})
+      LIMIT 1;
+    `;
+    if (!existing.length) return accessError(404);
+
+    const body = await request.json();
+    const { thumbnailUrl, thumbnailOptions, title, description, category, tags, contentRating } = body || {};
+
+    let validThumbUrl = null;
+    let decodedImageBuffer = null;
+    let decodedContentType = 'image/jpeg';
+
+    if (typeof thumbnailUrl === 'string' && thumbnailUrl.trim()) {
+      const trimmed = thumbnailUrl.trim();
+      const match = trimmed.match(DATA_IMAGE_RE);
+      if (match && trimmed.length <= 2_600_000) {
+        validThumbUrl = trimmed;
+        decodedContentType = match[1].toLowerCase();
+        decodedImageBuffer = Buffer.from(match[2], 'base64');
+      } else if (trimmed.startsWith(`/streams/stream_vid_${id}/`)) {
+        validThumbUrl = trimmed;
+      } else {
+        return NextResponse.json({ success: false, error: 'รูปแบบหรือขนาดไฟล์ภาพปกไม่ถูกต้อง (สูงสุด 2MB)' }, { status: 400 });
+      }
+    }
+
+    let validOptions = null;
+    if (Array.isArray(thumbnailOptions)) {
+      const sanitized = thumbnailOptions
+        .slice(0, 5)
+        .filter((opt) => opt && typeof opt.dataUrl === 'string' && DATA_IMAGE_RE.test(opt.dataUrl))
+        .map((opt, idx) => ({
+          id: String(opt.id || `seg_${idx + 1}`).slice(0, 32),
+          label: String(opt.label || `เฟรมที่ ${idx + 1}`).slice(0, 40),
+          timeSec: Number.isFinite(Number(opt.timeSec)) ? Math.max(0, Math.round(Number(opt.timeSec))) : 0,
+          dataUrl: opt.dataUrl,
+        }));
+      if (sanitized.length > 0) {
+        validOptions = sanitized;
+      }
+    }
+
+    // Best-effort sync of custom/selected poster.jpg to OneDrive
+    let syncedFolderId = existing[0].onedrive_folder_id || '';
+    if (decodedImageBuffer) {
+      try {
+        const token = await getGraphToken();
+        const driveId = await getUserDriveId(token);
+        const folderId = syncedFolderId || (await ensureFolderExists(token, driveId, `/streams/stream_vid_${id}`));
+        if (folderId) {
+          syncedFolderId = folderId;
+          await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(folderId)}:/poster.jpg:/content`,
+            {
+              method: 'PUT',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': decodedContentType,
+                'Content-Length': String(decodedImageBuffer.length),
+              },
+              body: decodedImageBuffer,
+            }
+          );
+        }
+      } catch (odErr) {
+        console.warn('[PATCH Thumbnail OneDrive Sync Warning]:', odErr.message);
+      }
+    }
+
+    const updated = await sql`
+      UPDATE videos
+      SET thumbnail_url = COALESCE(${validThumbUrl}, thumbnail_url),
+          thumbnail_options = COALESCE(${validOptions ? JSON.stringify(validOptions) : null}::jsonb, thumbnail_options),
+          thumbnail_status = CASE WHEN ${Boolean(validOptions)} THEN 'ready' ELSE thumbnail_status END,
+          onedrive_folder_id = COALESCE(NULLIF(${syncedFolderId}, ''), onedrive_folder_id),
+          title = COALESCE(${typeof title === 'string' && title.trim() ? title.trim().slice(0, 150) : null}, title),
+          description = COALESCE(${typeof description === 'string' ? description : null}, description),
+          category = COALESCE(${typeof category === 'string' && category.trim() ? category.trim() : null}, category),
+          tags = COALESCE(${Array.isArray(tags) ? tags : null}, tags),
+          content_rating = COALESCE(${typeof contentRating === 'string' && contentRating !== 'auto' ? contentRating : null}, content_rating),
+          user_selected_rating = COALESCE(${typeof contentRating === 'string' ? contentRating : null}, user_selected_rating),
+          source_cache = NULL,
+          source_cache_expires_at = 0,
+          updated_at = NOW()
+      WHERE id = ${id} AND (${admin} OR user_id = ${userId})
+      RETURNING id, thumbnail_url, thumbnail_status, thumbnail_options;
+    `;
+
+    return NextResponse.json({
+      success: true,
+      videoId: id,
+      thumbnailUrl: updated[0]?.thumbnail_url || '',
+      thumbnailStatus: updated[0]?.thumbnail_status || 'waiting',
+      thumbnailOptions: updated[0]?.thumbnail_options || [],
+    });
+  } catch (err) {
+    console.error('[PATCH_VIDEO_ERROR]:', err);
+    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
 }

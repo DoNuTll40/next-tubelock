@@ -1,3 +1,4 @@
+import { protectVideoPoster } from '@/lib/videoUtils';
 import { NextResponse, after } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
@@ -154,7 +155,7 @@ export async function GET(request) {
       const isMusic = isMusicVideo(cleanV);
       const hasWatched = Boolean(cleanV.has_watched || (cleanV.last_position_seconds !== null && cleanV.last_position_seconds !== undefined));
       return {
-        ...cleanV,
+        ...protectVideoPoster(cleanV),
         has_watched: hasWatched,
         last_position_seconds: isMusic ? 0 : (Number(cleanV.last_position_seconds) || 0),
       };

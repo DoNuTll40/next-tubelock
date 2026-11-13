@@ -1,6 +1,8 @@
+import { getDb } from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { decodeVideoSlug } from '@/lib/videoUtils';
-import { resolveVideoSourceServer } from '@/lib/videoSourceService';
+import { POSTER_PREFERENCE } from '@/lib/posterPreference';
+import { protectSourcePreviews, resolveVideoSourceServer } from '@/lib/videoSourceService';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -33,14 +35,20 @@ export async function GET(request, context) {
 
     const { searchParams } = new URL(request.url);
     const forceFresh = searchParams.get('fresh') === '1' || searchParams.get('refresh') === '1';
+    const showAdultPreviews = searchParams.get('previews') === '1' &&
+      request.cookies.get(POSTER_PREFERENCE)?.value === '1';
 
-    const { data, path, notReady } = await resolveVideoSourceServer(id, { forceFresh });
+    const sql = getDb();
+    const [{ data, path, notReady }, [rating]] = await Promise.all([
+      resolveVideoSourceServer(id, { forceFresh, showAdultPreviews }),
+      sql`SELECT category, content_rating FROM videos WHERE id = ${id} AND (status = 'READY' OR status IS NULL)`,
+    ]);
 
-    if (notReady) {
+    if (notReady || !rating) {
       return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404, headers: timing(path) });
     }
 
-    return NextResponse.json(data, { headers: timing(path) });
+    return NextResponse.json(showAdultPreviews ? data : protectSourcePreviews(data, rating), { headers: timing(path) });
   } catch (err) {
     console.error('[API_VIDEO_SOURCE_ERROR]:', err);
     return NextResponse.json(

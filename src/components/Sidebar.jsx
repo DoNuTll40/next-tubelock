@@ -13,9 +13,9 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { isExpanded } = useSidebar();
 
-  // YouTube UX: Hide docked sidebar on watch page and settings page
-  // On settings page, main navigation opens as an overlay drawer when clicking hamburger
-  if (pathname?.startsWith('/watch') || pathname?.startsWith('/settings')) {
+  // YouTube UX: Hide docked sidebar on watch page, settings page, and upload studio
+  // Main navigation remains accessible via the hamburger overlay drawer
+  if (pathname?.startsWith('/watch') || pathname?.startsWith('/settings') || pathname === '/upload') {
     return null;
   }
 

@@ -8,8 +8,8 @@ function LoginForm() {
   const from = searchParams?.get('from') || '/';
 
   return (
-    <div className="min-h-screen w-full relative bg-[#0F0F0F] flex items-center justify-center p-4 select-none">
-      <div className="max-w-md w-full bg-[#181818] border border-white/10 rounded-3xl p-8 flex flex-col items-center text-center shadow-2xl">
+    <div className="min-h-screen w-full relative flex items-center justify-center p-4 select-none">
+      <div className="max-w-md w-full bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-3xl p-8 flex flex-col items-center text-center shadow-xl shadow-[#252018]/8 dark:shadow-black/30">
         <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-[0_8px_24px_rgba(255,122,0,0.35)] mb-4 shrink-0">
           <img
             src="/images/TubeLock.png"
@@ -18,16 +18,16 @@ function LoginForm() {
           />
         </div>
 
-        <h1 className="text-2xl font-bold text-white mb-2">เข้าสู่ระบบ TubeLock</h1>
-        <p className="text-zinc-400 text-sm mb-6">
-          เข้าสู่ระบบเพื่อรับชมและจัดการคลังวิดีโอส่วนตัวของคุณ
+        <h1 className="text-2xl font-bold mb-2">เข้าสู่ระบบ TubeLock</h1>
+        <p className="text-[#6C757D] dark:text-zinc-400 text-sm mb-6">
+          เปิดดูฟีดได้โดยไม่ต้องเข้าสู่ระบบ ลงชื่อเข้าใช้เพื่อรับชมวิดีโอ
         </p>
 
         <div className="w-full flex flex-col gap-3">
           {/* ปุ่ม Google */}
           <a
             href={`/api/auth/google?from=${encodeURIComponent(from)}`}
-            className="w-full py-3.5 px-4 bg-white hover:bg-zinc-100 text-zinc-900 font-semibold rounded-2xl flex items-center justify-center gap-3 transition-colors shadow-sm"
+            className="w-full py-3.5 px-4 bg-white hover:bg-[#F5F2EB] dark:hover:bg-zinc-100 text-zinc-900 border border-[#EFECE6] dark:border-transparent font-semibold rounded-2xl flex items-center justify-center gap-3 transition-colors shadow-sm"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
@@ -68,7 +68,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen w-full bg-[#0F0F0F]" />}>
+    <Suspense fallback={<div className="min-h-screen w-full" />}>
       <LoginForm />
     </Suspense>
   );

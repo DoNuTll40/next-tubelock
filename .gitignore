@@ -42,3 +42,5 @@ next-env.d.ts
 
 # ide & agent
 .gemini/
+
+python.py

@@ -1,5 +1,6 @@
 'use client';
 
+import { savePosterPreference, syncPosterPreferenceCookie } from '@/lib/posterPreference';
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -186,27 +187,24 @@ function SettingsContent() {
           }
         }
 
+        let localPlayer = {};
+        try {
+          localPlayer = JSON.parse(localStorage.getItem('tubelock_settings') || '{}') || {};
+        } catch {}
+
         const [settingsRes, videosRes] = await Promise.all([
           fetch('/api/settings').then((r) => r.json()).catch(() => null),
           fetch('/api/videos').then((r) => r.json()).catch(() => null),
         ]);
 
-        if (settingsRes?.success && settingsRes.data && isMounted) {
-          const { player_defaults, content_safety } = settingsRes.data;
-          if (player_defaults) {
-            setVolume(player_defaults.volume ?? 0.8);
-            setAutoplay(player_defaults.autoplay ?? true);
-            setDefaultSpeed(player_defaults.speed ?? player_defaults.default_speed ?? 1);
-            setDefaultFit(player_defaults.fit ?? player_defaults.default_fit ?? 'fit');
-            setSeekStep(player_defaults.seekStep ?? player_defaults.seek_step ?? 10);
-            setAutoStats(player_defaults.statsForNerds ?? player_defaults.auto_stats ?? false);
-          }
-          if (content_safety && typeof content_safety.allow_18plus === 'boolean') {
-            setAllow18Plus(content_safety.allow_18plus);
-            try {
-              localStorage.setItem('tubelock_allow_18plus', content_safety.allow_18plus ? '1' : '0');
-            } catch (_) {}
-          }
+        if (isMounted) {
+          const defaults = settingsRes?.success ? settingsRes.data?.player_defaults : null;
+          setVolume(localPlayer.volume ?? defaults?.volume ?? 0.8);
+          setAutoplay(localPlayer.autoplay ?? defaults?.autoplay ?? true);
+          setDefaultSpeed(localPlayer.default_speed ?? defaults?.speed ?? defaults?.default_speed ?? 1);
+          setDefaultFit(localPlayer.default_fit ?? defaults?.fit ?? defaults?.default_fit ?? 'fit');
+          setSeekStep(localPlayer.seek_step ?? defaults?.seekStep ?? defaults?.seek_step ?? 10);
+          setAutoStats(localPlayer.auto_stats ?? defaults?.statsForNerds ?? defaults?.auto_stats ?? false);
         }
 
         if (videosRes?.success && Array.isArray(videosRes.data) && isMounted) {
@@ -249,42 +247,26 @@ function SettingsContent() {
     gravatarEmail, fallbackAvatar, allow18Plus,
   ]);
 
-  // ─── Save all to Neon ─────────────────────────────────────────────────────
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(() => {
     setSaveStatus('saving');
     try {
-      const responses = await Promise.all([
-        fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            key: 'player_defaults',
-            value: { volume, autoplay, default_speed: defaultSpeed, default_fit: defaultFit, seek_step: seekStep, auto_stats: autoStats },
-          }),
-        }),
-        fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            key: 'content_safety',
-            value: { allow_18plus: allow18Plus },
-          }),
-        }),
-      ]);
-      const failed = responses.find((response) => !response.ok);
-      if (failed) throw new Error(`Shared settings could not be saved (HTTP ${failed.status})`);
-
+      localStorage.setItem('tubelock_settings', JSON.stringify({
+        volume,
+        autoplay,
+        default_speed: defaultSpeed,
+        default_fit: defaultFit,
+        seek_step: seekStep,
+        auto_stats: autoStats,
+      }));
       localStorage.setItem('pt_gravatar_email', gravatarEmail.trim());
       localStorage.setItem('pt_fallback_avatar', fallbackAvatar);
-      localStorage.setItem('tubelock_allow_18plus', allow18Plus ? '1' : '0');
+      savePosterPreference(allow18Plus);
       window.dispatchEvent(new Event('storage'));
-      window.dispatchEvent(new Event('tubelock_18plus_changed'));
 
       setSaveStatus('saved');
       setIsDirty(false);
       setTimeout(() => setSaveStatus('idle'), 3000);
-    } catch (err) {
-      console.error('Failed to save settings:', err);
+    } catch {
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 4000);
     }
@@ -306,6 +288,7 @@ function SettingsContent() {
   const handleFactoryReset = () => {
     if (window.confirm('⚠️ ล้างข้อมูลทั้งหมดในเครื่อง คืนค่าเริ่มต้น และออกจากระบบ?')) {
       localStorage.clear();
+      syncPosterPreferenceCookie(false);
       sessionStorage.clear();
       router.push('/');
     }

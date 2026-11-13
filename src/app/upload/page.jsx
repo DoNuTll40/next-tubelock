@@ -7,8 +7,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ListOrdered,
-  FileVideo,
-  XCircle,
+  MoreHorizontal,
   Loader2,
 } from 'lucide-react';
 import { extractVideoMetadata } from '@/lib/uploader';
@@ -16,6 +15,8 @@ import {
   formatAspectRatio,
   detectResolutionLabel,
   detectCodecFromHeader,
+  decodeUploadId,
+  encodeUploadId,
 } from '@/lib/videoUtils';
 
 // Import Modular Studio Components
@@ -60,17 +61,40 @@ export default function UploadPage() {
 
   // Active Wizard Step (1: Details, 2: Subtitles & AI, 3: Rating & Vision, 4: Summary & Publish)
   const [activeStep, setActiveStep] = useState(1);
+  const [showOverflowMenu, setShowOverflowMenu] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const overflowMenuRef = useRef(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (overflowMenuRef.current && !overflowMenuRef.current.contains(e.target)) {
+        setShowOverflowMenu(false);
+      }
+    };
+    if (showOverflowMenu) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showOverflowMenu]);
 
   // Queue Count for top bar indicator
   const [queueCount, setQueueCount] = useState(0);
 
   // File & Source Metadata State
+  const [isRestoring, setIsRestoring] = useState(true);
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('general');
   const [tags, setTags] = useState(['HLS', 'stream']);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
+  const [thumbnailOptions, setThumbnailOptions] = useState([]);
+  const [thumbnailStatus, setThumbnailStatus] = useState('waiting');
+  const [isSavingThumbnail, setIsSavingThumbnail] = useState(false);
+  const thumbnailRef = useRef('');
+  const thumbnailOptionsRef = useRef([]);
+  const isDispatchingThumbsRef = useRef(false);
+  const hasAutoDispatchedThumbsRef = useRef(false);
   const [runnerSpecs, setRunnerSpecs] = useState(null);
   const runnerSpecsLoggedRef = useRef(false);
 
@@ -220,8 +244,24 @@ export default function UploadPage() {
             }
           }
 
-          if (vid.thumbnailUrl && !vid.thumbnailUrl.startsWith('/streams/')) {
+          if (vid.thumbnailStatus) setThumbnailStatus(vid.thumbnailStatus);
+          if (Array.isArray(vid.thumbnailOptions) && vid.thumbnailOptions.length > 0) {
+            setThumbnailOptions(vid.thumbnailOptions);
+            thumbnailOptionsRef.current = vid.thumbnailOptions;
+          }
+          if (vid.thumbnailUrl && (!vid.thumbnailUrl.startsWith('/streams/') || !thumbnailRef.current)) {
             setThumbnailUrl(vid.thumbnailUrl);
+            thumbnailRef.current = vid.thumbnailUrl;
+          }
+          if (vid.duration > 0) {
+            setFileDetails((prev) => ({
+              ...prev,
+              durationSec: prev.durationSec || vid.duration,
+              durationFormatted: prev.durationSec ? prev.durationFormatted : formatDuration(vid.duration),
+              resolution: prev.resolution || vid.resolution,
+              fps: prev.fps || vid.fps,
+              codec: prev.codec || vid.codec,
+            }));
           }
 
           if (vid.status === 'READY') {
@@ -250,6 +290,207 @@ export default function UploadPage() {
       if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
     };
   }, []);
+
+  // Persist draft metadata or chosen thumbnail immediately to Neon DB (+ OneDrive poster.jpg sync)
+  const persistVideoPatch = useCallback(async (videoId, patch) => {
+    if (!videoId || !patch) return null;
+    try {
+      const res = await fetch(`/api/videos/${videoId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Dispatch lightweight GitHub Action to extract 3 segment thumbnails (15% / 50% / 85%)
+  const handleDispatchThumbnails = useCallback(
+    async (overrideVideoId, overrideRawName, { quietIfNotDeployed = false } = {}) => {
+      const vidId = overrideVideoId || activeVideoIdRef.current;
+      if (!vidId || isDispatchingThumbsRef.current) return;
+
+      isDispatchingThumbsRef.current = true;
+      setThumbnailStatus('generating');
+      try {
+        const res = await fetch('/api/upload/dispatch-action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoId: vidId,
+            workflowType: 'thumbnails',
+            rawFileName: overrideRawName || '',
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          if (quietIfNotDeployed && data.workflowNotFound) {
+            setThumbnailStatus('waiting');
+            return;
+          }
+          throw new Error(data.error || 'ไม่สามารถสั่งดึงภาพปก 3 ช่วงได้');
+        }
+        addLog('🖼️ ส่งคำสั่ง GitHub Actions สกัดภาพปก 3 ช่วงของวิดีโอแล้ว');
+        startPollingStatus(vidId);
+      } catch (err) {
+        setThumbnailStatus('failed');
+        addLog(`⚠️ สกัดภาพปก 3 ช่วงอัตโนมัติไม่สำเร็จ: ${err.message}`);
+      } finally {
+        isDispatchingThumbsRef.current = false;
+      }
+    },
+    [addLog, startPollingStatus]
+  );
+
+  const handleSelectThumbnail = async (nextUrl, sourceLabel = '') => {
+    const vidId = activeVideoIdRef.current || activeVideoId;
+    thumbnailRef.current = nextUrl;
+    setThumbnailUrl(nextUrl);
+    if (sourceLabel) {
+      addLog(`🖼️ เลือกภาพปกวิดีโอ (${sourceLabel === 'custom' ? 'อัปโหลดไฟล์เอง' : sourceLabel}) เรียบร้อย`);
+    }
+    if (!vidId) return;
+    setIsSavingThumbnail(true);
+    try {
+      await persistVideoPatch(vidId, { thumbnailUrl: nextUrl });
+    } finally {
+      setIsSavingThumbnail(false);
+    }
+  };
+
+  useEffect(() => {
+    const uploadId = new URLSearchParams(window.location.search).get('upload_id');
+    if (!uploadId) {
+      setIsRestoring(false);
+      return;
+    }
+
+    const id = decodeUploadId(uploadId);
+    if (!id) {
+      setErrorMsg('รหัสงานอัปโหลดไม่ถูกต้อง');
+      setIsRestoring(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    async function restore() {
+      try {
+        const response = await fetch(`/api/videos/${id}/status?restore=1`, { signal: controller.signal });
+        const { video: job, error } = await response.json();
+        if (!response.ok || !job) throw new Error(error || 'ไม่พบงานอัปโหลด');
+        if (controller.signal.aborted) return;
+        const canonicalId = encodeUploadId(id);
+        if (canonicalId !== uploadId) {
+          const url = new URL(window.location.href);
+          url.searchParams.set('upload_id', canonicalId);
+          window.history.replaceState(null, '', url);
+        }
+
+        activeVideoIdRef.current = id;
+        setActiveVideoId(id);
+        setRawFileName(job.rawFileName);
+        setCurrentStatus(job.status);
+        setTranscodeProgress(job.transcodeProgress);
+        setStageDetail(job.stageDetail);
+        const uploaded = job.rawUploaded ?? ['QUEUED', 'PROCESSING', 'TRANSCODING', 'READY'].includes(job.status);
+        const totalBytes = Number(job.fileSizeBytes);
+        setIsRawUploaded(uploaded);
+        setUploadStats(prev => ({
+          ...prev, percent: uploaded ? 100 : 0, uploadedBytes: uploaded ? totalBytes : 0, totalBytes,
+        }));
+        let draft;
+        try { draft = JSON.parse(localStorage.getItem(`tubelock_upload_${id}`)); } catch {}
+        setTitle(titleRef.current = draft?.title ?? job.title);
+        setDescription(descriptionRef.current = draft?.description ?? job.description);
+        setCategory(categoryRef.current = draft?.category ?? job.category);
+        setTags(tagsRef.current = draft?.tags ?? job.tags);
+        setContentRating(draft?.contentRating ?? job.userSelectedRating ?? job.contentRating);
+        setActiveStep(job.status === 'UPLOADING' ? draft?.activeStep ?? 1 : 4);
+        setSubtitleMode(draft?.subtitleMode ?? 'ai');
+        setManualSubtitleFile(draft?.manualSubtitleFile ?? null);
+        setSelectedModel(draft?.selectedModel ?? '');
+        setCustomPrompt(draft?.customPrompt ?? '');
+        const restoredThumbOptions =
+          Array.isArray(job.thumbnailOptions) && job.thumbnailOptions.length > 0
+            ? job.thumbnailOptions
+            : Array.isArray(draft?.thumbnailOptions)
+              ? draft.thumbnailOptions
+              : [];
+        const restoredThumbUrl =
+          job.thumbnailUrl ||
+          draft?.thumbnailUrl ||
+          restoredThumbOptions[1]?.dataUrl ||
+          restoredThumbOptions[0]?.dataUrl ||
+          '';
+        thumbnailRef.current = restoredThumbUrl;
+        thumbnailOptionsRef.current = restoredThumbOptions;
+        setThumbnailUrl(restoredThumbUrl);
+        setThumbnailOptions(restoredThumbOptions);
+        setThumbnailStatus(job.thumbnailStatus || (restoredThumbOptions.length > 0 ? 'ready' : 'waiting'));
+        if (!job.thumbnailUrl && (restoredThumbUrl || restoredThumbOptions.length > 0)) {
+          void persistVideoPatch(id, {
+            thumbnailUrl: restoredThumbUrl || undefined,
+            thumbnailOptions: restoredThumbOptions.length > 0 ? restoredThumbOptions : undefined,
+          });
+        }
+        if (
+          uploaded &&
+          job.status !== 'READY' &&
+          restoredThumbOptions.length === 0 &&
+          (job.thumbnailStatus || 'waiting') === 'waiting' &&
+          !hasAutoDispatchedThumbsRef.current
+        ) {
+          hasAutoDispatchedThumbsRef.current = true;
+          void handleDispatchThumbnails(id, job.rawFileName, { quietIfNotDeployed: true });
+        }
+        setAudioStatus(job.audioStatus);
+        setSubtitleStatus(job.subtitleStatus);
+        setGeneratedSubtitleSrt(job.subtitleSrt);
+        setSpriteSheetStatus(job.spriteStatus);
+        setSpritePreviewUrl(job.spritePreviewUrl);
+        setRatingCheckStatus(job.ratingCheckStatus);
+        setVisionResult(job.visionAnalysis);
+        setRunnerSpecs(job.runnerSpecs);
+        if (job.status === 'READY') setCompletedVideo(job);
+        setFileDetails(prev => ({
+          ...prev,
+          name: job.rawFileName || job.title,
+          sizeBytes: Number(job.fileSizeBytes),
+          sizeFormatted: `${(Number(job.fileSizeBytes) / 1048576).toFixed(1)} MB`,
+          durationSec: job.duration,
+          durationFormatted: formatDuration(job.duration),
+          resolution: job.resolution,
+          fps: job.fps,
+          codec: job.codec,
+        }));
+        setErrorMsg(job.errorMessage || (job.status === 'UPLOADING' && !job.rawUploaded
+          ? 'ไฟล์ต้นทางยังอัปโหลดไม่ครบ เปิดงานในแท็บเดิมเพื่ออัปโหลดต่อ หรือเริ่มอัปโหลดใหม่'
+          : null));
+        startPollingStatus(id);
+      } catch (error) {
+        if (!controller.signal.aborted) setErrorMsg(error.message);
+      } finally {
+        if (!controller.signal.aborted) setIsRestoring(false);
+      }
+    }
+    void restore();
+    return () => controller.abort();
+  }, [startPollingStatus, persistVideoPatch, handleDispatchThumbnails]);
+
+  useEffect(() => {
+    if (!activeVideoId || isRestoring) return;
+    try {
+      localStorage.setItem(`tubelock_upload_${activeVideoId}`, JSON.stringify({
+        title, description, category, tags, contentRating, activeStep,
+        subtitleMode, manualSubtitleFile, selectedModel, customPrompt,
+        thumbnailUrl, thumbnailOptions,
+      }));
+    } catch {}
+  }, [activeVideoId, isRestoring, title, description, category, tags, contentRating, activeStep,
+    subtitleMode, manualSubtitleFile, selectedModel, customPrompt, thumbnailUrl, thumbnailOptions]);
 
   // Immediate Upload to OneDrive as soon as a video file is selected
   const startImmediateOneDriveUpload = async (selectedFile, initialTitle, initialDesc) => {
@@ -301,8 +542,17 @@ export default function UploadPage() {
       activeUploadUrlRef.current = uploadUrl;
       activeVideoIdRef.current = videoId;
       setActiveVideoId(videoId);
+      window.history.replaceState(null, '', `/upload?upload_id=${encodeUploadId(videoId)}`);
       setRawFileName(serverRawName);
       addLog(`ได้รับ OneDrive Session (Video ID: #${videoId}) กำลังส่งไฟล์เข้า /raw/${serverRawName}...`);
+
+      // Persist client-captured thumbnails immediately if already extracted
+      if (thumbnailRef.current || thumbnailOptionsRef.current.length > 0) {
+        void persistVideoPatch(videoId, {
+          thumbnailUrl: thumbnailRef.current || undefined,
+          thumbnailOptions: thumbnailOptionsRef.current.length > 0 ? thumbnailOptionsRef.current : undefined,
+        });
+      }
 
       const isMobile =
         typeof navigator !== 'undefined' &&
@@ -397,6 +647,9 @@ export default function UploadPage() {
       setStageDetail('อัปโหลดวิดีโอขึ้น OneDrive ครบ 100% พร้อมให้ GitHub Actions ดึงข้อมูลได้ทันที');
       addLog(`✅ อัปโหลดวิดีโอขึ้น OneDrive (/raw/${serverRawName}) สำเร็จ 100%! พร้อมรัน GitHub Actions`);
 
+      // Immediately dispatch 3-segment thumbnail extractor in the background
+      void handleDispatchThumbnails(videoId, serverRawName, { quietIfNotDeployed: true });
+
       startPollingStatus(videoId);
     } catch (err) {
       activeXhrRef.current = null;
@@ -447,6 +700,8 @@ export default function UploadPage() {
     }
 
     // 4. Reset all states back to file selection dropzone
+    try { localStorage.removeItem(`tubelock_upload_${targetVideoId}`); } catch {}
+    window.history.replaceState(null, '', '/upload');
     activeVideoIdRef.current = null;
     fileRef.current = null;
     titleRef.current = '';
@@ -593,8 +848,22 @@ export default function UploadPage() {
         lastModified: lastModifiedDate,
       });
 
-      if (meta.thumbnailDataUrl) {
+      if (Array.isArray(meta.thumbnailOptions) && meta.thumbnailOptions.length > 0) {
+        setThumbnailOptions(meta.thumbnailOptions);
+        thumbnailOptionsRef.current = meta.thumbnailOptions;
+      }
+
+      if (meta.thumbnailDataUrl && !thumbnailRef.current) {
         setThumbnailUrl(meta.thumbnailDataUrl);
+        thumbnailRef.current = meta.thumbnailDataUrl;
+      }
+
+      const activeVid = activeVideoIdRef.current;
+      if (activeVid && (meta.thumbnailDataUrl || meta.thumbnailOptions?.length > 0)) {
+        void persistVideoPatch(activeVid, {
+          thumbnailUrl: thumbnailRef.current || meta.thumbnailDataUrl || undefined,
+          thumbnailOptions: meta.thumbnailOptions?.length > 0 ? meta.thumbnailOptions : undefined,
+        });
       }
 
       if (w && h && (h > w || aspectLabel.includes('9:16'))) {
@@ -713,7 +982,8 @@ export default function UploadPage() {
       isStartingPipeline ||
       currentStatus === 'PROCESSING' ||
       currentStatus === 'TRANSCODING' ||
-      currentStatus === 'QUEUED'
+      currentStatus === 'QUEUED' ||
+      currentStatus === 'READY'
     ) {
       addLog(`⚠️ วิดีโอนี้อยู่ในคิวหรือกำลังประมวลผลอยู่แล้ว ไม่สามารถส่งซ้ำได้`);
       return;
@@ -760,7 +1030,7 @@ export default function UploadPage() {
             resolution: fileDetails.resolution,
             fps: fileDetails.fps,
             codec: fileDetails.codec,
-            thumbnailDataUrl: thumbnailUrl && !thumbnailUrl.startsWith('data:') ? thumbnailUrl : '',
+            thumbnailDataUrl: thumbnailUrl || '',
           },
         }),
       });
@@ -821,16 +1091,56 @@ export default function UploadPage() {
     };
   }, [fetchQueueCount]);
 
-  // Step Status Mapping for Stepper Badges
-  const stepStatus = {
-    1: { completed: Boolean(title && title.trim().length > 0) },
-    2: { completed: Boolean(manualSubtitleFile || subtitleMode === 'ai' || subtitleStatus === 'ready'), optional: true },
-    3: { completed: Boolean(contentRating) },
-    4: { completed: Boolean(completedVideo) },
-  };
-
   const hasTitle = Boolean(title && title.trim().length > 0);
   const hasRating = Boolean(contentRating);
+
+  // Honest Step Status Mapping for Stepper Badges
+  const stepStatus = {
+    1: {
+      completed: hasTitle,
+      statusText: hasTitle ? 'กรอกแล้ว' : 'รอระบุชื่อ',
+    },
+    2: {
+      completed: Boolean(manualSubtitleFile || subtitleStatus === 'ready'),
+      statusText:
+        subtitleStatus === 'ready'
+          ? 'สร้างซับแล้ว'
+          : manualSubtitleFile
+          ? 'แนบไฟล์แล้ว'
+          : subtitleStatus === 'processing' || audioStatus === 'extracting'
+          ? 'กำลังถอดเสียง...'
+          : 'รันตอนเผยแพร่ได้',
+    },
+    3: {
+      completed: Boolean(
+        ratingCheckStatus === 'VERIFIED_MATCH' ||
+          ratingCheckStatus === 'AI_AUTO_SELECTED' ||
+          activeStep > 3
+      ),
+      statusText:
+        ratingCheckStatus === 'AI_AUTO_SELECTED'
+          ? 'AI จัดเรตแล้ว'
+          : ratingCheckStatus === 'VERIFIED_MATCH'
+          ? 'ตรวจสอบแล้ว'
+          : ratingCheckStatus === 'analyzing' || spriteSheetStatus === 'generating'
+          ? 'กำลังจัดเรต...'
+          : contentRating === 'auto'
+          ? 'ให้ AI จัดเรต'
+          : 'เลือกเอง (ตรวจหลัง HLS)',
+    },
+    4: {
+      completed: Boolean(completedVideo),
+      statusText: completedVideo
+        ? 'เผยแพร่แล้ว'
+        : isStartingPipeline ||
+          currentStatus === 'PROCESSING' ||
+          currentStatus === 'TRANSCODING' ||
+          currentStatus === 'QUEUED'
+        ? 'กำลังดำเนินการ'
+        : 'พร้อมตรวจสอบ',
+    },
+  };
+
   const isReadyToPublish =
     hasTitle &&
     hasRating &&
@@ -839,66 +1149,120 @@ export default function UploadPage() {
     !isStartingPipeline &&
     currentStatus !== 'PROCESSING' &&
     currentStatus !== 'TRANSCODING' &&
-    currentStatus !== 'QUEUED';
+    currentStatus !== 'QUEUED' &&
+    currentStatus !== 'READY';
 
   return (
-    <div className=" bg-[#0a0a0a] text-[#F1F1F1] pb-24">
-      {/* Top Banner / Breadcrumb Bar */}
-      <div className="border-b border-[#262626] bg-[#121212]/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1] pb-28 transition-colors duration-200">
+      {/* Studio Sub-header */}
+      <div className="border-b border-[#EFECE6] dark:border-white/10 bg-white/90 dark:bg-[#181818]/90 backdrop-blur-md sticky top-14 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <Link
               href="/"
-              className="p-2 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] text-[#A1A1AA] hover:text-white border border-[#2e2e2e] transition"
+              className="px-3 py-1.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] border border-[#EFECE6] dark:border-white/10 transition inline-flex items-center gap-1.5 shrink-0"
               title="กลับหน้าหลัก"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">กลับหน้าหลัก</span>
             </Link>
-            <div>
-              <h1 className="text-sm font-bold text-white flex items-center gap-2">
-                <Upload className="w-4 h-4 text-[#f97316]" />
-                TubeLock Upload Studio
-              </h1>
+
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm sm:text-[15px] font-bold text-[#212529] dark:text-[#F1F1F1] truncate max-w-[180px] sm:max-w-[360px]">
+                  {file || activeVideoId
+                    ? title || fileDetails.name || 'กำลังเตรียมวิดีโอ'
+                    : 'TubeLock Studio'}
+                </h1>
+                {(file || activeVideoId) && (
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${
+                      completedVideo || currentStatus === 'READY'
+                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                        : 'bg-[#FF7A00]/10 text-[#FF7A00]'
+                    }`}
+                  >
+                    {completedVideo || currentStatus === 'READY'
+                      ? 'เผยแพร่แล้ว'
+                      : isRawUploaded
+                      ? 'กำลังตั้งค่า'
+                      : `อัปโหลด ${uploadStats.percent}%`}
+                  </span>
+                )}
+              </div>
+              {(activeVideoId || fileDetails.sizeFormatted !== '0 MB') && (
+                <div className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A] truncate">
+                  {activeVideoId ? `ID: ${activeVideoId}` : ''}
+                  {activeVideoId && fileDetails.sizeFormatted !== '0 MB' ? ' • ' : ''}
+                  {fileDetails.sizeFormatted !== '0 MB' ? fileDetails.sizeFormatted : ''}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 shrink-0">
             <Link
               href="/upload/queue"
-              className="text-xs px-3 py-1.5 rounded-xl bg-[#1c1c1c] hover:bg-[#252525] text-[#A1A1AA] hover:text-[#f97316] border border-[#2e2e2e] transition flex items-center gap-1.5"
+              className="text-xs px-3 py-1.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] text-[#212529] dark:text-[#F1F1F1] border border-[#EFECE6] dark:border-white/10 transition flex items-center gap-1.5 font-medium"
             >
-              <ListOrdered className="w-3.5 h-3.5" />
+              <ListOrdered className="w-3.5 h-3.5 text-[#8C857B]" />
               <span>คิวแปลงไฟล์</span>
               {queueCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-[#f97316] text-white text-[10px] font-mono">
+                <span className="px-1.5 py-0.2 rounded-full bg-[#FF7A00] text-white text-[10px] font-mono">
                   {queueCount}
                 </span>
               )}
             </Link>
 
-            {file && (
-              <button
-                type="button"
-                disabled={isCancelling}
-                onClick={handleCancelUpload}
-                className="text-xs px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                {isCancelling ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <XCircle className="w-3.5 h-3.5" />
+            {/* Single Safe Overflow Menu for Destructive Cancel Action */}
+            {(file || activeVideoId) && currentStatus !== 'READY' && (
+              <div className="relative" ref={overflowMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setShowOverflowMenu((prev) => !prev)}
+                  className="p-2 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] text-[#212529] dark:text-[#F1F1F1] border border-[#EFECE6] dark:border-white/10 transition cursor-pointer"
+                  aria-label="เมนูเพิ่มเติม"
+                  aria-expanded={showOverflowMenu}
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+
+                {showOverflowMenu && (
+                  <div className="absolute right-0 top-full mt-1.5 w-52 bg-white dark:bg-[#1c1c1c] border border-[#EFECE6] dark:border-white/15 rounded-xl shadow-xl p-1.5 z-50">
+                    <button
+                      type="button"
+                      disabled={isCancelling}
+                      onClick={() => {
+                        setShowOverflowMenu(false);
+                        setShowCancelModal(true);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer disabled:opacity-50"
+                    >
+                      ยกเลิกและลบงานนี้...
+                    </button>
+                  </div>
                 )}
-                <span>ยกเลิกการอัปโหลดขึ้น OneDrive</span>
-              </button>
+              </div>
             )}
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-5 sm:pt-6">
+        {errorMsg && (!activeVideoId || activeStep !== 4) && (
+          <div role="alert" className="mb-4 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs sm:text-sm text-rose-700 dark:text-rose-400">
+            {errorMsg}
+          </div>
+        )}
+
         {/* State A: File Drop Zone (No file selected yet) */}
-        {!file ? (
-          <div className="max-w-3xl mx-auto space-y-6 pt-4">
+        {isRestoring ? (
+          <div role="status" className="py-16 text-center text-sm text-[#8C857B] dark:text-[#9A9A9A] flex items-center justify-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-[#FF7A00]" />
+            <span>กำลังโหลดงานอัปโหลด...</span>
+          </div>
+        ) : !file && !activeVideoId ? (
+          <div className="max-w-3xl mx-auto space-y-5 pt-2">
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -907,10 +1271,11 @@ export default function UploadPage() {
               onDragLeave={() => setIsDragOver(false)}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-3xl p-10 sm:p-16 text-center cursor-pointer transition-all duration-200 bg-[#141414] shadow-2xl relative overflow-hidden group ${isDragOver
-                ? 'border-[#f97316] bg-[#f97316]/5 scale-[1.01]'
-                : 'border-[#2e2e2e] hover:border-[#f97316]/70 hover:bg-[#181818]'
-                }`}
+              className={`border-2 border-dashed rounded-2xl p-10 sm:p-14 text-center cursor-pointer transition-all duration-200 bg-white dark:bg-[#181818] shadow-xs group ${
+                isDragOver
+                  ? 'border-[#FF7A00] bg-[#FF7A00]/5 scale-[1.01]'
+                  : 'border-[#FF7A00]/35 hover:border-[#FF7A00]'
+              }`}
             >
               <input
                 ref={fileInputRef}
@@ -920,56 +1285,95 @@ export default function UploadPage() {
                 onChange={(e) => handleFile(e.target.files?.[0])}
               />
 
-              <div className="w-20 h-20 rounded-3xl bg-[#1e1e1e] group-hover:bg-[#ea580c]/15 border border-[#333333] group-hover:border-[#f97316]/40 flex items-center justify-center text-[#f97316] mx-auto mb-6 shadow-xl transition-transform duration-300 group-hover:scale-110">
-                <FileVideo className="w-10 h-10 stroke-[1.5]" />
+              <div className="w-14 h-14 rounded-2xl bg-[#FF7A00] text-white flex items-center justify-center mx-auto mb-5 shadow-md shadow-[#FF7A00]/20">
+                <Upload className="w-6 h-6" />
               </div>
 
-              <h2 className="text-lg sm:text-xl font-bold text-white mb-2">
+              <h2 className="text-lg sm:text-xl font-bold text-[#212529] dark:text-[#F1F1F1] mb-2">
                 ลากไฟล์วิดีโอมาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์
               </h2>
-              <p className="text-xs sm:text-sm text-[#8C857B] max-w-md mx-auto mb-6">
-                เมื่อเลือกไฟล์แล้ว ระบบจะอัปโหลดขึ้น OneDrive ทันทีโดยอัตโนมัติ เพื่อให้ 3 GitHub Actions (ถอดเสียงทำซับ AI, สร้าง Sprite Grid ตรวจเรต, และหั่น HLS เสียงคุณภาพเดียวกัน) ดึงข้อมูลได้ทันที
+              <p className="text-xs sm:text-sm text-[#6C655D] dark:text-[#AAAAAA] max-w-md mx-auto mb-6 leading-relaxed">
+                รองรับ MP4, MKV, MOV, WebM เมื่อเลือกไฟล์แล้วสามารถตั้งค่ารายละเอียด สั่ง AI ถอดเสียง และกำหนดเรตเนื้อหาได้ทันที
               </p>
 
               <button
                 type="button"
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#ea580c] to-[#f97316] text-white text-xs sm:text-sm font-semibold shadow-lg shadow-[#ea580c]/20 hover:brightness-110 transition pointer-events-none"
+                className="px-6 py-2.5 rounded-xl bg-[#FF7A00] hover:bg-[#E86E00] text-white text-xs sm:text-sm font-semibold transition pointer-events-none"
               >
-                เลือกไฟล์วิดีโอจากอุปกรณ์
+                เลือกไฟล์วิดีโอจากเครื่อง
               </button>
             </div>
 
-            {/* Quick feature badges */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
-              <div className="p-4 bg-[#141414] border border-[#262626] rounded-2xl">
-                <div className="text-xs font-semibold text-white mb-1">1. ถอดเสียง & AI Subtitles</div>
-                <div className="text-[11px] text-[#71717A]">ดึงวิดีโอจาก OneDrive ถอดเสียงส่ง AI สร้างซับอัตโนมัติ</div>
+            {/* Pre-Upload Chunk Size Configuration (Moved from Step 4) */}
+            <div className="p-4 bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1]">
+                  ตั้งค่าขนาดก้อนอัปโหลด (Chunk Size)
+                </div>
+                <div className="text-xs text-[#8C857B] dark:text-[#9A9A9A] mt-0.5">
+                  ปรับก่อนเลือกไฟล์ — แนะนำ 10MB สำหรับอินเทอร์เน็ตทั่วไป
+                </div>
               </div>
-              <div className="p-4 bg-[#141414] border border-[#262626] rounded-2xl">
-                <div className="text-xs font-semibold text-white mb-1">2. Sprite Grid & Content Rating</div>
-                <div className="text-[11px] text-[#71717A]">สร้าง Sprite Sheet 25 เฟรม ส่ง AI ตรวจเรตเนื้อหา</div>
+              <div className="flex items-center gap-1.5">
+                {[10, 20, 50].map((sz) => (
+                  <button
+                    key={sz}
+                    type="button"
+                    onClick={() => handleSelectChunkSize(sz)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-mono font-semibold border transition cursor-pointer ${
+                      chunkSizeMB === sz
+                        ? 'bg-[#FF7A00] text-white border-[#FF7A00]'
+                        : 'bg-[#F4F0E8] dark:bg-[#222222] border-[#EFECE6] dark:border-white/10 text-[#6C655D] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
+                    }`}
+                  >
+                    {sz} MB
+                  </button>
+                ))}
               </div>
-              <div className="p-4 bg-[#141414] border border-[#262626] rounded-2xl">
-                <div className="text-xs font-semibold text-white mb-1">3. HLS Uniform Audio (192k)</div>
-                <div className="text-[11px] text-[#71717A]">แปลงเฉพาะภาพ ล็อกคุณภาพเสียงเท่ากันทุกความละเอียด</div>
+            </div>
+
+            {/* Clean Feature Highlights */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+              <div className="p-4 bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl">
+                <div className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1] mb-1">
+                  1. ถอดเสียง &amp; สร้างซับ AI
+                </div>
+                <div className="text-xs text-[#6C655D] dark:text-[#9A9A9A] leading-relaxed">
+                  สั่งถอดเสียงทำซับไตเติลอัตโนมัติ หรือแนบไฟล์ .SRT / .VTT เอง
+                </div>
+              </div>
+              <div className="p-4 bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl">
+                <div className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1] mb-1">
+                  2. จัดเรต &amp; ตรวจหลังหั่น HLS
+                </div>
+                <div className="text-xs text-[#6C655D] dark:text-[#9A9A9A] leading-relaxed">
+                  เลือกเรตเองให้ AI ตรวจหลังหั่น HLS เสร็จ หรือกดให้ AI จัดเรตให้ทันที
+                </div>
+              </div>
+              <div className="p-4 bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl">
+                <div className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1] mb-1">
+                  3. สตรีม HLS เสียงสม่ำเสมอ
+                </div>
+                <div className="text-xs text-[#6C655D] dark:text-[#9A9A9A] leading-relaxed">
+                  รองรับหลายความละเอียด พร้อมล็อกคุณภาพเสียงเท่ากันทุกระดับ
+                </div>
               </div>
             </div>
           </div>
         ) : (
           /* State B: Multi-Step Studio Workspace */
-          <div className="space-y-6">
-            {/* Top Interactive Stepper Bar (Clickable in any order) */}
+          <div className="space-y-5">
+            {/* Top Interactive Stepper Bar */}
             <StepIndicator
               activeStep={activeStep}
               setActiveStep={setActiveStep}
               stepStatus={stepStatus}
             />
 
-            {/* Main Grid: 2/3 Left (Active Step) & 1/3 Right (Sidebar) */}
-            <div className="grid grid-cols-12 gap-6 items-start">
-              {/* Left Column: Active Step Form (2/3 width) */}
-              <div className="col-span-12 lg:col-span-8 space-y-6">
-                {/* Step 1: Details */}
+            {/* Main Grid: Preview/Cloud Status Left (lg:col-span-4) & Active Step Right (lg:col-span-8) */}
+            <div className="grid grid-cols-12 gap-5 items-start">
+              {/* Right Column on Desktop, First on Mobile: Active Step Form */}
+              <div className="col-span-12 lg:col-span-8 order-1 lg:order-2 space-y-5">
                 {activeStep === 1 && (
                   <StepDetails
                     title={title}
@@ -992,12 +1396,20 @@ export default function UploadPage() {
                       setTags(val);
                       tagsRef.current = val;
                     }}
+                    thumbnailUrl={thumbnailUrl}
+                    thumbnailOptions={thumbnailOptions}
+                    thumbnailStatus={thumbnailStatus}
+                    isRawUploaded={isRawUploaded}
+                    isSavingThumbnail={isSavingThumbnail}
+                    onSelectThumbnail={handleSelectThumbnail}
+                    onDispatchThumbnails={() =>
+                      handleDispatchThumbnails(activeVideoIdRef.current || activeVideoId, rawFileName)
+                    }
                     visionResult={visionResult}
                     onAddLog={addLog}
                   />
                 )}
 
-                {/* Step 2: Subtitles & AI (Workflow #1) */}
                 {activeStep === 2 && (
                   <StepSubtitles
                     subtitleMode={subtitleMode}
@@ -1016,12 +1428,9 @@ export default function UploadPage() {
                     generatedSubtitleSrt={generatedSubtitleSrt}
                     onDispatchAudioSubtitles={handleDispatchAudioSubtitles}
                     onAddLog={addLog}
-                    isCancelling={isCancelling}
-                    onCancelUpload={handleCancelUpload}
                   />
                 )}
 
-                {/* Step 3: Rating & Vision AI (Workflow #2) */}
                 {activeStep === 3 && (
                   <StepRatingVision
                     contentRating={contentRating}
@@ -1032,18 +1441,14 @@ export default function UploadPage() {
                     spritePreviewUrl={spritePreviewUrl}
                     ratingCheckStatus={ratingCheckStatus}
                     visionResult={visionResult}
-                    thumbnailUrl={thumbnailUrl}
                     onDispatchSpriteRating={handleDispatchSpriteRating}
                     onApplyRecommendation={(result) => {
                       setContentRating(result.suggestedRating);
                       addLog(`นำเรตติ้ง "${result.suggestedRatingLabel}" ไปใช้กับวิดีโอเรียบร้อย`);
                     }}
-                    isCancelling={isCancelling}
-                    onCancelUpload={handleCancelUpload}
                   />
                 )}
 
-                {/* Step 4: Summary & Publish (Workflow #3 + Auto Workflows) */}
                 {activeStep === 4 && (
                   <StepPublish
                     title={title}
@@ -1053,53 +1458,31 @@ export default function UploadPage() {
                     contentRating={contentRating}
                     subtitleMode={subtitleMode}
                     manualSubtitleFile={manualSubtitleFile}
-                    chunkSizeMB={chunkSizeMB}
-                    onSelectChunkSize={handleSelectChunkSize}
                     isUploading={isUploading}
                     isRawUploaded={isRawUploaded}
                     uploadPercent={uploadStats.percent}
-                    isCancelling={isCancelling}
-                    onCancelUpload={handleCancelUpload}
                     currentStatus={currentStatus}
                     transcodeProgress={transcodeProgress}
-                    stageDetail={stageDetail}
                     completedVideo={completedVideo}
-                    onStartPipeline={handleStartPipeline}
                     isStartingPipeline={isStartingPipeline}
                     errorMsg={errorMsg}
+                    ratingCheckStatus={ratingCheckStatus}
                   />
                 )}
 
-                {/* Bottom Step Navigation Bar (Back / Cancel / Next) */}
-                <div className="flex items-center justify-between p-4 bg-[#141414] border border-[#262626] rounded-2xl shadow-xl gap-2">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={activeStep <= 1}
-                      onClick={() => setActiveStep((prev) => Math.max(1, prev - 1))}
-                      className="flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-[#222222] hover:bg-[#2a2a2a] text-[#A1A1AA] hover:text-[#F1F1F1] border border-[#333333] transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      <ArrowLeft className="w-4 h-4" />
-                      <span>ย้อนกลับ</span>
-                    </button>
+                {/* Unified Bottom Step Navigation Bar (No redundant cancel, single Primary CTA) */}
+                <div className="flex items-center justify-between p-4 bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl shadow-xs gap-3">
+                  <button
+                    type="button"
+                    disabled={activeStep <= 1}
+                    onClick={() => setActiveStep((prev) => Math.max(1, prev - 1))}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-[#F4F0E8] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] text-[#212529] dark:text-[#F1F1F1] border border-[#EFECE6] dark:border-white/10 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>ย้อนกลับ</span>
+                  </button>
 
-                    <button
-                      type="button"
-                      disabled={isCancelling}
-                      onClick={handleCancelUpload}
-                      className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-medium bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 hover:text-white border border-rose-800/40 transition cursor-pointer disabled:opacity-50"
-                      title="ยกเลิกการอัปโหลดและลบวิดีโอนี้เพื่อเลือกไฟล์ใหม่"
-                    >
-                      {isCancelling ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-rose-400" />
-                      )}
-                      <span>ยกเลิก</span>
-                    </button>
-                  </div>
-
-                  <div className="text-xs text-[#71717A] font-mono hidden sm:block">
+                  <div className="text-xs text-[#8C857B] dark:text-[#9A9A9A] font-mono hidden sm:block">
                     ขั้นตอน {activeStep} จาก 4
                   </div>
 
@@ -1113,20 +1496,30 @@ export default function UploadPage() {
                         handleStartPipeline();
                       }
                     }}
-                    className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition shadow-lg ${
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition ${
                       activeStep === 4 && (!isReadyToPublish || isStartingPipeline)
-                        ? 'bg-[#181818] border border-[#2c2c2c] text-[#555555] cursor-not-allowed shadow-none'
-                        : 'bg-gradient-to-r from-[#ea580c] to-[#f97316] text-white hover:brightness-110 shadow-[#ea580c]/20 cursor-pointer'
+                        ? 'bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 text-[#8C857B] dark:text-[#666666] cursor-not-allowed'
+                        : 'bg-[#FF7A00] hover:bg-[#E86E00] text-white cursor-pointer'
                     }`}
                   >
                     {activeStep === 4 && isStartingPipeline ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin text-white" />
-                        <span>กำลังสั่งรัน...</span>
+                        <span>กำลังส่งเผยแพร่...</span>
+                      </>
+                    ) : activeStep === 4 &&
+                      (currentStatus === 'PROCESSING' ||
+                        currentStatus === 'TRANSCODING' ||
+                        currentStatus === 'QUEUED') ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>กำลังแปลงสตรีม ({transcodeProgress}%)</span>
                       </>
                     ) : (
                       <>
-                        <span>{activeStep === 4 ? 'ยืนยันและแปลงไฟล์ HLS' : 'ถัดไป'}</span>
+                        <span>
+                          {activeStep === 4 ? 'ยืนยันและเผยแพร่วิดีโอ' : 'ถัดไป'}
+                        </span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}
@@ -1141,8 +1534,8 @@ export default function UploadPage() {
                 />
               </div>
 
-              {/* Right Column: Sticky Sidebar (1/3 width) */}
-              <div className="col-span-12 lg:col-span-4">
+              {/* Left Column on Desktop, Second on Mobile: Video Preview & Cloud Status */}
+              <div className="col-span-12 lg:col-span-4 order-2 lg:order-1">
                 <UploadSidebar
                   file={file}
                   fileDetails={fileDetails}
@@ -1153,14 +1546,12 @@ export default function UploadPage() {
                   uploadStats={uploadStats}
                   isUploading={isUploading}
                   isRawUploaded={isRawUploaded}
-                  isCancelling={isCancelling}
-                  onCancelUpload={handleCancelUpload}
                   audioStatus={audioStatus}
-                  setAudioStatus={setAudioStatus}
                   subtitleStatus={subtitleStatus}
                   spriteSheetStatus={spriteSheetStatus}
-                  setSpriteSheetStatus={setSpriteSheetStatus}
                   ratingCheckStatus={ratingCheckStatus}
+                  contentRating={contentRating}
+                  thumbnailStatus={thumbnailStatus}
                   runnerSpecs={runnerSpecs}
                 />
               </div>
@@ -1168,6 +1559,49 @@ export default function UploadPage() {
           </div>
         )}
       </div>
+
+      {/* Safe Cancel Confirmation Modal */}
+      {showCancelModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/55 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancelModalTitle"
+        >
+          <div className="w-full max-w-md bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/15 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div>
+              <h3 id="cancelModalTitle" className="text-base font-bold text-[#212529] dark:text-[#F1F1F1]">
+                ยืนยันการยกเลิกและลบงานนี้?
+              </h3>
+              <p className="text-xs sm:text-sm text-[#6C655D] dark:text-[#AAAAAA] mt-1.5 leading-relaxed">
+                ไฟล์วิดีโอที่อัปโหลดขึ้น OneDrive และข้อมูลชั่วคราวของงานนี้จะถูกลบออกจากสตูดิโอ และไม่สามารถกู้คืนได้
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={isCancelling}
+                onClick={() => setShowCancelModal(false)}
+                className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-[#F4F0E8] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] text-[#212529] dark:text-[#F1F1F1] border border-[#EFECE6] dark:border-white/10 transition cursor-pointer"
+              >
+                เก็บงานไว้ก่อน
+              </button>
+              <button
+                type="button"
+                disabled={isCancelling}
+                onClick={async () => {
+                  await handleCancelUpload();
+                  setShowCancelModal(false);
+                }}
+                className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-rose-600 hover:bg-rose-500 text-white transition flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                {isCancelling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>{isCancelling ? 'กำลังลบงาน...' : 'ยืนยันลบงาน'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

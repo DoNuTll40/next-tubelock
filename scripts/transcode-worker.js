@@ -644,42 +644,39 @@ async function main() {
         const gopSize = String(fps > 0 ? Math.round(fps * 2) : 60);
         console.log(`🎬 Video specs: ${srcWidth}x${srcHeight} [${resolutionLabel}], ${duration}s, ${fps}fps, bitrate: ${bitrate}, GOP: ${gopSize}, codec: ${codec}`);
 
-        // Create HLS Destination Folder on OneDrive & Extract Poster in Parallel
+        // Ensure HLS Destination Folder on OneDrive (preserve pre-extracted thumbnails, subtitles & sprites)
         const posterPath = path.join(hlsOutputDir, 'poster.jpg');
         const seekTime = duration > 3 ? '00:00:03' : '00:00:01';
 
-        const [createFolderRes] = await Promise.all([
-            fetchWithRetry(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentFolderId}/children`, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${await getGraphToken()}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    name: streamFolderName,
-                    folder: {},
-                    '@microsoft.graph.conflictBehavior': 'replace',
-                }),
-            }),
-            runFFmpeg([
-                '-y', '-threads', '0', '-ss', seekTime, '-i', rawFilePath,
-                '-vframes', '1', '-q:v', '2', posterPath,
-            ]),
+        const [streamFolderId, existingThumbRows] = await Promise.all([
+            ensureFolderExists(driveId, `streams/${streamFolderName}`),
+            sql`SELECT thumbnail_url FROM videos WHERE id = ${vidNum} LIMIT 1;`.catch(() => []),
         ]);
 
-        if (!createFolderRes.ok) {
-            const err = await createFolderRes.text();
-            throw new Error(`Failed to create HLS folder: ${err}`);
+        const existingThumbnailUrl = (existingThumbRows?.[0]?.thumbnail_url || '').trim();
+        const dataImageMatch = existingThumbnailUrl.match(/^data:image\/(?:jpe?g|png|webp|gif|avif);base64,(.+)$/i);
+        let shouldSetThumbUrl = false;
+
+        if (dataImageMatch) {
+            await fs.promises.writeFile(posterPath, Buffer.from(dataImageMatch[1], 'base64'));
+        } else if (!existingThumbnailUrl) {
+            shouldSetThumbUrl = true;
+            await runFFmpeg([
+                '-y', '-threads', '0', '-ss', seekTime, '-i', rawFilePath,
+                '-vframes', '1', '-q:v', '2', posterPath,
+            ]);
         }
 
-        const streamFolderData = await createFolderRes.json();
-        const streamFolderId = streamFolderData.id;
         const masterPlaylistPath = `/streams/${streamFolderName}/master.m3u8`;
         const thumbnailUrl = `/streams/${streamFolderName}/poster.jpg`;
 
-        console.log(`⬆️ Uploading poster.jpg & syncing metadata...`);
+        console.log(`⬆️ Syncing poster.jpg & video metadata...`);
+        const uploadPosterPromise = fs.existsSync(posterPath)
+            ? uploadFileToOneDrive(driveId, streamFolderId, 'poster.jpg', posterPath)
+            : Promise.resolve();
+
         await Promise.all([
-            uploadFileToOneDrive(driveId, streamFolderId, 'poster.jpg', posterPath),
+            uploadPosterPromise,
             updateDbStatus({
                 status: 'PROCESSING',
                 progress: 25,
@@ -690,7 +687,7 @@ async function main() {
                     fps,
                     codec,
                     bitrate,
-                    thumbnail_url: thumbnailUrl,
+                    thumbnail_url: shouldSetThumbUrl ? thumbnailUrl : null,
                     onedrive_folder_id: streamFolderId,
                 },
             }),

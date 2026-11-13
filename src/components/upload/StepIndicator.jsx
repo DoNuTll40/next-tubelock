@@ -1,84 +1,69 @@
 'use client';
 
-import { Check, FileText, Subtitles, ShieldAlert, Rocket } from 'lucide-react';
+import { Check } from 'lucide-react';
 
 const STEPS = [
-  { id: 1, label: 'รายละเอียด', sublabel: 'Details', icon: FileText },
-  { id: 2, label: 'คำบรรยาย & AI', sublabel: 'Subtitles & AI', icon: Subtitles },
-  { id: 3, label: 'เรตเนื้อหา & Vision', sublabel: 'Rating & Vision', icon: ShieldAlert },
-  { id: 4, label: 'สรุปและเผยแพร่', sublabel: 'Summary & Publish', icon: Rocket },
+  { id: 1, label: 'รายละเอียด' },
+  { id: 2, label: 'ซับไตเติล & AI' },
+  { id: 3, label: 'เรตติ้ง' },
+  { id: 4, label: 'ตรวจสอบ & เผยแพร่' },
 ];
 
 export default function StepIndicator({ activeStep, setActiveStep, stepStatus = {} }) {
   return (
-    <div className="w-full bg-[#141414] border border-[#262626] rounded-2xl p-2.5 sm:p-4 mb-6 shadow-xl">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+    <div className="w-full">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         {STEPS.map((step) => {
-          const Icon = step.icon;
           const isActive = activeStep === step.id;
-          const isCompleted = stepStatus[step.id]?.completed;
-          const isOptional = stepStatus[step.id]?.optional;
+          const info = stepStatus[step.id] || {};
+          const isCompleted = Boolean(info.completed);
+          const statusText =
+            info.statusText ||
+            (isActive ? 'กำลังดูขั้นตอนนี้' : isCompleted ? 'เสร็จแล้ว' : 'รอดำเนินการ');
 
           return (
             <button
               key={step.id}
               type="button"
               onClick={() => setActiveStep(step.id)}
-              className={`relative flex items-center gap-3 p-3 rounded-xl transition-all duration-200 text-left cursor-pointer group ${
+              className={`relative flex items-center gap-3 px-3.5 py-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                 isActive
-                  ? 'bg-gradient-to-r from-[#ea580c]/15 to-[#f97316]/10 border border-[#f97316]/50 shadow-lg shadow-[#ea580c]/10'
-                  : 'bg-[#181818]/60 hover:bg-[#1f1f1f] border border-[#262626] hover:border-[#383838]'
+                  ? 'bg-white dark:bg-[#181818] border-[#FF7A00] ring-3 ring-[#FF7A00]/15'
+                  : isCompleted
+                  ? 'bg-white dark:bg-[#181818] border-emerald-500/35 hover:border-emerald-500/60'
+                  : 'bg-white dark:bg-[#181818] border-[#EFECE6] dark:border-white/10 hover:border-[#D5CFC5] dark:hover:border-white/20'
               }`}
             >
-              {/* Step Number / Icon Badge */}
               <div
-                className={`w-9 h-9 shrink-0 rounded-lg flex items-center justify-center font-semibold text-xs transition-colors ${
+                className={`w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
                   isActive
-                    ? 'bg-[#f97316] text-white shadow-md shadow-[#f97316]/30'
+                    ? 'bg-[#FF7A00] text-white'
                     : isCompleted
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-[#262626] text-[#A1A1AA] group-hover:text-[#F1F1F1] group-hover:bg-[#333333]'
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-[#F4F0E8] dark:bg-[#222222] text-[#8C857B] dark:text-[#9A9A9A]'
                 }`}
               >
                 {isCompleted && !isActive ? (
-                  <Check className="w-4 h-4 stroke-[2.5]" />
+                  <Check className="w-3.5 h-3.5 stroke-[2.5]" />
                 ) : (
-                  <Icon className="w-4 h-4" />
+                  step.id
                 )}
               </div>
 
-              {/* Step Text */}
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-mono text-[#71717A]">
-                    0{step.id}
-                  </span>
-                  {isOptional && !isCompleted && (
-                    <span className="text-[9px] px-1 py-0.2 rounded bg-[#262626] text-[#A1A1AA] font-mono">
-                      OPT
-                    </span>
-                  )}
-                  {isCompleted && (
-                    <span className="text-[9px] px-1 py-0.2 rounded bg-emerald-950/60 text-emerald-400 font-mono border border-emerald-800/40">
-                      OK
-                    </span>
-                  )}
-                </div>
                 <div
-                  className={`text-xs sm:text-sm font-medium truncate ${
+                  className={`text-xs sm:text-[13px] font-semibold truncate ${
                     isActive
-                      ? 'text-[#f97316] font-semibold'
-                      : 'text-[#E4E4E7] group-hover:text-white'
+                      ? 'text-[#212529] dark:text-[#F1F1F1]'
+                      : 'text-[#212529] dark:text-[#E4E4E7]'
                   }`}
                 >
                   {step.label}
                 </div>
+                <div className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A] truncate mt-0.5">
+                  {statusText}
+                </div>
               </div>
-
-              {/* Active Indicator Underline for mobile/desktop */}
-              {isActive && (
-                <div className="absolute -bottom-1 left-3 right-3 h-[2px] bg-gradient-to-r from-[#ea580c] to-[#f97316] rounded-full" />
-              )}
             </button>
           );
         })}

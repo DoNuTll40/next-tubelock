@@ -1,3 +1,4 @@
+import { isMatureVideo, isPreviewImage, RESTRICTED_POSTER } from '@/lib/videoUtils';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
@@ -48,25 +49,31 @@ export async function GET(request, context) {
 
     const folderName = path[0]; // e.g. 'stream_vid_823'
     const fileName = path.slice(1).join('/'); // e.g. 'poster.jpg' หรือ '1080p/001.ts'
+    const isPreview = isPreviewImage(fileName);
+    const redirectAsset = (url) => {
+      const response = NextResponse.redirect(url, 307);
+      if (isPreview) response.headers.set('Cache-Control', 'private, no-store');
+      return response;
+    };
     const cacheKey = `${folderName}/${fileName}`.toLowerCase();
 
     // ⚡ 1. Ultra-fast In-Memory Hit (<1ms) with Token Expiration Check
     const cached = assetCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now() && isTempauthValid(cached.url)) {
-      return NextResponse.redirect(resolveTargetUrl(cached.url, fileName), 307);
-    } else {
+    if (!isPreview && cached && cached.expiresAt > Date.now() && isTempauthValid(cached.url)) {
+      return redirectAsset(resolveTargetUrl(cached.url, fileName));
+    } else if (!isPreview) {
       assetCache.delete(cacheKey);
     }
 
     const sql = getDb();
 
     // ⚡ 2. Locate video in Neon DB
-    const matchId = folderName.match(/stream_vid_(\d+)/i);
+    const matchId = folderName.match(/^stream_vid_(\d+)$/i);
     let rows = [];
     if (matchId) {
       const vidId = parseInt(matchId[1], 10);
       rows = await sql`
-        SELECT id, onedrive_folder_id, source_cache 
+        SELECT id, onedrive_folder_id, source_cache, category, content_rating
         FROM videos 
         WHERE id = ${vidId} AND (status = 'READY' OR status IS NULL)
         LIMIT 1;
@@ -75,7 +82,7 @@ export async function GET(request, context) {
 
     if (!rows || rows.length === 0) {
       rows = await sql`
-        SELECT id, onedrive_folder_id, source_cache 
+        SELECT id, onedrive_folder_id, source_cache, category, content_rating
         FROM videos 
         WHERE (status = 'READY' OR status IS NULL)
           AND (master_playlist_path LIKE ${'%' + folderName + '%'}
@@ -89,6 +96,9 @@ export async function GET(request, context) {
     }
 
     const video = rows[0];
+    if (isPreview && isMatureVideo(video)) {
+      return redirectAsset(new URL(RESTRICTED_POSTER, request.url));
+    }
     const folderId = video.onedrive_folder_id;
     if (!folderId) {
       return new NextResponse('OneDrive folder ID not found for video', { status: 404 });
@@ -107,7 +117,7 @@ export async function GET(request, context) {
           url: foundItem.downloadUrl,
           expiresAt: Date.now() + 40 * 60 * 1000,
         });
-        return NextResponse.redirect(resolveTargetUrl(foundItem.downloadUrl, fileName), 307);
+        return redirectAsset(resolveTargetUrl(foundItem.downloadUrl, fileName));
       }
     }
 
@@ -135,7 +145,7 @@ export async function GET(request, context) {
       expiresAt: Date.now() + 60 * 60 * 1000,
     });
 
-    return NextResponse.redirect(resolveTargetUrl(downloadUrl, fileName), 307);
+    return redirectAsset(resolveTargetUrl(downloadUrl, fileName));
   } catch (err) {
     console.error('[Stream Asset Proxy Error]:', err);
     return new NextResponse(err.message, { status: 500 });

@@ -6,7 +6,7 @@ import {
   Upload, RefreshCw, CheckCircle2, Play,
   RotateCcw, Trash2, ListOrdered, Clock
 } from 'lucide-react';
-import { encodeVideoSlug } from '@/lib/videoUtils';
+import { encodeUploadId, encodeVideoSlug } from '@/lib/videoUtils';
 
 export default function UploadQueuePage() {
   const [queueItems, setQueueItems] = useState([]);
@@ -207,6 +207,12 @@ export default function UploadQueuePage() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                    <Link
+                      href={`/upload?upload_id=${encodeUploadId(item.id)}`}
+                      className="rounded-xl border border-white/15 px-3 py-1.5 text-xs font-semibold hover:bg-white/10"
+                    >
+                      เปิดงาน
+                    </Link>
                     {isReady && (
                       <Link
                         href={`/watch/${encodeVideoSlug(item.id, item.category) || item.id}`}

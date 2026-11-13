@@ -1,0 +1,58 @@
+name: "3-Segment Video Thumbnail Extractor (Ubuntu / FFmpeg)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: 'Video record ID in Neon DB'
+        required: true
+        type: string
+      raw_file_name:
+        description: 'Raw video filename in OneDrive /raw/ folder'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: extract-thumbs-vid-${{ inputs.video_id }}
+  cancel-in-progress: true
+
+jobs:
+  extract-thumbnails:
+    name: "Extract 3 Thumbnails #${{ inputs.video_id }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify FFmpeg
+        run: |
+          if ! command -v ffmpeg &> /dev/null; then
+            sudo apt-get update -y && sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -version | head -n 2
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Minimal Worker Dependency (@neondatabase/serverless)
+        run: |
+          npm install --no-save --no-audit --no-fund @neondatabase/serverless
+
+      - name: Run 3-Segment Thumbnail Extractor Worker
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
+          VIDEO_ID: ${{ inputs.video_id }}
+          RAW_FILE_NAME: ${{ inputs.raw_file_name }}
+        run: |
+          node scripts/thumbnail-worker.js

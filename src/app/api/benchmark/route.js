@@ -101,7 +101,7 @@ export async function GET(request) {
           : sampleVid[0].source_cache;
         
         // Find an actual TS chunk or m3u8
-        const chunk = cache.items?.find((i) => i.name?.endsWith('.ts')) || cache.items?.[0];
+        const chunk = cache.items?.find((i) => /\.(?:ts|m3u8)$/i.test(i.name || ''));
         if (chunk) {
           sampleChunk = {
             videoId: sampleVid[0].id,

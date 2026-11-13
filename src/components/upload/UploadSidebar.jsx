@@ -3,16 +3,8 @@
 import { useState } from 'react';
 import {
   Film,
-  Layers,
-  Cpu,
-  CheckCircle2,
-  Loader2,
-  Volume2,
-  Grid,
-  SlidersHorizontal,
-  CloudUpload,
-  XCircle,
-  ShieldCheck,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 export default function UploadSidebar({
@@ -25,375 +17,226 @@ export default function UploadSidebar({
   uploadStats,
   isUploading,
   isRawUploaded,
-  isCancelling,
-  onCancelUpload,
   audioStatus,
-  setAudioStatus,
   subtitleStatus,
   spriteSheetStatus,
-  setSpriteSheetStatus,
   ratingCheckStatus,
+  contentRating,
+  thumbnailStatus = 'waiting',
   runnerSpecs,
 }) {
-  const [showSimControls, setShowSimControls] = useState(false);
+  const [showTechDetails, setShowTechDetails] = useState(false);
 
-  // 1. Audio & AI Subtitle label
-  const getAudioSubLabel = () => {
-    if (subtitleStatus === 'ready') return 'ถอดเสียง & สร้างซับไตเติล AI สำเร็จ';
-    if (subtitleStatus === 'processing' || audioStatus === 'extracting') {
-      return 'กำลังดึงวิดีโอสกัดเสียง & ส่ง AI ทำซับ...';
-    }
-    if (audioStatus === 'ready') return 'สกัดไฟล์เสียงสำเร็จ (พร้อมทำซับ)';
-    if (audioStatus === 'failed' || subtitleStatus === 'failed') return 'ประมวลผลซับไตเติลไม่สำเร็จ';
-    return isRawUploaded ? 'พร้อมดึงวิดีโอจาก OneDrive' : 'รออัปโหลด OneDrive เสร็จ';
+  // Overall readiness bar
+  const getOverallProgress = () => {
+    if (currentStatus === 'READY') return 100;
+    if (currentStatus === 'TRANSCODING') return Math.max(70, Math.min(99, 60 + Math.round((transcodeProgress || 0) * 0.4)));
+    if (!isRawUploaded) return Math.max(5, Math.round((uploadStats?.percent || 0) * 0.4));
+    let pct = 50;
+    if (subtitleStatus === 'ready') pct += 25;
+    if (ratingCheckStatus === 'VERIFIED_MATCH' || ratingCheckStatus === 'AI_AUTO_SELECTED') pct += 25;
+    return pct;
   };
 
-  // 2. Sprite Sheet & Content Rating label
-  const getSpriteRatingLabel = () => {
-    if (ratingCheckStatus === 'VERIFIED_MATCH') return 'AI ตรวจสอบเรตติ้งตรงกับที่เลือก ✓';
-    if (ratingCheckStatus === 'AI_AUTO_SELECTED') return 'AI ประเมินและเลือกเรตติ้งให้อัตโนมัติ ✓';
-    if (ratingCheckStatus === 'MISMATCH_WARNING') return 'คำเตือน: เรตติ้งที่เลือกต่างจากผลตรวจ AI';
-    if (spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing') {
-      return 'กำลังสร้าง Sprite Grid & ส่ง AI ตรวจเรต...';
-    }
-    if (spriteSheetStatus === 'ready') return 'สร้าง Sprite Sheet Grid 5x5 สำเร็จ';
-    return isRawUploaded ? 'พร้อมสร้าง Sprite Grid ตรวจสอบเรต' : 'รออัปโหลด OneDrive เสร็จ';
+  // Task 1: Subtitle
+  const getSubBadge = () => {
+    if (subtitleStatus === 'ready') return { label: 'เสร็จแล้ว', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'สร้างซับ .SRT / .VTT สำเร็จ' };
+    if (subtitleStatus === 'processing' || audioStatus === 'extracting') return { label: 'กำลังทำ', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'กำลังสกัดเสียงและสร้างซับ...' };
+    if (audioStatus === 'failed' || subtitleStatus === 'failed') return { label: 'ไม่สำเร็จ', cls: 'bg-rose-500/15 text-rose-700 dark:text-rose-400', desc: 'ลองสั่งใหม่อีกครั้งใน Step 2' };
+    return { label: 'รอสั่งงาน', cls: 'bg-white dark:bg-[#181818] text-[#8C857B] dark:text-[#9A9A9A] border border-[#EFECE6] dark:border-white/10', desc: 'สั่งงานได้ที่ Step 2 หรือรันตอนเผยแพร่' };
   };
 
-  // 3. HLS Multi-bitrate Transcode label
-  const getTranscodeLabel = () => {
-    if (currentStatus === 'READY') return 'หั่น HLS ครบทุกความละเอียด (เสียง 192kbps เท่ากัน)';
-    if (currentStatus === 'TRANSCODING') return `กำลังหั่น HLS Multi-bitrate (${transcodeProgress}%)`;
-    if (currentStatus === 'PROCESSING') return 'กำลังเตรียม GitHub Actions Runner...';
-    if (currentStatus === 'QUEUED') return 'อยู่ในคิวรอแปลงไฟล์ HLS';
-    return 'รอกดยืนยันเผยแพร่ใน Step 4';
+  // Task 2: Rating & HLS verification
+  const getRatingBadge = () => {
+    if (ratingCheckStatus === 'AI_AUTO_SELECTED') return { label: 'AI จัดเรตแล้ว', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'AI ประเมินและตั้งเรตให้อัตโนมัติแล้ว' };
+    if (ratingCheckStatus === 'VERIFIED_MATCH') return { label: 'ตรวจสอบแล้ว', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'AI ตรวจยืนยันเรตตรงตามที่เลือก' };
+    if (ratingCheckStatus === 'MISMATCH_WARNING') return { label: 'แจ้งเตือนเรต', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'ผลตรวจต่างจากที่เลือก — ตรวจดูใน Step 3' };
+    if (spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing') return { label: 'กำลังจัดเรต', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'กำลังสร้างภาพและวิเคราะห์เรต...' };
+    return {
+      label: contentRating === 'auto' ? 'รอ AI จัดเรต' : 'ตรวจหลัง HLS',
+      cls: 'bg-[#FF7A00]/10 text-[#FF7A00]',
+      desc: contentRating === 'auto' ? 'กด "ให้ AI จัดเรต" ใน Step 3 หรือรอตอนเผยแพร่' : 'เลือกเอง — AI จะตรวจหลังหั่น HLS เสร็จ',
+    };
   };
+
+  // Task 3: HLS Stream
+  const getHlsBadge = () => {
+    if (currentStatus === 'READY') return { label: 'พร้อมเล่น', cls: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', desc: 'สตรีมหลายความละเอียดพร้อมใช้งาน' };
+    if (currentStatus === 'TRANSCODING') return { label: `${transcodeProgress}%`, cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: `กำลังแปลงสตรีม HLS (${transcodeProgress}%)` };
+    if (currentStatus === 'PROCESSING' || currentStatus === 'QUEUED') return { label: 'กำลังเตรียม', cls: 'bg-amber-500/15 text-amber-700 dark:text-amber-400', desc: 'กำลังเตรียมประมวลผลบนคลาวด์...' };
+    return { label: 'รอเผยแพร่', cls: 'bg-white dark:bg-[#181818] text-[#8C857B] dark:text-[#9A9A9A] border border-[#EFECE6] dark:border-white/10', desc: 'เริ่มหั่นไฟล์เมื่อกดยืนยันใน Step 4' };
+  };
+
+  const overallPct = getOverallProgress();
+  const subInfo = getSubBadge();
+  const ratingInfo = getRatingBadge();
+  const hlsInfo = getHlsBadge();
 
   return (
-    <div className="space-y-5 sticky top-20">
-      {/* 1. Video Preview & Immediate OneDrive Upload Card */}
-      <div className="bg-[#141414] border border-[#262626] rounded-2xl overflow-hidden shadow-xl">
-        <div className="aspect-video bg-[#0d0d0d] relative flex items-center justify-center overflow-hidden">
+    <div className="space-y-4 lg:sticky lg:top-28">
+      <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+        {/* Video Preview */}
+        <div className="aspect-video rounded-xl overflow-hidden bg-[#212529] dark:bg-[#0d0d0d] relative flex items-center justify-center border border-[#EFECE6] dark:border-white/10">
           {thumbnailUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={thumbnailUrl}
-              alt="Video Preview"
+              alt="ตัวอย่างวิดีโอ"
               className="w-full h-full object-cover"
             />
           ) : (
-            <div className="flex flex-col items-center justify-center text-[#555555]">
-              <Film className="w-12 h-12 stroke-[1.2] mb-2" />
-              <span className="text-xs">รอสร้าง Thumbnail ตัวอย่าง</span>
+            <div className="flex flex-col items-center justify-center text-[#8C857B]">
+              <Film className="w-10 h-10 stroke-[1.4] mb-1.5" />
+              <span className="text-xs">
+                {thumbnailStatus === 'generating' ? 'กำลังสร้างภาพตัวอย่าง 3 ช่วง...' : 'รอสร้างภาพตัวอย่าง'}
+              </span>
             </div>
           )}
 
-          {/* Badge overlays */}
-          <div className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md text-[10px] font-mono text-[#E4E4E7] border border-white/10">
+          <div className="absolute bottom-2.5 left-2.5 px-2 py-0.5 rounded-md bg-black/70 text-[11px] font-mono text-white">
             {fileDetails.resolution || 'Auto'}
           </div>
-
-          <div className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md text-[11px] font-mono text-white font-medium">
+          <div className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/75 text-[11px] font-mono text-white">
             {fileDetails.durationFormatted || '0:00'}
           </div>
         </div>
 
-        {/* File summary bar */}
-        <div className="p-3.5 bg-[#121212] border-t border-[#222222] space-y-3">
-          <div>
-            <div className="text-xs font-medium text-[#F1F1F1] truncate">
-              {fileDetails.name || file?.name || 'วิดีโอต้นทาง'}
+        {/* File Name */}
+        <div>
+          <div className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1] truncate">
+            {fileDetails.name || file?.name || 'วิดีโอต้นทาง'}
+          </div>
+          <div className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A] mt-0.5 flex items-center justify-between font-mono">
+            <span>{fileDetails.sizeFormatted}</span>
+            <span>{fileDetails.codec}</span>
+          </div>
+        </div>
+
+        {/* Overall Readiness Progress */}
+        <div>
+          <div className="flex items-center justify-between text-xs font-semibold mb-1.5">
+            <span className="text-[#212529] dark:text-[#F1F1F1]">ความคืบหน้าบนคลาวด์</span>
+            <span className="text-[#FF7A00] font-mono">{overallPct}%</span>
+          </div>
+          <div className="w-full h-2 rounded-full bg-[#F4F0E8] dark:bg-[#222222] overflow-hidden">
+            <div
+              className="h-full bg-[#FF7A00] transition-all duration-300 rounded-full"
+              style={{ width: `${overallPct}%` }}
+            />
+          </div>
+          {isUploading && (
+            <div className="text-[11px] text-[#6C655D] dark:text-[#AAAAAA] mt-1.5">
+              กำลังอัปโหลด {uploadStats.percent}% • ก้อนที่ {uploadStats.currentChunk}/{uploadStats.totalChunks} ({uploadStats.speedMBs} MB/s)
             </div>
-            <div className="flex items-center justify-between text-[11px] text-[#71717A] mt-1 font-mono">
-              <span>{fileDetails.sizeFormatted}</span>
-              <span>{fileDetails.codec}</span>
+          )}
+        </div>
+
+        {/* Clean Status List */}
+        <div className="space-y-2">
+          <div className="p-2.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">
+                1. ไฟล์ต้นฉบับบนคลาวด์
+              </div>
+              <div className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A] truncate">
+                {isRawUploaded ? 'พร้อมประมวลผลต่อ' : stageDetail || `กำลังอัปโหลด (${uploadStats.percent}%)`}
+              </div>
             </div>
+            <span
+              className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${
+                isRawUploaded
+                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                  : 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+              }`}
+            >
+              {isRawUploaded ? 'พร้อมแล้ว' : `${uploadStats.percent}%`}
+            </span>
           </div>
 
-          {/* Immediate OneDrive Upload Status Box */}
-          <div className="p-3 rounded-xl bg-[#0a0a0a] border border-[#262626] space-y-2.5">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-[#F1F1F1] flex items-center gap-1.5">
-                {isUploading ? (
-                  <Loader2 className="w-3.5 h-3.5 text-[#f97316] animate-spin" />
-                ) : isRawUploaded ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                ) : (
-                  <CloudUpload className="w-3.5 h-3.5 text-[#A1A1AA]" />
-                )}
-                <span>
-                  {isUploading
-                    ? `กำลังอัปโหลดขึ้น OneDrive (${uploadStats.percent}%)`
-                    : isRawUploaded
-                    ? 'อัปโหลดขึ้น OneDrive สำเร็จ 100%'
-                    : 'เตรียมอัปโหลดขึ้น OneDrive...'}
-                </span>
+          <div className="p-2.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">
+                2. ถอดเสียงและซับไตเติล
+              </div>
+              <div className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A] truncate">
+                {subInfo.desc}
+              </div>
+            </div>
+            <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${subInfo.cls}`}>
+              {subInfo.label}
+            </span>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">
+                3. เรตติ้งเนื้อหา
+              </div>
+              <div className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A] truncate">
+                {ratingInfo.desc}
+              </div>
+            </div>
+            <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${ratingInfo.cls}`}>
+              {ratingInfo.label}
+            </span>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">
+                4. แปลงสตรีม HLS
+              </div>
+              <div className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A] truncate">
+                {hlsInfo.desc}
+              </div>
+            </div>
+            <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0 ${hlsInfo.cls}`}>
+              {hlsInfo.label}
+            </span>
+          </div>
+        </div>
+
+        {/* Collapsible Technical Specs Drawer */}
+        <button
+          type="button"
+          onClick={() => setShowTechDetails(!showTechDetails)}
+          className="w-full py-2 px-3 rounded-xl border border-dashed border-[#DFD9CE] dark:border-white/15 text-[11px] text-[#8C857B] dark:text-[#9A9A9A] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition flex items-center justify-between cursor-pointer"
+        >
+          <span>ข้อมูลไฟล์และรายละเอียดเทคนิค</span>
+          {showTechDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        </button>
+
+        {showTechDetails && (
+          <div className="p-3 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 text-[11px] space-y-1.5 font-mono text-[#6C655D] dark:text-[#AAAAAA]">
+            <div className="flex justify-between">
+              <span>ขนาดไฟล์</span>
+              <span className="text-[#212529] dark:text-[#F1F1F1]">{fileDetails.sizeFormatted}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>ความละเอียด / FPS</span>
+              <span className="text-[#212529] dark:text-[#F1F1F1]">
+                {fileDetails.resolution} • {fileDetails.fps} fps
               </span>
-              <span className="font-mono text-[10px] text-[#8C857B]">
-                {isUploading ? `${uploadStats.speedMBs} MB/s` : isRawUploaded ? 'READY ON CLOUD' : ''}
+            </div>
+            <div className="flex justify-between">
+              <span>สัดส่วน / บิตเรต</span>
+              <span className="text-[#212529] dark:text-[#F1F1F1]">
+                {fileDetails.aspectRatio} • {fileDetails.approxBitrate}
               </span>
             </div>
-
-            {/* Progress Bar */}
-            <div className="w-full h-2 rounded-full bg-[#1c1c1c] overflow-hidden">
-              <div
-                className={`h-full transition-all duration-300 ${
-                  isRawUploaded
-                    ? 'bg-emerald-500'
-                    : 'bg-gradient-to-r from-[#ea580c] to-[#f97316]'
-                }`}
-                style={{ width: `${isRawUploaded ? 100 : uploadStats.percent || 0}%` }}
-              />
+            <div className="flex justify-between">
+              <span>โคเดก / เสียง</span>
+              <span className="text-[#212529] dark:text-[#F1F1F1]">
+                {fileDetails.codec} • AAC 192kbps
+              </span>
             </div>
-
-            <div className="text-[11px] text-[#71717A] leading-relaxed">
-              {isUploading
-                ? `ก้อนที่ ${uploadStats.currentChunk}/${uploadStats.totalChunks} • เหลือเวลา ~${uploadStats.etaSeconds} วินาที`
-                : isRawUploaded
-                ? 'ไฟล์ต้นฉบับอยู่บน OneDrive แล้ว GitHub Actions สามารถดึงไปทำซับไตเติล, สร้าง Sprite Sheet และหั่น HLS ได้ทันที'
-                : stageDetail || 'ระบบจะอัปโหลดไฟล์ขึ้น OneDrive อัตโนมัติเมื่อเลือกวิดีโอ'}
-            </div>
-
-            {/* Cancel Upload to OneDrive Button */}
-            {onCancelUpload && (
-              <button
-                type="button"
-                disabled={isCancelling}
-                onClick={onCancelUpload}
-                className="w-full py-2 px-3 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-white border border-rose-800/50 text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                {isCancelling ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>กำลังยกเลิกและลบไฟล์จาก OneDrive...</span>
-                  </>
-                ) : (
-                  <>
-                    <XCircle className="w-3.5 h-3.5" />
-                    <span>
-                      {isUploading
-                        ? 'ยกเลิกการอัปโหลดขึ้น OneDrive ทันที'
-                        : 'ยกเลิกและลบวิดีโอนี้จาก OneDrive'}
-                    </span>
-                  </>
-                )}
-              </button>
+            {runnerSpecs && (
+              <div className="pt-1 border-t border-[#EFECE6] dark:border-white/10">
+                Worker: {runnerSpecs.cpuModel} ({runnerSpecs.cpuCores} Cores)
+              </div>
             )}
           </div>
-        </div>
-      </div>
-
-      {/* 2. 3 Separate GitHub Actions Workflows Status Card */}
-      <div className="bg-[#141414] border border-[#262626] rounded-2xl p-4 shadow-xl space-y-3.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-[#f97316]" />
-            <h3 className="text-xs sm:text-sm font-semibold text-[#F1F1F1]">
-              3 GitHub Actions แยกอิสระ
-            </h3>
-          </div>
-
-          {/* Simulation Toggle Button */}
-          <button
-            type="button"
-            onClick={() => setShowSimControls(!showSimControls)}
-            className="text-[10px] px-2 py-0.5 rounded-md bg-[#222222] hover:bg-[#2c2c2c] text-[#A1A1AA] hover:text-[#f97316] border border-[#333333] transition flex items-center gap-1 cursor-pointer"
-            title="จำลองสถานะ GitHub Actions เพื่อทดสอบเงื่อนไขในแต่ละ Step"
-          >
-            <SlidersHorizontal className="w-3 h-3" />
-            <span>จำลอง State</span>
-          </button>
-        </div>
-
-        {/* Dev Simulation Toolbar (collapsible) */}
-        {showSimControls && (
-          <div className="p-2.5 bg-[#0a0a0a] border border-[#333333] rounded-xl space-y-2 text-[11px]">
-            <div className="text-[10px] text-[#8C857B] font-mono">
-              [DEV] สลับสถานะ GitHub Actions เพื่อทดสอบปุ่มปลดล็อก:
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[#A1A1AA]">Action #1 (Audio & Sub):</span>
-              <button
-                type="button"
-                onClick={() => setAudioStatus(audioStatus === 'ready' ? 'waiting' : 'ready')}
-                className={`px-2 py-0.5 rounded font-mono border text-[10px] cursor-pointer ${
-                  audioStatus === 'ready'
-                    ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
-                    : 'bg-amber-950 text-amber-300 border-amber-700'
-                }`}
-              >
-                {audioStatus === 'ready' ? 'READY (คลิกเพื่อเปลี่ยน)' : 'WAITING (คลิกเพื่อเปลี่ยน)'}
-              </button>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[#A1A1AA]">Action #2 (Sprite & Rating):</span>
-              <button
-                type="button"
-                onClick={() => setSpriteSheetStatus(spriteSheetStatus === 'ready' ? 'waiting' : 'ready')}
-                className={`px-2 py-0.5 rounded font-mono border text-[10px] cursor-pointer ${
-                  spriteSheetStatus === 'ready'
-                    ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
-                    : 'bg-amber-950 text-amber-300 border-amber-700'
-                }`}
-              >
-                {spriteSheetStatus === 'ready' ? 'READY (คลิกเพื่อเปลี่ยน)' : 'WAITING (คลิกเพื่อเปลี่ยน)'}
-              </button>
-            </div>
-          </div>
         )}
-
-        {/* 3 Separate GitHub Actions Items */}
-        <div className="space-y-2.5 text-xs">
-          {/* Action 1: Extract Audio & AI Subtitles */}
-          <div className="p-2.5 bg-[#0a0a0a] rounded-xl border border-[#222222] flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Volume2 className="w-4 h-4 text-[#f97316] shrink-0" />
-              <div className="min-w-0">
-                <div className="font-medium text-[#F1F1F1] truncate">
-                  1. ถอดไฟล์เสียง & AI ทำซับไตเติล
-                </div>
-                <div className="text-[10px] text-[#71717A] truncate">{getAudioSubLabel()}</div>
-              </div>
-            </div>
-            <span
-              className={`text-[10px] px-2 py-0.5 rounded font-mono border shrink-0 ${
-                subtitleStatus === 'ready' || audioStatus === 'ready'
-                  ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/40'
-                  : audioStatus === 'extracting' || subtitleStatus === 'processing'
-                  ? 'bg-amber-950/60 text-amber-400 border-amber-800/40'
-                  : 'bg-[#1e1e1e] text-[#71717A] border-[#333333]'
-              }`}
-            >
-              {subtitleStatus === 'ready'
-                ? 'SUB READY'
-                : audioStatus === 'ready'
-                ? 'AUDIO READY'
-                : audioStatus === 'extracting' || subtitleStatus === 'processing'
-                ? 'RUNNING'
-                : isRawUploaded
-                ? 'STANDBY'
-                : 'WAITING'}
-            </span>
-          </div>
-
-          {/* Action 2: Detailed Sprite Sheet Grid & Content Rating AI */}
-          <div className="p-2.5 bg-[#0a0a0a] rounded-xl border border-[#222222] flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Grid className="w-4 h-4 text-[#f97316] shrink-0" />
-              <div className="min-w-0">
-                <div className="font-medium text-[#F1F1F1] truncate">
-                  2. Sprite Sheet Grid & AI ตรวจเรตเนื้อหา
-                </div>
-                <div className="text-[10px] text-[#71717A] truncate">{getSpriteRatingLabel()}</div>
-              </div>
-            </div>
-            <span
-              className={`text-[10px] px-2 py-0.5 rounded font-mono border shrink-0 ${
-                ratingCheckStatus === 'VERIFIED_MATCH' ||
-                ratingCheckStatus === 'AI_AUTO_SELECTED' ||
-                spriteSheetStatus === 'ready'
-                  ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/40'
-                  : ratingCheckStatus === 'MISMATCH_WARNING'
-                  ? 'bg-rose-950/60 text-rose-400 border-rose-800/40'
-                  : spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing'
-                  ? 'bg-amber-950/60 text-amber-400 border-amber-800/40'
-                  : 'bg-[#1e1e1e] text-[#71717A] border-[#333333]'
-              }`}
-            >
-              {ratingCheckStatus === 'VERIFIED_MATCH'
-                ? 'VERIFIED'
-                : ratingCheckStatus === 'AI_AUTO_SELECTED'
-                ? 'AUTO RATED'
-                : ratingCheckStatus === 'MISMATCH_WARNING'
-                ? 'MISMATCH'
-                : spriteSheetStatus === 'ready'
-                ? 'READY'
-                : spriteSheetStatus === 'generating' || ratingCheckStatus === 'analyzing'
-                ? 'RUNNING'
-                : isRawUploaded
-                ? 'STANDBY'
-                : 'WAITING'}
-            </span>
-          </div>
-
-          {/* Action 3: HLS Multi-bitrate Transcode (Uniform Audio) */}
-          <div className="p-2.5 bg-[#0a0a0a] rounded-xl border border-[#222222] flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Layers className="w-4 h-4 text-[#f97316] shrink-0" />
-              <div className="min-w-0">
-                <div className="font-medium text-[#F1F1F1] truncate">
-                  3. หั่น HLS (เสียงคุณภาพเดียวกันทุกความชัด)
-                </div>
-                <div className="text-[10px] text-[#71717A] truncate">{getTranscodeLabel()}</div>
-              </div>
-            </div>
-            <span
-              className={`text-[10px] px-2 py-0.5 rounded font-mono border shrink-0 ${
-                currentStatus === 'READY'
-                  ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/40'
-                  : currentStatus === 'TRANSCODING' || currentStatus === 'PROCESSING'
-                  ? 'bg-amber-950/60 text-amber-400 border-amber-800/40'
-                  : 'bg-[#1e1e1e] text-[#71717A] border-[#333333]'
-              }`}
-            >
-              {currentStatus === 'READY'
-                ? 'READY'
-                : currentStatus === 'TRANSCODING'
-                ? `${transcodeProgress}%`
-                : currentStatus || 'IDLE'}
-            </span>
-          </div>
-        </div>
-
-        {/* Audio Continuity Guarantee Badge */}
-        <div className="p-2.5 rounded-xl bg-emerald-950/20 border border-emerald-800/30 flex items-center gap-2 text-[11px] text-emerald-300">
-          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>ล็อกคุณภาพเสียง AAC 192kbps (48kHz Stereo) เท่ากันทุกความละเอียด เปลี่ยนความชัดไม่สะดุด</span>
-        </div>
-
-        {/* Runner Specs if available */}
-        {runnerSpecs && (
-          <div className="p-2 bg-[#0d0d0d] rounded-lg border border-[#222222] text-[10px] text-[#71717A] font-mono">
-            Worker: {runnerSpecs.cpuModel} ({runnerSpecs.cpuCores} Cores) • RAM: {runnerSpecs.totalRamGb}
-          </div>
-        )}
-      </div>
-
-      {/* 3. Detailed File Metadata */}
-      <div className="bg-[#141414] border border-[#262626] rounded-2xl p-4 shadow-xl space-y-2.5">
-        <h4 className="text-xs font-semibold text-[#A1A1AA] uppercase tracking-wider font-mono">
-          ข้อมูลไฟล์ต้นฉบับ (Source Specs)
-        </h4>
-        <div className="divide-y divide-[#222222] text-xs">
-          <div className="py-1.5 flex justify-between">
-            <span className="text-[#71717A]">ขนาดไฟล์</span>
-            <span className="font-mono text-[#F1F1F1]">{fileDetails.sizeFormatted}</span>
-          </div>
-          <div className="py-1.5 flex justify-between">
-            <span className="text-[#71717A]">ความละเอียด</span>
-            <span className="font-mono text-[#F1F1F1]">{fileDetails.resolution}</span>
-          </div>
-          <div className="py-1.5 flex justify-between">
-            <span className="text-[#71717A]">สัดส่วนภาพ</span>
-            <span className="font-mono text-[#F1F1F1]">{fileDetails.aspectRatio}</span>
-          </div>
-          <div className="py-1.5 flex justify-between">
-            <span className="text-[#71717A]">ความยาว</span>
-            <span className="font-mono text-[#F1F1F1]">{fileDetails.durationFormatted}</span>
-          </div>
-          <div className="py-1.5 flex justify-between">
-            <span className="text-[#71717A]">บิตเรต</span>
-            <span className="font-mono text-[#F1F1F1]">{fileDetails.approxBitrate}</span>
-          </div>
-          <div className="py-1.5 flex justify-between">
-            <span className="text-[#71717A]">เฟรมเรต</span>
-            <span className="font-mono text-[#F1F1F1]">{fileDetails.fps} fps</span>
-          </div>
-          <div className="py-1.5 flex justify-between">
-            <span className="text-[#71717A]">โคเดก</span>
-            <span className="font-mono text-[#F1F1F1]">{fileDetails.codec}</span>
-          </div>
-        </div>
       </div>
     </div>
   );

@@ -306,9 +306,9 @@ export default function Navbar({ session }) {
             title="ตั้งค่าระบบ"
           >
             {session &&
-              <div className='flex flex-col'>
-                <p className='text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] truncate w-12'>{session?.name}</p>
-                <p className='text-[10px] text-[#8C857B] dark:text-[#AAAAAA] truncate w-12'>{session?.email}</p>
+              <div className='flex flex-col min-w-0 max-w-[120px] sm:max-w-[160px]'>
+                <p className='text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] truncate'>{session?.name}</p>
+                <p className='text-[10px] text-[#8C857B] dark:text-[#AAAAAA] truncate'>{session?.email}</p>
               </div>
             }
             <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center">

@@ -1,3 +1,5 @@
+import { getDb } from '@/lib/db';
+import { isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 import { cookies } from 'next/headers';
 
 export async function GET(request) {
@@ -17,6 +19,21 @@ export async function GET(request) {
 
         if (!folderName) {
             return new Response('Missing folder parameter', { status: 400 });
+        }
+
+        if (!/^[a-z0-9_-]+$/i.test(folderName)) {
+            return new Response('Invalid folder', { status: 400 });
+        }
+        const sql = getDb();
+        const [video] = await sql`
+            SELECT category, content_rating FROM videos
+            WHERE 'stream_vid_' || id::text = ${folderName.toLowerCase()}
+               OR split_part(master_playlist_path, '/', 3) = ${folderName}
+            ORDER BY ('stream_vid_' || id::text = ${folderName.toLowerCase()}) DESC NULLS LAST
+            LIMIT 1
+        `;
+        if (!video || isMatureVideo(video)) {
+            return Response.redirect(new URL(RESTRICTED_POSTER, request.url), 307);
         }
 
         const tenantId = process.env.AZURE_TENANT_ID;
@@ -57,7 +74,7 @@ export async function GET(request) {
         return new Response(imageBlob, {
             headers: {
                 'Content-Type': imageRes.headers.get('Content-Type') || 'image/jpeg',
-                'Cache-Control': 'public, max-age=86400, s-maxage=86400',
+                'Cache-Control': 'private, no-store',
             },
         });
     } catch (error) {

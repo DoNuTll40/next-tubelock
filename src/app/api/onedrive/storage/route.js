@@ -94,39 +94,6 @@ export async function GET(request) {
         const driveData = await driveRes.json();
         const foldersData = foldersRes.ok ? await foldersRes.json() : { value: [] };
 
-        async function getPosterUrlByPath(accessToken, targetUser, folderName) {
-            try {
-                const encodedUser = encodeURIComponent(targetUser);
-
-                // ตัด ?$select=... ออก ปล่อยให้คืนค่า metadata ครบชุด
-                const res = await fetch(
-                    `https://graph.microsoft.com/v1.0/users/${encodedUser}/drive/root:/streams/${folderName}/poster.jpg`,
-                    {
-                        headers: { Authorization: `Bearer ${accessToken}` },
-                    }
-                );
-
-                if (!res.ok) {
-                    console.warn(`[getPosterUrlByPath] status: ${res.status}`);
-                    return null;
-                }
-
-                const data = await res.json();
-
-                // ตรวจสอบทั้ง downloadUrl และ fallback ไปที่ content stream
-                return (
-                    data['@microsoft.graph.downloadUrl'] ||
-                    `https://graph.microsoft.com/v1.0/users/${encodedUser}/drive/items/${data.id}/content`
-                );
-            } catch (err) {
-                console.error('[getPosterUrlByPath] error:', err);
-                return null;
-            }
-        }
-
-        // ใช้งานโดยส่งชื่อโฟลเดอร์ได้เลย
-        const posterUrl = await getPosterUrlByPath(accessToken, targetUser, "stream_vid_839");
-
         // 4. คำนวณความจุและขนาด
         const quota = driveData.quota || {};
         const bytesToGB = (bytes) => (bytes ? (bytes / 1024 ** 3).toFixed(2) : '0.00');

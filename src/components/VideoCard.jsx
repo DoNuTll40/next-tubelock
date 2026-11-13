@@ -12,12 +12,15 @@ import {
   ListPlus,
   Bookmark,
   Share2,
-  ShieldAlert
+  LockKeyhole
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo } from '@/lib/videoUtils';
+import { formatResolutionBadge, encodeVideoSlug, isMatureVideo, getVideoResumeTime } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { prewarmVideoSourceClient } from '@/lib/playbackResolver';
+import { usePosterReveal } from '@/lib/usePosterReveal';
+import { usePosterPreference } from '@/lib/usePosterPreference';
+import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
 const preWarmedIds = new Set();
@@ -39,33 +42,43 @@ export default function VideoCard({
   const hoverTimerRef = useRef(null);
 
   // 18+ / Mature Content Filter preference (Global settings + per-card reveal)
-  const [allow18Plus, setAllow18Plus] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      return localStorage.getItem('tubelock_allow_18plus') === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [isTemporarilyRevealed, setIsTemporarilyRevealed] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const handle18PlusUpdate = () => {
-      try {
-        setAllow18Plus(localStorage.getItem('tubelock_allow_18plus') === '1');
-      } catch (_) { }
-    };
-    window.addEventListener('tubelock_18plus_changed', handle18PlusUpdate);
-    window.addEventListener('storage', handle18PlusUpdate);
-    return () => {
-      window.removeEventListener('tubelock_18plus_changed', handle18PlusUpdate);
-      window.removeEventListener('storage', handle18PlusUpdate);
-    };
-  }, []);
-
   const isMature = isMatureVideo(video);
-  const shouldBlur = isMature && !allow18Plus && !isTemporarilyRevealed;
+  const allow18Plus = usePosterPreference(isMature);
+  const videoId = video.id;
+  const { poster: currentPoster, revealPoster } = usePosterReveal(isMature ? videoId : null, !allow18Plus);
+  const posterReady = currentPoster?.status === 'ready';
+  const showRestriction = isMature && !allow18Plus && !posterReady;
+
+  const renderRestriction = (small = false) => showRestriction && (
+    <button
+      type="button"
+      onClick={() => void revealPoster(currentPoster?.status === 'failed')}
+      onMouseDown={(event) => event.stopPropagation()}
+      onTouchStart={(event) => event.stopPropagation()}
+      disabled={currentPoster?.status === 'loading'}
+      aria-busy={currentPoster?.status === 'loading'}
+      className={`absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 bg-[url('/images/restricted-poster.svg')] bg-cover bg-center p-2 text-white focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-[#FF7A00] ${small ? 'text-[11px]' : 'text-sm'} disabled:cursor-wait cursor-pointer group/reveal`}
+    >
+      <span className={`flex items-center gap-1.5 font-semibold ${small ? '' : 'mb-1'}`}>
+        <LockKeyhole aria-hidden="true" className="size-3.5 text-[#FF9A40]" />
+        เนื้อหาจำกัดอายุ 18+
+      </span>
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A00]/35 bg-[#21160f] px-3 py-1 text-[11px] font-medium transition-colors group-hover/reveal:bg-[#38200f]" aria-live="polite">
+        {currentPoster?.status === 'loading' ? (
+          <><Loader2 aria-hidden="true" className="size-3 animate-spin" />กำลังโหลดภาพปก</>
+        ) : currentPoster?.status === 'failed' ? 'ลองโหลดภาพปกอีกครั้ง' : 'แสดงภาพปก'}
+      </span>
+    </button>
+  );
+
+  const renderCardLink = () => (
+    <Link
+      href={watchUrl}
+      replace={replace}
+      aria-label={video.title}
+      className="absolute inset-0 z-10 rounded-[inherit] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF7A00]"
+    />
+  );
 
   // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ และเก็บใน Client Memory Cache
   // รองรับทั้ง hover (80ms debounce) และ mousedown/touchstart (0ms ทันทีที่แตะ/คลิก)
@@ -117,53 +130,26 @@ export default function VideoCard({
 
   const fileSizeMB = (Number(video.file_size_bytes || 0) / (1024 * 1024)).toFixed(1);
   const resBadge = formatResolutionBadge(video.resolution);
-  const effectiveThumbnail = video.thumbnail_url || (video.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
+  const effectiveThumbnail = isMature
+    ? (allow18Plus ? `/api/videos/${videoId}/poster` : posterReady ? currentPoster.url : null)
+    : video.thumbnail_url || (video.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
   const is4K = resBadge === '4K';
   const is2K = resBadge === '2K';
 
-  // Music category videos never save progress and always restart from 00:00
-  const isMusic = isMusicVideo(video);
-
-  const [localWatched, setLocalWatched] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      return localStorage.getItem(`tubelock_watched_${video?.id}`) === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  // Watch History Progress Bar calculation (?t=... & orange bar at bottom of thumbnail)
-  const [localPos, setLocalPos] = useState(() => {
-    if (typeof window === 'undefined' || isMusic) return 0;
-    try {
-      const saved = localStorage.getItem(`tubelock_pos_${video?.id}`);
-      return saved ? parseInt(saved, 10) : 0;
-    } catch {
-      return 0;
-    }
-  });
+  const { isMusic, pos, progressPct } = useVideoWatchProgress(video);
 
   useEffect(() => {
-    if (isMusic && video?.id && typeof window !== 'undefined') {
+    if (isMusic && video?.id) {
       try {
         localStorage.removeItem(`tubelock_pos_${video.id}`);
       } catch (_) { }
     }
   }, [isMusic, video?.id]);
 
-  const hasWatched = Boolean(video?.has_watched || localWatched);
-  const pos = isMusic ? 0 : (Number(video?.last_position_seconds) || localPos || 0);
-  const dur = Number(video?.duration) || 0;
-
-  // เพลง: ถ้าเคยดูแล้วให้เส้นเต็ม 100% เลย ไม่ต้องระบุเวลาดูเหมือนคลิปอื่นๆ
-  const progressPct = isMusic
-    ? (hasWatched ? 100 : 0)
-    : (dur > 0 && pos > 0 ? Math.min((pos / dur) * 100, 100) : 0);
-
   const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
   const videoSlug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
-  const watchUrl = videoSlug ? `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}` : '/';
+  const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, video.duration);
+  const watchUrl = videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/';
 
   // สกัดสีเด่นเมื่อภาพ Thumbnail โหลดเสร็จ (สไตล์ YouTube Themed Color)
   const handleImageLoad = (e) => {
@@ -198,21 +184,20 @@ export default function VideoCard({
         onFocus={handlePreWarm}
         style={cardHoverStyle}
       >
+        {renderCardLink()}
         {/* Thumbnail ฝั่งซ้าย */}
-        <Link
-          href={watchUrl}
-          replace={replace}
-          className="relative isolate aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
+        <div
+          className={`relative isolate aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${showRestriction ? 'z-20' : ''}`}
         >
           {effectiveThumbnail && !imgError ? (
             <img
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
-              crossOrigin="anonymous"
+              crossOrigin={isMature ? undefined : "anonymous"}
               onError={() => setImgError(true)}
-              onLoad={handleImageLoad}
-              className={`w-full h-full object-cover transition-all duration-300 ${shouldBlur ? 'blur-2xl scale-125 brightness-50' : ''}`}
+              onLoad={isMature ? undefined : handleImageLoad}
+              className="w-full h-full object-cover transition-all duration-300"
               loading="lazy"
             />
           ) : (
@@ -221,33 +206,7 @@ export default function VideoCard({
             </div>
           )}
 
-          {/* 18+ Warning Overlay (Half) */}
-          {shouldBlur && (
-            <div
-              className="absolute inset-0 z-15 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md p-2 text-center select-none"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setIsTemporarilyRevealed(true);
-              }}
-            >
-              <div className="flex items-center gap-1 text-rose-500 font-bold text-xs mb-1">
-                <ShieldAlert className="w-4 h-4 shrink-0" />
-                <span>18+ ผู้ใหญ่</span>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setIsTemporarilyRevealed(true);
-                }}
-                className="px-2.5 py-0.5 rounded-full bg-white/20 hover:bg-white/30 text-white text-[10px] font-medium transition border border-white/20 cursor-pointer backdrop-blur-sm"
-              >
-                แตะเพื่อดูภาพ
-              </button>
-            </div>
-          )}
+          {renderRestriction(true)}
 
           {video.duration > 0 && (
             <div className="absolute bottom-1.5 right-1.5 z-10 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded font-mono">
@@ -257,26 +216,24 @@ export default function VideoCard({
 
           {/* YouTube Watch Progress Bar */}
           {progressPct > 0 && (
-            <div className="absolute left-0 right-0 bottom-0 z-20 h-1 bg-black/40 overflow-hidden">
+            <div className="absolute left-0 right-0 bottom-0 z-30 h-1 bg-black/40 overflow-hidden pointer-events-none">
               <div
                 className="h-full bg-[#FF7A00]"
-                style={{ width: `${progressPct}%` }}
+                style={{ width: `${progressPct}%`}}
               />
             </div>
           )}
-        </Link>
+        </div>
 
         {/* คอลัมน์ข้อมูลฝั่งขวา: relative เพื่อใช้วางปุ่มมุมล่างขวา */}
         <div className="flex-1 min-w-0 pr-8 py-0.5 flex flex-col justify-start relative">
           {/* 1. Title */}
-          <Link href={watchUrl} replace={replace}>
-            <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[15px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
-              {video.title}
-            </h4>
-          </Link>
+          <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[15px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
+            {video.title}
+          </h4>
 
           {/* 2. Channel info (อยู่ติดกับ Title) */}
-          <div className="flex items-center gap-1.5 mt-1">
+          <div className="relative z-20 flex items-center gap-1.5 mt-1 cursor-default">
             {video.author_picture && (
               <img
                 src={video.author_picture}
@@ -285,7 +242,7 @@ export default function VideoCard({
                 referrerPolicy="no-referrer"
               />
             )}
-            <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors font-medium">
+            <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate font-medium">
               {video.author_name || 'DONUŤ'}
             </span>
           </div>
@@ -341,20 +298,19 @@ export default function VideoCard({
         onFocus={handlePreWarm}
         style={cardHoverStyle}
       >
-        <Link
-          href={watchUrl}
-          replace={replace}
-          className="relative isolate aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity"
+        {renderCardLink()}
+        <div
+          className={`relative isolate aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${showRestriction ? 'z-20' : ''}`}
         >
           {effectiveThumbnail && !imgError ? (
             <img
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
-              crossOrigin="anonymous"
+              crossOrigin={isMature ? undefined : "anonymous"}
               onError={() => setImgError(true)}
-              onLoad={handleImageLoad}
-              className={`w-full h-full object-cover group-hover:scale-105 transition-all duration-300 ${shouldBlur ? 'blur-2xl scale-125 brightness-50' : ''}`}
+              onLoad={isMature ? undefined : handleImageLoad}
+              className="w-full h-full object-cover group-hover:scale-105 transition-all duration-300"
               loading="lazy"
             />
           ) : (
@@ -363,33 +319,7 @@ export default function VideoCard({
             </div>
           )}
 
-          {/* 18+ Warning Overlay (Compact) */}
-          {shouldBlur && (
-            <div
-              className="absolute inset-0 z-15 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md p-1.5 text-center select-none"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setIsTemporarilyRevealed(true);
-              }}
-            >
-              <div className="flex items-center gap-1 text-rose-500 font-bold text-[11px] mb-1">
-                <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                <span>18+</span>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setIsTemporarilyRevealed(true);
-                }}
-                className="px-2 py-0.5 rounded-full bg-white/20 hover:bg-white/30 text-white text-[9.5px] font-medium transition border border-white/20 cursor-pointer backdrop-blur-sm"
-              >
-                ดูภาพปก
-              </button>
-            </div>
-          )}
+          {renderRestriction(true)}
 
           {video.duration > 0 && (
             <div className="absolute bottom-1 right-1 z-10 bg-black/80 text-white text-[11px] font-semibold px-1 py-0.2 rounded font-mono">
@@ -399,22 +329,20 @@ export default function VideoCard({
 
           {/* YouTube Watch Progress Bar */}
           {progressPct > 0 && (
-            <div className="absolute left-0 right-0 bottom-0 z-20 h-1 bg-black/40 overflow-hidden">
+            <div className="absolute left-0 right-0 bottom-0 z-30 h-1 bg-black/40 overflow-hidden pointer-events-none">
               <div
                 className="h-full bg-[#FF7A00]"
-                style={{ width: `${progressPct}%` }}
+                style={{ width: `${progressPct}%`}}
               />
             </div>
           )}
-        </Link>
+        </div>
 
         <div className="flex-1 min-w-0 pr-1 flex flex-col justify-start">
-          <Link href={watchUrl} replace={replace}>
-            <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
-              {video.title}
-            </h4>
-          </Link>
-          <div className="flex items-center gap-1.5 mt-1">
+          <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
+            {video.title}
+          </h4>
+          <div className="relative z-20 flex items-center gap-1.5 mt-1 cursor-default">
             {video.author_picture && (
               <img
                 src={video.author_picture}
@@ -423,7 +351,7 @@ export default function VideoCard({
                 referrerPolicy="no-referrer"
               />
             )}
-            <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] transition-colors font-medium">
+            <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate font-medium">
               {video.author_name || 'DONUŤ'}
             </span>
           </div>
@@ -468,108 +396,76 @@ export default function VideoCard({
       onFocus={handlePreWarm}
       style={cardHoverStyle}
     >
-      <Link href={watchUrl} replace={replace} className="flex flex-col">
-        <div className="relative isolate aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs">
-          {effectiveThumbnail && !imgError ? (
-            <>
-              <img
-                src={effectiveThumbnail}
-                alt=""
-                aria-hidden="true"
-                crossOrigin="anonymous"
-                onError={() => setImgError(true)}
-                className={`absolute inset-0 w-full h-full object-cover select-none pointer-events-none ${shouldBlur ? 'blur-3xl scale-150 opacity-50' : 'blur-sm scale-110 opacity-30'}`}
-              />
-              <img
-                ref={imgRef}
-                src={effectiveThumbnail}
-                alt={video.title}
-                crossOrigin="anonymous"
-                onError={() => setImgError(true)}
-                onLoad={handleImageLoad}
-                className={`relative z-10 w-full h-full object-contain drop-shadow-sm transition-all duration-300 ${shouldBlur ? 'blur-2xl scale-125 brightness-50' : ''}`}
-                loading="lazy"
-              />
-            </>
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-[#151413]">
-              <Play className="w-8 h-8 text-[#C4BEB4] stroke-[1.5]" />
-            </div>
-          )}
+      {renderCardLink()}
+      <div className={`relative isolate aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs ${showRestriction ? 'z-20' : ''}`}>
+        {effectiveThumbnail && !imgError ? (
+          <>
+            <img
+              src={effectiveThumbnail}
+              alt=""
+              aria-hidden="true"
+              crossOrigin={isMature ? undefined : "anonymous"}
+              onError={() => setImgError(true)}
+              className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none blur-sm scale-110 opacity-30"
+            />
+            <img
+              ref={imgRef}
+              src={effectiveThumbnail}
+              alt={video.title}
+              crossOrigin={isMature ? undefined : "anonymous"}
+              onError={() => setImgError(true)}
+              onLoad={isMature ? undefined : handleImageLoad}
+              className="relative z-10 w-full h-full object-contain drop-shadow-sm transition-all duration-300"
+              loading="lazy"
+            />
+          </>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-[#151413]">
+            <Play className="w-8 h-8 text-[#C4BEB4] stroke-[1.5]" />
+          </div>
+        )}
 
-          {/* 18+ Mature Warning Overlay (Grid) */}
-          {shouldBlur && (
-            <div
-              className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/65 backdrop-blur-md p-3 text-center select-none"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setIsTemporarilyRevealed(true);
-              }}
-            >
-              <div className="w-9 h-9 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-500 mb-2 shadow-lg animate-pulse">
-                <ShieldAlert className="w-5 h-5" />
-              </div>
-              <span className="text-white text-xs sm:text-sm font-bold tracking-wide">
-                🔞 18+ เนื้อหาสำหรับผู้ใหญ่
-              </span>
-              <span className="text-zinc-300 text-[10px] sm:text-[11px] mt-0.5 line-clamp-1">
-                ตรวจพบเนื้อหาเฉพาะผู้ใหญ่ (Restricted)
-              </span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setIsTemporarilyRevealed(true);
-                }}
-                className="mt-2.5 px-3 py-1 rounded-full bg-white/20 hover:bg-white/30 text-white text-[11px] font-semibold transition active:scale-95 border border-white/25 cursor-pointer backdrop-blur-sm shadow-sm"
-              >
-                แตะเพื่อแสดงภาพปก
-              </button>
-            </div>
-          )}
+        {renderRestriction()}
 
-          {/* Badges */}
-          {/* <div className="absolute top-2.5 left-2.5 z-10 flex gap-1 items-center">
-            <span
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border backdrop-blur-md uppercase tracking-wide ${is4K
-                ? 'bg-[#FF7A00] text-white border-[#FF7A00] shadow-xs'
-                : is2K
-                  ? 'bg-amber-500/90 text-white border-amber-400/50'
-                  : 'bg-black/75 text-white border-white/10 font-semibold'
-                }`}
-            >
-              {resBadge}
+        {/* Badges */}
+        {/* <div className="absolute top-2.5 left-2.5 z-10 flex gap-1 items-center">
+          <span
+            className={`text-[10px] font-bold px-2 py-0.5 rounded-md border backdrop-blur-md uppercase tracking-wide ${is4K
+              ? 'bg-[#FF7A00] text-white border-[#FF7A00] shadow-xs'
+              : is2K
+                ? 'bg-amber-500/90 text-white border-amber-400/50'
+                : 'bg-black/75 text-white border-white/10 font-semibold'
+              }`}
+          >
+            {resBadge}
+          </span>
+          {Number(video.fps) > 0 && (
+            <span className="bg-black/75 backdrop-blur-md text-zinc-200 text-[10px] font-medium px-1.5 py-0.5 rounded-md border border-white/10 font-mono">
+              {Number(video.fps).toFixed(0)} fps
             </span>
-            {Number(video.fps) > 0 && (
-              <span className="bg-black/75 backdrop-blur-md text-zinc-200 text-[10px] font-medium px-1.5 py-0.5 rounded-md border border-white/10 font-mono">
-                {Number(video.fps).toFixed(0)} fps
-              </span>
-            )}
-          </div> */}
-
-          {video.duration > 0 && (
-            <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/35 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 font-mono">
-              {/* <Clock className="w-3 h-3 stroke-[2]" /> */}
-              {formatDuration(video.duration)}
-            </div>
           )}
+        </div> */}
 
-          {/* YouTube Watch Progress Bar */}
-          {progressPct > 0 && (
-            <div className="absolute left-0 right-0 bottom-0 z-20 h-1 bg-black/40 overflow-hidden">
-              <div
-                className="h-full bg-[#FF7A00]"
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-          )}
-        </div>
-      </Link>
+        {video.duration > 0 && (
+          <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/35 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 font-mono">
+            {/* <Clock className="w-3 h-3 stroke-[2]" /> */}
+            {formatDuration(video.duration)}
+          </div>
+        )}
+
+        {/* YouTube Watch Progress Bar */}
+        {progressPct > 0 && (
+          <div className="absolute left-0 right-0 bottom-0 z-30 h-1 bg-black/40 overflow-hidden pointer-events-none">
+            <div
+              className="h-full bg-[#FF7A00]"
+              style={{ width: `${progressPct}%`}}
+            />
+          </div>
+        )}
+      </div>
 
       <div className="flex items-start gap-3 pt-3 px-0.5">
-        <div className="shrink-0 mt-0.5">
+        <div className="relative z-20 shrink-0 mt-0.5 cursor-default">
           {video.author_picture ? (
             <img
               src={video.author_picture}
@@ -587,14 +483,12 @@ export default function VideoCard({
         </div>
 
         <div className="flex-1 min-w-0 pr-1">
-          <Link href={watchUrl} replace={replace}>
-            <h3 className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] line-clamp-2 leading-snug transition-colors">
-              {video.title}
-            </h3>
-          </Link>
+          <h3 className="text-sm font-bold text-[#212529] dark:text-[#F1F1F1] line-clamp-2 leading-snug transition-colors">
+            {video.title}
+          </h3>
 
           <div className="flex flex-col text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-normal">
-            <span className="truncate hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-colors font-medium">
+            <span className="relative z-20 truncate font-medium cursor-default">
               {video.author_name || 'DONUŤ'}
             </span>
             <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
@@ -660,7 +554,7 @@ function VideoMenu({
           e.stopPropagation();
           setShowMenu(!showMenu);
         }}
-        className={`p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-all cursor-pointer ${showMenu ? 'opacity-100 bg-black/10 dark:bg-white/10' : 'opacity-0 group-hover:opacity-100'
+        className={`relative z-20 p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-[#F5F2EB] dark:hover:bg-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-all cursor-pointer ${showMenu ? 'opacity-100 bg-black/10 dark:bg-white/10' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
           }`}
         title="ตัวเลือกเพิ่มเติม"
       >
@@ -683,42 +577,42 @@ function VideoMenu({
           {/* ------------------------------------------------------------- */}
           {isHalf ? (
             <div
-              className="absolute right-0 bottom-full mb-2 z-50 w-64 bg-[#282828] text-[#F1F1F1] rounded-2xl shadow-2xl border border-white/10 py-2 flex flex-col text-[14px] backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 cursor-default select-none"
+              className="absolute right-0 bottom-full mb-2 z-50 w-64 bg-white text-[#212529] dark:bg-[#282828] dark:text-[#F1F1F1] rounded-2xl shadow-2xl border border-[#EFECE6] dark:border-white/10 py-2 flex flex-col text-[14px] backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 cursor-default select-none"
               onClick={(e) => e.stopPropagation()}
             >
               <Link
                 href={`/watch/${slug}`}
-                className="w-full px-4 py-2.5 hover:bg-white/10 flex items-center gap-3.5 transition-colors"
+                className="w-full px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors"
                 onClick={() => setShowMenu(false)}
               >
-                <Play className="w-5 h-5 text-zinc-300 stroke-[1.8]" />
+                <Play className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
                 <span>เล่นวิดีโอ</span>
               </Link>
 
               <button
                 type="button"
-                className="w-full text-left px-4 py-2.5 hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
+                className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
                 onClick={() => setShowMenu(false)}
               >
-                <ListPlus className="w-5 h-5 text-zinc-300 stroke-[1.8]" />
+                <ListPlus className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
                 <span>เพิ่มลงในคิว</span>
               </button>
 
               <button
                 type="button"
-                className="w-full text-left px-4 py-2.5 hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
+                className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
                 onClick={() => setShowMenu(false)}
               >
-                <Clock className="w-5 h-5 text-zinc-300 stroke-[1.8]" />
+                <Clock className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
                 <span>บันทึกไปยังดูภายหลัง</span>
               </button>
 
               <button
                 type="button"
-                className="w-full text-left px-4 py-2.5 hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
+                className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
                 onClick={() => setShowMenu(false)}
               >
-                <Bookmark className="w-5 h-5 text-zinc-300 stroke-[1.8]" />
+                <Bookmark className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
                 <span>บันทึกไปยังเพลย์ลิสต์</span>
               </button>
 
@@ -728,24 +622,24 @@ function VideoMenu({
                   navigator.clipboard.writeText(`${window.location.origin}/watch/${slug}`);
                   setShowMenu(false);
                 }}
-                className="w-full text-left px-4 py-2.5 hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
+                className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
               >
-                <Share2 className="w-5 h-5 text-zinc-300 stroke-[1.8]" />
+                <Share2 className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
                 <span>แชร์ / คัดลอกลิงก์</span>
               </button>
 
               {canDelete && (
                 <>
-                  <div className="h-px bg-white/10 my-1.5" />
+                  <div className="h-px bg-[#EFECE6] dark:bg-white/10 my-1.5" />
                   <button
                     type="button"
                     onClick={() => {
                       setShowMenu(false);
                       onOpenDeleteModal();
                     }}
-                    className="w-full text-left px-4 py-2.5 hover:bg-rose-500/15 text-rose-400 flex items-center gap-3.5 transition-colors cursor-pointer"
+                    className="w-full text-left px-4 py-2.5 hover:bg-rose-50 dark:hover:bg-rose-500/15 text-rose-700 dark:text-rose-400 flex items-center gap-3.5 transition-colors cursor-pointer"
                   >
-                    <Trash2 className="w-5 h-5 text-rose-400 stroke-[1.8]" />
+                    <Trash2 className="w-5 h-5 text-rose-700 dark:text-rose-400 stroke-[1.8]" />
                     <span>ลบวิดีโอ</span>
                   </button>
                 </>
@@ -756,12 +650,12 @@ function VideoMenu({
             /* 2. เมนู COMPACT / GRID (เมนูกะทัดรัดแบบเดิม)                     */
             /* ------------------------------------------------------------- */
             <div
-              className="absolute right-0 top-full mt-1 z-50 w-40 bg-[#1c1c1c] text-[#F1F1F1] rounded-xl border border-white/10 shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-100 cursor-default select-none"
+              className="absolute right-0 top-full mt-1 z-50 w-40 bg-white text-[#212529] dark:bg-[#1c1c1c] dark:text-[#F1F1F1] rounded-xl border border-[#EFECE6] dark:border-white/10 shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-100 cursor-default select-none"
               onClick={(e) => e.stopPropagation()}
             >
               <Link
                 href={`/watch/${slug}`}
-                className="w-full px-2.5 py-2 rounded-lg hover:bg-white/10 flex items-center gap-2 text-zinc-200 transition-colors"
+                className="w-full px-2.5 py-2 rounded-lg hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-2 text-[#212529] dark:text-zinc-200 transition-colors"
                 onClick={() => setShowMenu(false)}
               >
                 <Play className="w-3.5 h-3.5 text-[#FF7A00]" />
@@ -774,22 +668,22 @@ function VideoMenu({
                   navigator.clipboard.writeText(`${window.location.origin}/watch/${slug}`);
                   setShowMenu(false);
                 }}
-                className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-white/10 flex items-center gap-2 text-zinc-300 transition-colors cursor-pointer"
+                className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-2 text-[#606060] dark:text-zinc-300 transition-colors cursor-pointer"
               >
-                <Copy className="w-3.5 h-3.5 text-zinc-400" />
+                <Copy className="w-3.5 h-3.5 text-[#77716A] dark:text-zinc-400" />
                 <span>คัดลอกลิงก์</span>
               </button>
 
               {canDelete && (
                 <>
-                  <div className="h-px bg-white/10 my-0.5" />
+                  <div className="h-px bg-[#EFECE6] dark:bg-white/10 my-0.5" />
                   <button
                     type="button"
                     onClick={() => {
                       setShowMenu(false);
                       onOpenDeleteModal();
                     }}
-                    className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-rose-950/40 text-rose-400 flex items-center gap-2 transition-colors cursor-pointer"
+                    className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-700 dark:text-rose-400 flex items-center gap-2 transition-colors cursor-pointer"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-rose-500" />
                     <span>ลบวิดีโอ</span>

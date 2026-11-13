@@ -16,6 +16,8 @@ async function ensureAiColumns(sql) {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS ai_suggested_rating VARCHAR(50) DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS rating_check_status VARCHAR(50) DEFAULT 'pending';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS vision_analysis JSONB;`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(50) DEFAULT 'waiting';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_options JSONB DEFAULT '[]'::jsonb;`;
   } catch (_) {}
 }
 
@@ -94,7 +96,7 @@ export async function POST(request) {
     await ensureAiColumns(sql);
 
     const rows = await sql`
-      SELECT id, title, raw_file_name, content_rating, audio_status, subtitle_status, sprite_status, rating_check_status, status, updated_at
+      SELECT id, title, raw_file_name, content_rating, audio_status, subtitle_status, sprite_status, rating_check_status, thumbnail_status, status, updated_at
       FROM videos
       WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
@@ -218,6 +220,61 @@ export async function POST(request) {
         videoId,
         workflowType,
         message: 'ส่งคำสั่งรัน HLS Transcoder ไปยัง GitHub Actions เรียบร้อยแล้ว',
+      });
+    }
+
+    if (workflowType === 'thumbnails') {
+      if (isRecent && video.thumbnail_status === 'generating') {
+        return NextResponse.json({
+          success: true,
+          videoId,
+          workflowType,
+          thumbnailStatus: video.thumbnail_status,
+          alreadyRunning: true,
+          message: 'GitHub Action สกัดภาพปก 3 ช่วงกำลังทำงานอยู่แล้ว',
+        });
+      }
+
+      await sql`
+        UPDATE videos
+        SET thumbnail_status = 'generating',
+            updated_at = NOW()
+        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+      `;
+
+      try {
+        await triggerGitHubWorkflow('extract-thumbnails.yml', {
+          video_id: String(videoId),
+          raw_file_name: String(effectiveRawName),
+        });
+      } catch (wfErr) {
+        const isNotFound = /404|Not Found/i.test(wfErr.message || '');
+        await sql`
+          UPDATE videos
+          SET thumbnail_status = ${isNotFound ? 'waiting' : 'failed'},
+              updated_at = NOW()
+          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+        `;
+        return NextResponse.json(
+          {
+            success: false,
+            videoId,
+            workflowType,
+            workflowNotFound: isNotFound,
+            error: isNotFound
+              ? 'ยังไม่พบ workflow extract-thumbnails.yml บน GitHub (กรุณา commit & push ไฟล์ขึ้น branch main)'
+              : wfErr.message,
+          },
+          { status: isNotFound ? 200 : 502 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        videoId,
+        workflowType,
+        thumbnailStatus: 'generating',
+        message: 'ส่งคำสั่งให้ GitHub Actions หั่นภาพปก 3 ช่วงของวิดีโอแล้ว',
       });
     }
 

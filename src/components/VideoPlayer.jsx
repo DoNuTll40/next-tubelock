@@ -15,6 +15,7 @@ export default function VideoPlayer({
   src,
   poster,
   storyboard = null,
+  keepScrubPreviewOnLoad = false,
   title = '',
   channelName = 'TubeLock',
   onBack = null,
@@ -109,11 +110,6 @@ export default function VideoPlayer({
     isUserPausedRef.current = false;
     setShowPoster(true);
     const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
-    if (video.current) {
-      try {
-        video.current.currentTime = startSec;
-      } catch (_) { }
-    }
     setCurrentTime(startSec);
     if (progressBarRef.current) progressBarRef.current.style.width = '0%';
     if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = '0%';
@@ -496,6 +492,8 @@ export default function VideoPlayer({
   const scrubBadgeRef = useRef(null);
   const scrubThumbSdRef = useRef(null);
   const scrubThumbHdRef = useRef(null);
+  const scrubSheetImagesRef = useRef(new Map());
+  const pendingScrubFrameRef = useRef(null);
   const hdDwellTimerRef = useRef(null);
 
   // Unified YouTube 3-Zone Click / Double-Click Seeking & Context Menu
@@ -571,29 +569,6 @@ export default function VideoPlayer({
     }
   }, [defaultVolume, defaultSpeed, video]);
 
-  // Resume / initial seek synchronization (?t=seconds)
-  useEffect(() => {
-    if (targetInitialTime > 0 && !initialSeekDoneRef.current && video.current) {
-      const v = video.current;
-      if (v.readyState >= 1) {
-        initialSeekDoneRef.current = true;
-        try {
-          v.currentTime = targetInitialTime;
-          setCurrentTime(targetInitialTime);
-          const dur = v.duration || duration;
-          if (dur > 0) {
-            const pct = Math.min((targetInitialTime / dur) * 100, 100);
-            if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
-            if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
-            if (timeDisplayRef.current) {
-              timeDisplayRef.current.textContent = `${formatTime(targetInitialTime)} / ${formatTime(dur)}`;
-            }
-          }
-        } catch (_) { }
-      }
-    }
-  }, [targetInitialTime, duration, video]);
-
   // Direct DOM Buffer Progress Update (Zero React re-render overhead!)
   const updateBufferProgress = useCallback(() => {
     if (!video.current || !bufferBarRef.current) return;
@@ -613,6 +588,7 @@ export default function VideoPlayer({
 
   // ZERO-RE-RENDER Playback Progress via Direct DOM Updates!
   const handleNativeTimeUpdate = (e) => {
+    if (isSwitchingVideo) return;
     // Ultra-fast O(1) aspect ratio check: verifies real decoded frame aspect ratio
     const v = e.target;
     if (v && v.videoWidth > 0 && v.videoHeight > 0) {
@@ -825,7 +801,7 @@ export default function VideoPlayer({
   // Initialize HLS or Native Player
   useEffect(() => {
     const v = video.current;
-    if (!v || !src) return;
+    if (!v || !src || isSwitchingVideo) return;
 
     setHlsError(null);
     setIsBuffering(true);
@@ -1085,7 +1061,7 @@ export default function VideoPlayer({
         hlsInstanceRef.current = null;
       }
     };
-  }, [src, defaultAutoplay, resolution, video, showToast]);
+  }, [src, defaultAutoplay, resolution, video, showToast, isSwitchingVideo]);
 
   // Quality selector (100% Smooth switch: nextLevel only, no stream reload)
   const handleSelectQuality = (levelIdx) => {
@@ -1171,11 +1147,71 @@ export default function VideoPlayer({
   };
 
   // 1. วาง updateStoryboardThumbnail ไว้ก่อน (ข้างบน)
+  const loadScrubSheet = useCallback(function loadSheet(url, priority = 'high', retry = true) {
+    const sheets = scrubSheetImagesRef.current;
+    const existing = sheets.get(url);
+    if (existing) {
+      if (priority === 'high') existing.image.fetchPriority = priority;
+      return existing;
+    }
+
+    const image = new Image();
+    const sheet = { image, ready: false };
+    sheets.set(url, sheet);
+    image.fetchPriority = priority;
+    image.src = url;
+    image.decode().then(() => {
+      if (sheets !== scrubSheetImagesRef.current) return;
+      sheet.ready = true;
+      const pending = pendingScrubFrameRef.current;
+      if (pending?.url === url && scrubThumbSdRef.current) {
+        Object.assign(scrubThumbSdRef.current.style, pending.style);
+      }
+    }).catch(() => {
+      if (sheets !== scrubSheetImagesRef.current) return;
+      if (retry && pendingScrubFrameRef.current?.url === url) {
+        setTimeout(() => {
+          if (sheets !== scrubSheetImagesRef.current || pendingScrubFrameRef.current?.url !== url) return;
+          sheets.delete(url);
+          loadSheet(url, 'high', false);
+        }, 300);
+      } else if (priority === 'low') {
+        sheets.delete(url);
+      }
+    });
+    return sheet;
+  }, []);
+
+  useEffect(() => {
+    if (!keepScrubPreviewOnLoad) return;
+
+    const sdCues = storyboard?.cuesSD || storyboard?.cues || [];
+    const sdSheets = sdCues.length
+      ? sdCues.map(({ url }) => url)
+      : Object.entries(storyboard?.spriteMap || {})
+        .filter(([name]) => /^sprite_(?:sd_)?\d+\./i.test(name))
+        .map(([, url]) => url);
+    for (const url of [...new Set(sdSheets.filter((url) => /^https?:\/\//i.test(url)))].slice(0, 8)) {
+      loadScrubSheet(url, 'low');
+    }
+
+    const thumbnail = scrubThumbSdRef.current;
+    return () => {
+      scrubSheetImagesRef.current = new Map();
+      pendingScrubFrameRef.current = null;
+      if (thumbnail) {
+        thumbnail.style.backgroundImage = '';
+        thumbnail.style.opacity = '0';
+      }
+    };
+  }, [keepScrubPreviewOnLoad, loadScrubSheet, storyboard, videoId]);
+
   // Two-Tier YouTube-Style Sprite Sheet Thumbnail Lookup (Direct DOM)
   const updateStoryboardThumbnail = useCallback((targetSec) => {
     const elSd = scrubThumbSdRef.current;
     const elHd = scrubThumbHdRef.current;
     if (!elSd) return;
+    if (keepScrubPreviewOnLoad) pendingScrubFrameRef.current = null;
 
     const safeSec = Math.max(0, targetSec || 0);
     const cuesSD = storyboard?.cuesSD || storyboard?.cues || [];
@@ -1222,17 +1258,25 @@ export default function VideoPlayer({
 
       resolvedUrl = spriteMap[sheetKeySD] || spriteMap[sheetKeyStd] || spriteMap[sheetKeyHD]
         || spriteMap[sheetPadded] || spriteMap[String(sheetIndex)]
-        || `/streams/${videoId}/thumbnails/sprite_${sheetPadded}.jpg`;
+        || (keepScrubPreviewOnLoad ? null : `/streams/${videoId}/thumbnails/sprite_${sheetPadded}.jpg`);
     }
 
     if (resolvedUrl) {
       const posX = cols > 1 ? (col / (cols - 1)) * 100 : 0;
       const posY = rows > 1 ? (row / (rows - 1)) * 100 : 0;
 
-      elSd.style.backgroundImage = `url("${resolvedUrl}")`;
-      elSd.style.backgroundPosition = `${posX}% ${posY}%`;
-      elSd.style.backgroundSize = `${cols * 100}% ${rows * 100}%`;
-      elSd.style.opacity = '1';
+      const style = {
+        backgroundImage: `url("${resolvedUrl}")`,
+        backgroundPosition: `${posX}% ${posY}%`,
+        backgroundSize: `${cols * 100}% ${rows * 100}%`,
+        opacity: '1',
+      };
+      if (!keepScrubPreviewOnLoad) {
+        Object.assign(elSd.style, style);
+      } else if (/^https?:\/\//i.test(resolvedUrl)) {
+        pendingScrubFrameRef.current = { url: resolvedUrl, style };
+        if (loadScrubSheet(resolvedUrl).ready) Object.assign(elSd.style, style);
+      }
     }
 
     // Tier 2: Sharp HD Preview (Crossfades when hovering > 300ms)
@@ -1267,7 +1311,15 @@ export default function VideoPlayer({
         }
       }, 300);
     }
-  }, [storyboard, videoId]);
+  }, [storyboard, videoId, keepScrubPreviewOnLoad, loadScrubSheet]);
+
+  useEffect(() => {
+    if (!keepScrubPreviewOnLoad || !storyboard || (!isHoveringSeek && !isScrubbing)) return;
+    const previewPosition = isScrubbing
+      ? latestScrubTimeRef.current ?? lastHoverTimeRef.current
+      : lastHoverTimeRef.current;
+    updateStoryboardThumbnail(previewPosition);
+  }, [keepScrubPreviewOnLoad, storyboard, isHoveringSeek, isScrubbing, updateStoryboardThumbnail]);
 
   // 2. แล้วค่อยตามด้วย commitSeek (อยู่ข้างล่าง)
   // Fast Seek Commit (Direct currentTime assignment with instant DOM sync)
@@ -1933,6 +1985,7 @@ export default function VideoPlayer({
         disableRemotePlayback
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => {
+          if (isSwitchingVideo) return;
           setIsBuffering(false);
           setIsPlaying(true);
           setShowPoster(false);
@@ -1944,6 +1997,7 @@ export default function VideoPlayer({
         }}
         onPause={() => {
           const v = video.current;
+          if (isSwitchingVideo || !v || v.readyState < 1) return;
           const isAtEnd = v && (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current);
 
           if (isAtEnd) {
@@ -2037,7 +2091,8 @@ export default function VideoPlayer({
             }
           }
         }}
-        onEnded={() => {
+        onEnded={(event) => {
+          if (isSwitchingVideo || !event.currentTarget.ended) return;
           isEndedRef.current = true;
           setIsEnded(true);
           setIsPlaying(false);
@@ -2106,6 +2161,7 @@ export default function VideoPlayer({
           checkAndUpdateRatio();
         }}
         onLoadedMetadata={(e) => {
+          if (isSwitchingVideo) return;
           const { duration: dur } = e.target;
           checkAndUpdateRatio();
           if (dur) setDuration(dur);
@@ -2400,7 +2456,7 @@ export default function VideoPlayer({
         lastHoverTimeRef={lastHoverTimeRef}
         lastHoverPercentRef={lastHoverPercentRef}
         videoRatio={videoRatio}
-        poster={poster}
+        poster={keepScrubPreviewOnLoad ? null : poster}
         initialBufferPct={initialBufferPct}
         activeScrubPercent={activeScrubPercent}
         handlePointerDown={handlePointerDown}

@@ -24,6 +24,7 @@ export async function extractVideoMetadata(file) {
       resolution: 'Original / Auto',
       fps: 30,
       thumbnailDataUrl: null,
+      thumbnailOptions: [],
     };
   }
 
@@ -69,11 +70,12 @@ export async function extractVideoMetadata(file) {
         resolution: 'Original / Auto',
         fps: detectedFps,
         thumbnailDataUrl: null,
+        thumbnailOptions: [],
       }, video, blobUrl);
       return;
     }
 
-    // 3. Timeout Fallback: 2.5 seconds (never block mobile uploads)
+    // 3. Timeout Fallback: 3.5 seconds so 3-segment capture finishes cleanly
     const timeoutId = setTimeout(() => {
       safeResolve({
         duration: 0,
@@ -82,65 +84,80 @@ export async function extractVideoMetadata(file) {
         resolution: 'Original / Auto',
         fps: detectedFps,
         thumbnailDataUrl: null,
+        thumbnailOptions: [],
       }, video, blobUrl);
-    }, 2500);
+    }, 3500);
 
     video.onloadedmetadata = () => {
       const width = video.videoWidth || 0;
       const height = video.videoHeight || 0;
       const duration = video.duration || 0;
-      const resolution = (width && height) 
-        ? classifyResolution(width, height) 
+      const resolution = (width && height)
+        ? classifyResolution(width, height)
         : 'Original / Auto';
 
-      // Seek to capture thumbnail, with safety timeout for mobile where onseeked might not fire
-      let seekTimeout = setTimeout(() => {
+      const total = Math.max(1, duration || 1);
+      const targets = [
+        { id: 'seg_1', label: 'ช่วงต้น', timeSec: Math.min(Math.max(0.2, total * 0.15), Math.max(0.2, total - 0.3)) },
+        { id: 'seg_2', label: 'ช่วงกลาง', timeSec: Math.min(Math.max(0.4, total * 0.5), Math.max(0.4, total - 0.2)) },
+        { id: 'seg_3', label: 'ช่วงท้าย', timeSec: Math.min(Math.max(0.6, total * 0.85), Math.max(0.6, total - 0.1)) },
+      ];
+      const capturedOptions = [];
+      let stepIndex = 0;
+
+      const finishCapture = () => {
+        const preferred = capturedOptions[1] || capturedOptions[0] || null;
         safeResolve({
           duration,
           width,
           height,
           resolution,
           fps: detectedFps,
-          thumbnailDataUrl: null,
+          thumbnailDataUrl: preferred?.dataUrl || null,
+          thumbnailOptions: capturedOptions,
         }, video, blobUrl);
-      }, 700);
+      };
+
+      let seekTimeout = setTimeout(finishCapture, 2200);
 
       video.onseeked = () => {
-        clearTimeout(seekTimeout);
-        let thumbnailDataUrl = null;
         try {
           const canvas = document.createElement('canvas');
           canvas.width = Math.min(640, video.videoWidth || 640);
           canvas.height = Math.round(canvas.width * ((video.videoHeight || 360) / (video.videoWidth || 640)));
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          const currentTarget = targets[stepIndex];
+          capturedOptions.push({
+            id: currentTarget.id,
+            label: currentTarget.label,
+            timeSec: Math.round(currentTarget.timeSec),
+            dataUrl,
+          });
         } catch (e) {
           console.warn('Canvas thumbnail capture error:', e);
         }
 
-        safeResolve({
-          duration,
-          width,
-          height,
-          resolution,
-          fps: detectedFps,
-          thumbnailDataUrl,
-        }, video, blobUrl);
+        stepIndex += 1;
+        if (stepIndex < targets.length && !isResolved) {
+          try {
+            video.currentTime = targets[stepIndex].timeSec;
+          } catch (_) {
+            clearTimeout(seekTimeout);
+            finishCapture();
+          }
+        } else {
+          clearTimeout(seekTimeout);
+          finishCapture();
+        }
       };
 
       try {
-        video.currentTime = Math.min(1.0, duration > 2 ? 1.0 : 0.1);
+        video.currentTime = targets[0].timeSec;
       } catch (_) {
         clearTimeout(seekTimeout);
-        safeResolve({
-          duration,
-          width,
-          height,
-          resolution,
-          fps: detectedFps,
-          thumbnailDataUrl: null,
-        }, video, blobUrl);
+        finishCapture();
       }
     };
 
@@ -152,6 +169,7 @@ export async function extractVideoMetadata(file) {
         resolution: 'Original / Auto',
         fps: detectedFps,
         thumbnailDataUrl: null,
+        thumbnailOptions: [],
       }, video, blobUrl);
     };
 

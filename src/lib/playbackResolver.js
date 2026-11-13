@@ -343,8 +343,8 @@ export async function resolveClientPlaybackSource(sourceData) {
 const clientSourceCache = new Map();
 const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 นาที
 
-export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriority = false } = {}) {
-  const key = String(videoId);
+export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriority = false, showAdultPreviews = false } = {}) {
+  const key = showAdultPreviews ? `${videoId}:previews` : String(videoId);
   const now = Date.now();
 
   if (forceFresh) {
@@ -356,7 +356,10 @@ export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriorit
     }
   }
 
-  const url = `/api/videos/${videoId}/source${forceFresh ? '?fresh=1' : ''}`;
+  const query = new URLSearchParams();
+  if (forceFresh) query.set('fresh', '1');
+  if (showAdultPreviews) query.set('previews', '1');
+  const url = `/api/videos/${videoId}/source${query.size ? `?${query}` : ''}`;
   const promise = fetch(url, {
     method: 'GET',
     cache: 'no-store',

@@ -1,3 +1,4 @@
+import { protectVideoPoster } from '@/lib/videoUtils';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
@@ -107,7 +108,7 @@ export async function GET(request) {
     return NextResponse.json({
       success: true,
       history: history.map((item) => ({
-        ...item,
+        ...protectVideoPoster(item),
         last_position_seconds: isMusicVideo(item) ? 0 : Number(item.last_position_seconds || 0),
         duration: Number(item.duration || 0),
         views_count: Number(item.views_count || 0),

@@ -1,3 +1,5 @@
+import { POSTER_PREFERENCE } from '@/lib/posterPreference';
+import { protectVideoPoster } from '@/lib/videoUtils';
 import { notFound, redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { cache } from 'react';
@@ -223,7 +225,8 @@ export default async function WatchPage({ params, searchParams }) {
       relatedRows = [];
     }
 
-    const videoRows = [rawVideo];
+    const { source_cache, source_cache_expires_at, ...publicVideo } = rawVideo;
+    const videoRows = [protectVideoPoster(publicVideo)];
     const canonicalSlug = encodeVideoSlug(videoRows[0].id, videoRows[0].category) || String(videoRows[0].id);
 
     // If thumbnail is a heavy data URI, replace with lightweight /api/og endpoint to save ~200 KB HTML
@@ -247,7 +250,8 @@ export default async function WatchPage({ params, searchParams }) {
       }
     }
 
-    relatedVideos = relatedRows.map((item) => {
+    relatedVideos = relatedRows.map((row) => {
+      const item = protectVideoPoster(row);
       const isItemMusic = isMusicVideo(item);
       const hasWatched = Boolean(item.has_watched || (item.last_position_seconds !== null && item.last_position_seconds !== undefined));
       const itemSlug = encodeVideoSlug(item.id, item.category);
@@ -284,6 +288,7 @@ export default async function WatchPage({ params, searchParams }) {
   return (
     <WatchClient
       initialVideo={video}
+      initialShowAdultPosters={cookieStore.get(POSTER_PREFERENCE)?.value === '1'}
       initialRelated={relatedVideos}
       initialTime={resolvedTime}
     />

@@ -495,7 +495,39 @@ export function isMatureVideo(video) {
   );
 }
 
+export const RESTRICTED_POSTER = '/images/restricted-poster.svg';
 
+export function protectVideoPoster(video) {
+  if (!isMatureVideo(video)) return video;
+  const { sprite_preview_url, ...safeVideo } = video;
+  return { ...safeVideo, thumbnail_url: RESTRICTED_POSTER };
+}
 
+export function isPreviewImage(name) {
+  return /\.(?:jpe?g|png|webp|gif|avif|svg|bmp|ico|heic|heif)$/i.test(name || '');
+}
 
+export function encodeUploadId(id) {
+  return encodeVideoSlug(id, 'upload').replace(/^v_/, 'u_');
+}
 
+export function decodeUploadId(value) {
+  if (typeof value !== 'string') return null;
+  const legacy = /^u_([1-9]\d*)$/.exec(value);
+  const id = legacy ? Number(legacy[1]) : /^u_u[a-zA-Z0-9]{6}$/.test(value)
+    ? decodeVideoSlug(value.replace(/^u_/, 'v_'))
+    : null;
+  if (!id || id > 2147483647) return null;
+  return legacy || encodeUploadId(id) === value ? id : null;
+}
+
+export function getVideoResumeTime(position, duration) {
+  const saved = Number(position);
+  const length = Number(duration);
+  if (!Number.isFinite(saved) || saved <= 5) return 0;
+
+  // Playback considers the final half-second ended, and history stores whole seconds.
+  if (Number.isFinite(length) && length > 0 && length - saved <= 1.5) return 0;
+
+  return saved;
+}

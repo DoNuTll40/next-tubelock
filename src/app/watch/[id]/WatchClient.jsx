@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import VideoPlayer from '@/components/VideoPlayer';
 import VideoCard from '@/components/VideoCard';
+import { usePosterReveal } from '@/lib/usePosterReveal';
+import { usePosterPreference } from '@/lib/usePosterPreference';
 import AmbientLight from '@/components/player/AmbientLight';
 import DescriptionBox from '@/components/watch/DescriptionBox';
 import {
@@ -12,8 +14,8 @@ import {
   Film, Bookmark, UploadCloud,
   AlertCircle, ArrowLeft
 } from 'lucide-react';
-import { resolveClientPlaybackSource, fetchVideoSourceClient, prewarmVideoSourceClient } from '@/lib/playbackResolver';
-import { formatResolutionBadge, parseTimestamp, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
+import { resolveClientPlaybackSource, fetchVideoSourceClient, prewarmVideoSourceClient, resolveStoryboard } from '@/lib/playbackResolver';
+import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 
 // ============================================================================
 // 🎛️ [Video Player Desktop Height Settings]
@@ -21,14 +23,12 @@ import { formatResolutionBadge, parseTimestamp, isMusicVideo, encodeVideoSlug } 
 const DESKTOP_HEADER_OFFSET_PX = 105;
 const DESKTOP_PLAYER_MAX_HEIGHT = `calc(100vh - ${DESKTOP_HEADER_OFFSET_PX}px)`;
 
-export default function WatchClient({ initialVideo, initialRelated = [], initialTime = 0 }) {
+export default function WatchClient({ initialVideo, initialRelated = [], initialTime = 0, initialShowAdultPosters = false }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlT = searchParams?.get('t');
-  const isMusic = isMusicVideo(initialVideo);
-  const targetInitialTime = isMusic ? 0 : (urlT ? parseTimestamp(urlT) : (Number(initialTime) || 0));
-  const [currentVideoId, setCurrentVideoId] = useState(initialVideo?.id);
-  const id = currentVideoId || initialVideo?.id;
+  const [selection, setSelection] = useState(() => ({ id: initialVideo?.id, startTime: initialTime }));
+  const { id, startTime } = selection;
 
   // Handle browser Back / Forward buttons
   useEffect(() => {
@@ -50,6 +50,13 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
   // SSR Initialized State — Zero Waiting, Zero Mock Skeletons!
   const [video, setVideo] = useState(initialVideo);
+  const isMusic = isMusicVideo(video);
+  const matureVideo = isMatureVideo(video);
+  const showAdultPoster = usePosterPreference(matureVideo, initialShowAdultPosters);
+  const { poster: revealedPoster } = usePosterReveal(matureVideo ? video?.id : null, !showAdultPoster);
+  const watchPoster = matureVideo
+    ? (showAdultPoster ? `/api/videos/${video.id}/poster` : revealedPoster?.url || RESTRICTED_POSTER)
+    : video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
   const [relatedVideos, setRelatedVideos] = useState(initialRelated);
 
   const [playerConfig, setPlayerConfig] = useState(() => {
@@ -139,18 +146,18 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   // Update initial props if server props change (during soft navigation)
   useEffect(() => {
     if (initialVideo) {
-      setCurrentVideoId(initialVideo.id);
+      setSelection({ id: initialVideo.id, startTime: initialTime });
       setVideo(initialVideo);
       setAvatarError(false);
     }
     if (initialRelated && initialRelated.length > 0) {
       setRelatedVideos(initialRelated);
     }
-  }, [initialVideo, initialRelated]);
+  }, [initialVideo, initialRelated, initialTime]);
 
   // ⚡ YouTube In-Place Instant Video Switcher (Keeps DOM intact -> Fullscreen stays 100% active!)
-  const handleSelectVideo = (newVideo) => {
-    if (!newVideo || !newVideo.id || newVideo.id === 'undefined') return;
+  const handleSelectVideo = (newVideo, resumeTime = 0) => {
+    if (!newVideo || !newVideo.id || newVideo.id === 'undefined' || newVideo.id === id) return;
     const safeId = newVideo.id && newVideo.id !== 'undefined' ? newVideo.id : '';
     const videoSlug = encodeVideoSlug(safeId, newVideo.category) || (safeId ? String(safeId) : '');
     const newUrl = videoSlug ? `/watch/${videoSlug}` : '/';
@@ -160,7 +167,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
     }
 
     setIsSwitchingVideo(true);
-    setCurrentVideoId(newVideo.id);
+    setSelection({ id: newVideo.id, startTime: resumeTime });
     setVideo(newVideo);
     setRelatedVideos((prev) => prev.filter((item) => item.id !== newVideo.id));
   };
@@ -169,18 +176,33 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    const storyboardRequest = new AbortController();
 
     async function initStream() {
       try {
         setError(null);
+        setStoryboard(null);
         // เก็บ blob URLs เดิมไว้ revoke หลัง stream ใหม่พร้อม
         // ไม่เรียก setStreamUrl('') ทันที เพื่อป้องกัน VideoPlayer ถูก unmount จนทำให้หลุด Fullscreen
         const prevBlobUrls = [...activeBlobUrlsRef.current];
         activeBlobUrlsRef.current = [];
 
         // ⚡ Step: Fetch Stream Source from OneDrive (uses client in-memory/in-flight cache if pre-warmed!)
-        const sourceData = await fetchVideoSourceClient(id);
+        let sourceData = await fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster });
         if (cancelled) return;
+        const needsRestrictedStoryboard = !showAdultPoster && sourceData.type === 'hls' && isMatureVideo(sourceData.video);
+        if (needsRestrictedStoryboard) {
+          fetch(`/api/videos/${id}/storyboard`, { method: 'POST', signal: storyboardRequest.signal })
+            .then((response) => response.ok ? response.json() : null)
+            .then((data) => resolveStoryboard(data?.items?.map((item) => ({
+              ...item,
+              downloadUrl: new URL(item.downloadUrl, window.location.origin).href,
+            }))))
+            .then((preview) => {
+              if (!cancelled && preview) setStoryboard(preview);
+            })
+            .catch(() => {});
+        }
 
         if (sourceData.video) {
           setVideo((prev) => ({
@@ -200,8 +222,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           resolved = await resolveClientPlaybackSource(sourceData);
         } catch (resolveErr) {
           console.warn('[WatchPage] Token expired or fetch failed, auto-recovering with fresh tokens...', resolveErr);
-          const freshSourceData = await fetchVideoSourceClient(id, { forceFresh: true });
-          resolved = await resolveClientPlaybackSource(freshSourceData);
+          sourceData = await fetchVideoSourceClient(id, { forceFresh: true, showAdultPreviews: showAdultPoster });
+          resolved = await resolveClientPlaybackSource(sourceData);
         }
 
         if (cancelled) return;
@@ -219,6 +241,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         if (resolved.aspectRatio) {
           setDetectedRatio(resolved.aspectRatio);
         }
+        if (needsRestrictedStoryboard) return;
         if (resolved.storyboard) {
           setStoryboard(resolved.storyboard);
         } else if (resolved.storyboardPromise) {
@@ -244,12 +267,13 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
     return () => {
       cancelled = true;
+      storyboardRequest.abort();
       for (const u of activeBlobUrlsRef.current) {
         try { URL.revokeObjectURL(u); } catch (_) { }
       }
       activeBlobUrlsRef.current = [];
     };
-  }, [id]);
+  }, [id, showAdultPoster]);
 
   // เมื่อวิดีโอหลักเริ่มเล่นแล้ว ให้แอบอุ่นวิดีโอแนะนำ 2 อันดับแรกใน background
   useEffect(() => {
@@ -408,8 +432,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
             {/* YouTube-style Storyboard Ambient Mode Light */}
             <AmbientLight
               videoRef={videoRef}
-              storyboard={storyboard}
-              poster={video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null)}
+              storyboard={matureVideo && !showAdultPoster ? null : storyboard}
+              poster={watchPoster}
               enabled={ambientMode}
               aspectRatio={videoRatio}
               className="hidden sm:block"
@@ -419,8 +443,9 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
               {streamUrl ? (
                 <VideoPlayer
                   src={streamUrl}
-                  poster={video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null)}
+                  poster={watchPoster}
                   storyboard={storyboard}
+                  keepScrubPreviewOnLoad={matureVideo && !showAdultPoster}
                   channelName={video?.author_name || 'DONUŤ'}
                   title={video?.title}
                   onBack={() => router.push('/')}
@@ -441,7 +466,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   defaultFit={playerConfig?.default_fit ?? 'fit'}
                   seekStep={playerConfig?.seek_step ?? 10}
                   autoStats={playerConfig?.auto_stats ?? false}
-                  initialTime={targetInitialTime}
+                  initialTime={startTime}
                   isMusic={isMusic}
                   onRatioChange={(r) => setDetectedRatio(r)}
                   ambientMode={ambientMode}
@@ -466,9 +491,9 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   }}
                 >
                   {/* Background Poster / Thumbnail */}
-                  {video?.thumbnail_url && (
+                  {watchPoster && (
                     <img
-                      src={video.thumbnail_url}
+                      src={watchPoster}
                       alt={video?.title || 'Thumbnail'}
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"

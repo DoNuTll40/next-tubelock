@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
 import { neon } from '@neondatabase/serverless';
+import { isPreviewImage } from '@/lib/videoUtils';
 
 export async function proxy(request) {
   const url = request.nextUrl.clone();
   const { pathname } = url;
   const host = request.headers.get('host') || '';
+  const isReadRequest = request.method === 'GET' || request.method === 'HEAD';
+  const isPublicStreamImage = isReadRequest && pathname.startsWith('/streams/') && isPreviewImage(pathname);
 
   // ── เข้า /watch โดยไม่ระบุรหัสวิดีโอ หรือเป็น undefined/null → redirect ไปหน้าแรก / เสมอ ──
   if (
@@ -25,16 +28,15 @@ export async function proxy(request) {
 
   const isPublicPath =
     pathname === '/' ||
-    pathname.startsWith('/watch') ||
     pathname.startsWith('/results') ||
     pathname.startsWith('/api/search') ||
-    ((request.method === 'GET' || request.method === 'HEAD') &&
+    (isReadRequest &&
       (pathname === '/api/videos' ||
-        (/^\/api\/videos\/[^/]+(?:\/source)?$/.test(pathname) &&
+        (/^\/api\/videos\/[^/]+(?:\/poster)?$/.test(pathname) &&
           pathname !== '/api/videos/queue'))) ||
-    (request.method === 'POST' && /^\/api\/videos\/[^/]+\/view$/.test(pathname)) ||
+    (request.method === 'POST' && /^\/api\/videos\/[^/]+\/poster$/.test(pathname)) ||
     pathname.startsWith('/api/og') ||
-    pathname.startsWith('/streams') ||
+    isPublicStreamImage ||
     pathname.startsWith('/images') ||
     pathname.startsWith('/login') ||
     pathname === '/api/auth/logout' ||
@@ -56,9 +58,11 @@ export async function proxy(request) {
 
   // ไม่มี token + ไม่ใช่ public path → redirect /login
   if (!token && !isPublicPath) {
-    if (pathname.startsWith('/api/')) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    if (pathname.startsWith('/api/') || pathname.startsWith('/streams/')) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
     const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('from', pathname);
+    loginUrl.searchParams.set('from', pathname + url.search);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -76,11 +80,11 @@ export async function proxy(request) {
         return NextResponse.redirect(new URL('/', request.url));
       }
       if (!session && !isPublicPath) {
-        if (pathname.startsWith('/api/')) {
+        if (pathname.startsWith('/api/') || pathname.startsWith('/streams/')) {
           return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
         }
         const loginUrl = new URL('/login', request.url);
-        loginUrl.searchParams.set('from', pathname);
+        loginUrl.searchParams.set('from', pathname + url.search);
         const response = NextResponse.redirect(loginUrl);
         response.cookies.delete('tubelock_session');
         return response;

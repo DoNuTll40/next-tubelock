@@ -2,8 +2,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { Play, RotateCcw } from 'lucide-react';
-import { encodeVideoSlug } from '@/lib/videoUtils';
+import { Play, RotateCcw, Loader2, LockKeyhole } from 'lucide-react';
+import { encodeVideoSlug, getVideoResumeTime, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
+import { usePosterReveal } from '@/lib/usePosterReveal';
+import { usePosterPreference } from '@/lib/usePosterPreference';
+import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
 import { extractDominantColor } from '@/lib/colorExtractor';
 
 // Track pre-warmed videos in memory
@@ -149,15 +152,22 @@ export function getDynamicRecommendations(currentVideo, allVideos = [], count = 
  */
 function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = false, onSelectVideo = null }) {
   const [dominantColor, setDominantColor] = useState(null);
-  const [isHovered, setIsHovered] = useState(false);
   const imgRef = useRef(null);
 
   const videoSlug = encodeVideoSlug(v.id, v.category) || v.id;
-  const watchUrl = `/watch/${videoSlug}`;
   const durationStr = formatBadgeDuration(v.duration);
   const viewsStr = formatThaiViews(v.views_count);
   const timeAgoStr = formatThaiTimeAgo(v.created_at);
-  const thumbnail = v.thumbnail_url || (v.id ? `/streams/stream_vid_${v.id}/poster.jpg` : null);
+  const isMature = isMatureVideo(v);
+  const showAdultPoster = usePosterPreference(isMature);
+  const { poster, revealPoster } = usePosterReveal(isMature ? v.id : null, !showAdultPoster);
+  const showRestriction = isMature && !showAdultPoster && poster?.status !== 'ready';
+  const { isMusic, pos, progressPct } = useVideoWatchProgress(v);
+  const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, v.duration);
+  const watchUrl = `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}`;
+  const thumbnail = isMature
+    ? (showAdultPoster ? `/api/videos/${v.id}/poster` : poster?.url || RESTRICTED_POSTER)
+    : v.thumbnail_url || (v.id ? `/streams/stream_vid_${v.id}/poster.jpg` : null);
 
   const handleImageLoad = (e) => {
     const color = extractDominantColor(e.target);
@@ -165,11 +175,11 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
   };
 
   useEffect(() => {
-    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+    if (!isMature && imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
       const color = extractDominantColor(imgRef.current);
       if (color) setDominantColor(color);
     }
-  }, [thumbnail]);
+  }, [thumbnail, isMature]);
 
   const cardHoverStyle = dominantColor ? {
     '--hover-tint-dark': dominantColor.darkBg,
@@ -177,47 +187,78 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
   } : undefined;
 
   return (
-    <Link
-      href={watchUrl}
-      onClick={(e) => {
-        if (onSelectVideo) {
-          e.preventDefault();
-          onSelectVideo(v);
-        } else {
-          if (isFullscreen || (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement))) {
-            try {
-              sessionStorage.setItem('tubelock_keep_fullscreen', '1');
-            } catch (_) {}
-          }
-        }
-      }}
-      onMouseEnter={() => {
-        setIsHovered(true);
-        onPreWarm(v.id);
-      }}
-      onMouseLeave={() => setIsHovered(false)}
-      className={`group flex flex-col cursor-pointer ${isFullscreen ? 'p-2 sm:p-2.5 -m-2 sm:-m-2.5' : 'p-1.5 sm:p-1.5 -m-2 sm:-m-2.5'
+    <div
+      onMouseEnter={() => onPreWarm(v.id)}
+      className={`relative group flex flex-col cursor-pointer ${isFullscreen ? 'p-2 sm:p-2.5 -m-2 sm:-m-2.5' : 'p-1.5 sm:p-1.5 -m-2 sm:-m-2.5'
         } rounded-2xl yt-card-hover transition-all duration-200 ${isThirdOnMobile ? 'hidden md:flex' : 'flex'
         }`}
       style={cardHoverStyle}
     >
+      <Link
+        href={watchUrl}
+        onClick={(e) => {
+          if (onSelectVideo && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+            e.preventDefault();
+            onSelectVideo(v, resumeTime);
+          } else {
+            if (isFullscreen || (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement))) {
+              try {
+                sessionStorage.setItem('tubelock_keep_fullscreen', '1');
+              } catch (_) {}
+            }
+          }
+        }}
+        aria-label={v.title || 'เล่นวิดีโอ'}
+        className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-2 focus-visible:outline-[#FF7A00]"
+      />
       {/* Thumbnail Container */}
       <div
-        className="relative w-full aspect-video rounded-xl overflow-hidden bg-zinc-900 transition-all duration-300 shadow-2xl"
+        className={`relative w-full aspect-video rounded-xl overflow-hidden bg-zinc-900 transition-all duration-300 shadow-2xl ${showRestriction ? 'z-20' : ''}`}
       >
         {thumbnail ? (
           <img
             ref={imgRef}
             src={thumbnail}
             alt={v.title || 'Recommended video'}
-            crossOrigin="anonymous"
-            onLoad={handleImageLoad}
+            crossOrigin={isMature ? undefined : "anonymous"}
+            onLoad={isMature ? undefined : handleImageLoad}
             className="w-full h-full object-cover transition-transform duration-300"
             loading="lazy"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-zinc-800 text-zinc-500">
             <Play className={isFullscreen ? "w-10 h-10 fill-zinc-600 opacity-60" : "w-8 h-8 fill-zinc-600 opacity-60"} />
+          </div>
+        )}
+
+        {showRestriction && (
+          <button
+            type="button"
+            disabled={poster?.status === 'loading'}
+            aria-busy={poster?.status === 'loading'}
+            onClick={() => void revealPoster(poster?.status === 'failed')}
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 text-white cursor-pointer disabled:cursor-wait focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-[#FF7A00]"
+          >
+            <span className="flex items-center gap-1 text-xs font-semibold">
+              <LockKeyhole aria-hidden="true" className="size-3.5 text-[#FF9A40]" />
+              เนื้อหาจำกัดอายุ 18+
+            </span>
+            <span aria-live="polite" className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A00]/35 bg-[#21160f] px-3 py-1 text-[11px] font-medium">
+              {poster?.status === 'loading' ? (
+                <><Loader2 aria-hidden="true" className="size-3 animate-spin" />กำลังโหลดภาพปก</>
+              ) : poster?.status === 'failed' ? 'ลองโหลดภาพปกอีกครั้ง' : 'แสดงภาพปก'}
+            </span>
+          </button>
+        )}
+
+        {progressPct > 0 && (
+          <div
+            role="progressbar"
+            aria-label="ความคืบหน้าการรับชม"
+            aria-valuenow={Math.round(progressPct)}
+            className="absolute inset-x-0 bottom-0 h-1 bg-black/40 pointer-events-none"
+          >
+            <div className="h-full bg-[#FF7A00]" style={{ width: `${progressPct}%` }} />
           </div>
         )}
 
@@ -272,7 +313,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
           )}
         </div>
       </div>
-    </Link>
+    </div>
   );
 }
 

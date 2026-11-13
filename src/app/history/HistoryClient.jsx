@@ -7,7 +7,7 @@ import {
   Search, Trash2, PauseCircle, PlayCircle,
   X, AlertTriangle, ArrowRight, Film
 } from 'lucide-react';
-import { formatResolutionBadge, isMusicVideo, encodeVideoSlug } from '@/lib/videoUtils';
+import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, getVideoResumeTime } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 
 // Helper: Group items by Date (YouTube Standard: วันนี้, เมื่อวานนี้, สัปดาห์นี้, เดือนนี้, ก่อนหน้านี้)
@@ -91,7 +91,8 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   const progressPct = isMusic ? 100 : (dur > 0 && pos > 0 ? Math.min((pos / dur) * 100, 100) : 0);
   const safeId = item?.video_id && item?.video_id !== 'undefined' ? item.video_id : (item?.id && item?.id !== 'undefined' ? item.id : '');
   const videoSlug = encodeVideoSlug(safeId, item?.category) || (safeId ? String(safeId) : '');
-  const watchUrl = videoSlug ? `/watch/${videoSlug}${!isMusic && pos > 5 ? `?t=${pos}` : ''}` : '/';
+  const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, dur);
+  const watchUrl = videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/';
 
   const handleImageLoad = (e) => {
     const color = extractDominantColor(e.target);
