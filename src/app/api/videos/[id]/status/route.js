@@ -28,17 +28,24 @@ export async function GET(request, context) {
         id, title, description, tags, category, status, transcode_progress, stage_detail,
         error_message, raw_file_name, master_playlist_path, onedrive_folder_id, duration,
         resolution, fps, codec, bitrate, thumbnail_url, file_size_bytes, created_at, updated_at,
-        extras.metadata - ARRAY['subtitle_srt', 'subtitle_vtt', 'subtitle_tracks', 'worker_logs'] AS metadata,
+        extras.metadata - ARRAY['subtitle_srt', 'subtitle_vtt', 'subtitle_tracks', 'worker_logs', 'thumbnail_options', 'vision_analysis', 'sprite_preview_url'] AS metadata,
         CASE WHEN revisions.subtitles <> ${query.get('subtitlesRevision') || ''}
           THEN jsonb_build_object('subtitle_srt', extras.metadata->'subtitle_srt',
             'subtitle_vtt', extras.metadata->'subtitle_vtt', 'subtitle_tracks', extras.metadata->'subtitle_tracks')
         END AS subtitles,
         CASE WHEN revisions.logs <> ${query.get('logsRevision') || ''}
           THEN extras.metadata->'worker_logs' END AS worker_logs,
-        revisions.subtitles AS subtitles_revision, revisions.logs AS logs_revision
+        CASE WHEN revisions.meta <> ${query.get('metaRevision') || ''}
+          THEN jsonb_build_object('thumbnail_options', extras.metadata->'thumbnail_options',
+            'vision_analysis', extras.metadata->'vision_analysis',
+            'sprite_preview_url', extras.metadata->'sprite_preview_url')
+        END AS meta_heavy,
+        revisions.subtitles AS subtitles_revision,
+        revisions.logs AS logs_revision,
+        revisions.meta AS meta_revision
       FROM videos v
       CROSS JOIN LATERAL (
-        SELECT to_jsonb(v) - ARRAY['source_cache', 'source_cache_expires_at'] AS row_data
+        SELECT to_jsonb(v) - ARRAY['source_cache', 'source_cache_br', 'source_cache_expires_at'] AS row_data
       ) d
       CROSS JOIN LATERAL (
         SELECT jsonb_object_agg(key, value) AS metadata
@@ -51,9 +58,13 @@ export async function GET(request, context) {
       ) m
       CROSS JOIN LATERAL (SELECT COALESCE(m.metadata, '{}'::jsonb) AS metadata) extras
       CROSS JOIN LATERAL (
-        SELECT md5(jsonb_build_array(extras.metadata->'subtitle_srt', extras.metadata->'subtitle_vtt',
-          extras.metadata->'subtitle_tracks')::text) AS subtitles,
-          md5(COALESCE(extras.metadata->'worker_logs', 'null'::jsonb)::text) AS logs
+        SELECT
+          md5(jsonb_build_array(extras.metadata->'subtitle_srt', extras.metadata->'subtitle_vtt',
+            extras.metadata->'subtitle_tracks')::text) AS subtitles,
+          md5(COALESCE(extras.metadata->'worker_logs', 'null'::jsonb)::text) AS logs,
+          md5(jsonb_build_array(extras.metadata->'thumbnail_options',
+            extras.metadata->'vision_analysis',
+            extras.metadata->'sprite_preview_url')::text) AS meta
       ) revisions
       WHERE id = ${id} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
@@ -67,7 +78,7 @@ export async function GET(request, context) {
     }
 
     const row = rows[0];
-    const video = { ...row, ...row.metadata, ...row.subtitles };
+    const video = { ...row, ...row.metadata, ...row.subtitles, ...row.meta_heavy };
 
     let rawUploaded;
     if (query.get('restore') === '1' &&
@@ -95,7 +106,11 @@ export async function GET(request, context) {
 
     return NextResponse.json({
       success: true,
-      revisions: { subtitles: row.subtitles_revision, logs: row.logs_revision },
+      revisions: {
+        subtitles: row.subtitles_revision,
+        logs: row.logs_revision,
+        meta: row.meta_revision,
+      },
       video: {
         id: video.id,
         title: video.title,
@@ -118,7 +133,11 @@ export async function GET(request, context) {
         bitrate: video.bitrate || 0,
         thumbnailUrl: video.thumbnail_url || '',
         thumbnailStatus: video.thumbnail_status || 'waiting',
-        thumbnailOptions: parseJsonSafe(video.thumbnail_options) || [],
+        ...(row.meta_heavy && {
+          thumbnailOptions: parseJsonSafe(video.thumbnail_options) || [],
+          visionAnalysis: parseJsonSafe(video.vision_analysis),
+          spritePreviewUrl: video.sprite_preview_url || '',
+        }),
         fileSizeBytes: video.file_size_bytes || 0,
         runnerSpecs: parseJsonSafe(video.runner_specs),
         workerLogs: query.get('logsRevision') === row.logs_revision
@@ -133,12 +152,10 @@ export async function GET(request, context) {
         }),
         subtitleModel: video.subtitle_model || '',
         spriteStatus: video.sprite_status || 'waiting',
-        spritePreviewUrl: video.sprite_preview_url || '',
         contentRating: video.content_rating || 'all',
         userSelectedRating: video.user_selected_rating || 'all',
         aiSuggestedRating: video.ai_suggested_rating || '',
         ratingCheckStatus: video.rating_check_status || 'pending',
-        visionAnalysis: parseJsonSafe(video.vision_analysis),
         createdAt: video.created_at,
         updatedAt: video.updated_at,
       },

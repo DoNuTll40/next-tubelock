@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
+import { decompressSourceCache } from '@/lib/videoSourceService';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -83,25 +84,37 @@ export async function GET(request) {
       const driveId = await getUserDriveId(token);
       const tDrive1 = performance.now();
 
-      // Test a sample item download URL from video 829 or latest video
+      // Test a sample item download URL from latest cached video
       const sampleVid = await sql`
-        SELECT id, title, (
-          SELECT jsonb_build_object('name', item->>'name', 'downloadUrl', item->>'downloadUrl')
-          FROM jsonb_array_elements(
-            CASE WHEN jsonb_typeof(source_cache->'items') = 'array'
-              THEN source_cache->'items' ELSE '[]'::jsonb END
-          ) AS items(item)
-          WHERE lower(item->>'name') LIKE '%.ts' OR lower(item->>'name') LIKE '%.m3u8'
-          LIMIT 1
-        ) AS chunk
-        FROM videos 
-        WHERE source_cache IS NOT NULL 
-        ORDER BY id DESC 
+        SELECT id, title,
+          (to_jsonb(v)->>'source_cache_br') AS source_cache_br,
+          (
+            SELECT jsonb_build_object('name', item->>'name', 'downloadUrl', item->>'downloadUrl')
+            FROM jsonb_array_elements(
+              CASE WHEN jsonb_typeof(source_cache->'items') = 'array'
+                THEN source_cache->'items' ELSE '[]'::jsonb END
+            ) AS items(item)
+            WHERE lower(item->>'name') LIKE '%.ts' OR lower(item->>'name') LIKE '%.m3u8'
+            LIMIT 1
+          ) AS chunk
+        FROM videos v
+        WHERE (to_jsonb(v)->>'source_cache_br') IS NOT NULL OR source_cache IS NOT NULL
+        ORDER BY id DESC
         LIMIT 1;
       `;
 
       let sampleChunk = null;
-      const chunk = sampleVid[0]?.chunk;
+      let chunk = sampleVid[0]?.chunk;
+      if (!chunk && sampleVid[0]?.source_cache_br) {
+        const parsed = decompressSourceCache(sampleVid[0].source_cache_br);
+        const found = parsed?.items?.find((i) => {
+          const n = String(i?.name || '').toLowerCase();
+          return n.endsWith('.ts') || n.endsWith('.m3u8');
+        });
+        if (found) {
+          chunk = { name: found.name, downloadUrl: found.downloadUrl };
+        }
+      }
       if (chunk) {
         sampleChunk = {
           videoId: sampleVid[0].id,
@@ -129,9 +142,14 @@ export async function GET(request) {
       const [{ total_videos, ready_videos, total_files }] = await sql`
         SELECT count(*) AS total_videos,
           count(*) FILTER (WHERE status = 'READY' OR status IS NULL) AS ready_videos,
-          COALESCE(sum(CASE WHEN jsonb_typeof(source_cache->'items') = 'array'
-            THEN jsonb_array_length(source_cache->'items') ELSE 0 END), 0) AS total_files
-        FROM videos;
+          COALESCE(sum(
+            COALESCE(
+              NULLIF((to_jsonb(v)->>'source_cache_items_count')::int, 0),
+              CASE WHEN jsonb_typeof(source_cache->'items') = 'array'
+                THEN jsonb_array_length(source_cache->'items') ELSE 0 END
+            )
+          ), 0) AS total_files
+        FROM videos v;
       `;
 
       results.tests.system = {

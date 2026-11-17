@@ -2,43 +2,14 @@ import { isMatureVideo, isPreviewImage, RESTRICTED_POSTER } from '@/lib/videoUti
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
+import { assetCache, isTempauthValid, sourceCache, wrapWithWorkerCache } from '@/lib/videoSourceService';
 
 export const dynamic = 'force-dynamic';
-
-// URL ของ Cloudflare Worker ที่สร้างไว้
-const CF_WORKER_URL = 'https://tubelock-cache.iinter731.workers.dev'; //[span_1](start_span)[span_1](end_span)
-
-const assetCache = globalThis.__tubelock_asset_cache || (globalThis.__tubelock_asset_cache = new Map());
-
-function isTempauthValid(url) {
-  if (!url || typeof url !== 'string') return false;
-  try {
-    const urlObj = new URL(url);
-    const tempauth = urlObj.searchParams.get('tempauth');
-    if (!tempauth) return true;
-    const parts = tempauth.split('.');
-    if (parts.length < 2) return true;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-    const expSeconds = Number(payload.exp);
-    if (!expSeconds) return true;
-    return (expSeconds * 1000) > (Date.now() + 5 * 60 * 1000);
-  } catch (_) {
-    return true;
-  }
-}
-
-// ฟังก์ชันช่วยสลับ URL: ถ้าเป็นไฟล์ .ts ให้ส่งผ่าน Cloudflare Worker
-function resolveTargetUrl(originalUrl, fileName) {
-  if (fileName.toLowerCase().endsWith('.ts')) {
-    return `${CF_WORKER_URL}/?url=${encodeURIComponent(originalUrl)}`;
-  }
-  return originalUrl;
-}
 
 /**
  * GET /streams/[...path]
  * Proxies/redirects relative stream asset paths (e.g. /streams/stream_vid_823/poster.jpg)
- * directly to their authenticated OneDrive download URL.
+ * directly to their authenticated OneDrive download URL without pulling multi-MB source_cache from Neon.
  */
 export async function GET(request, context) {
   try {
@@ -50,30 +21,39 @@ export async function GET(request, context) {
     const folderName = path[0]; // e.g. 'stream_vid_823'
     const fileName = path.slice(1).join('/'); // e.g. 'poster.jpg' หรือ '1080p/001.ts'
     const isPreview = isPreviewImage(fileName);
-    const redirectAsset = (url) => {
+    const redirectAsset = (url, cacheablePreview = false) => {
       const response = NextResponse.redirect(url, 307);
-      if (isPreview) response.headers.set('Cache-Control', 'private, no-store');
+      if (isPreview) {
+        response.headers.set(
+          'Cache-Control',
+          cacheablePreview ? 'private, max-age=900' : 'private, no-store'
+        );
+      }
       return response;
     };
     const cacheKey = `${folderName}/${fileName}`.toLowerCase();
 
-    // ⚡ 1. Ultra-fast In-Memory Hit (<1ms) with Token Expiration Check
+    // ⚡ 1. Ultra-fast In-Memory Hit (<1ms) with Mature Check & Token Expiration Validation
     const cached = assetCache.get(cacheKey);
-    if (!isPreview && cached && cached.expiresAt > Date.now() && isTempauthValid(cached.url)) {
-      return redirectAsset(resolveTargetUrl(cached.url, fileName));
-    } else if (!isPreview) {
-      assetCache.delete(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      if (isPreview && cached.isMature) {
+        return redirectAsset(new URL(RESTRICTED_POSTER, request.url), false);
+      }
+      if (cached.url && isTempauthValid(cached.url)) {
+        return redirectAsset(wrapWithWorkerCache(fileName, cached.url), isPreview && !cached.isMature);
+      }
     }
+    assetCache.delete(cacheKey);
 
     const sql = getDb();
 
-    // ⚡ 2. Locate video in Neon DB
+    // ⚡ 2. Locate video metadata in Neon DB (slim projection — never fetch source_cache!)
     const matchId = folderName.match(/^stream_vid_(\d+)$/i);
     let rows = [];
     if (matchId) {
       const vidId = parseInt(matchId[1], 10);
       rows = await sql`
-        SELECT id, onedrive_folder_id, source_cache, category, content_rating
+        SELECT id, onedrive_folder_id, category, content_rating
         FROM videos 
         WHERE id = ${vidId} AND (status = 'READY' OR status IS NULL)
         LIMIT 1;
@@ -82,7 +62,7 @@ export async function GET(request, context) {
 
     if (!rows || rows.length === 0) {
       rows = await sql`
-        SELECT id, onedrive_folder_id, source_cache, category, content_rating
+        SELECT id, onedrive_folder_id, category, content_rating
         FROM videos 
         WHERE (status = 'READY' OR status IS NULL)
           AND (master_playlist_path LIKE ${'%' + folderName + '%'}
@@ -96,32 +76,38 @@ export async function GET(request, context) {
     }
 
     const video = rows[0];
-    if (isPreview && isMatureVideo(video)) {
-      return redirectAsset(new URL(RESTRICTED_POSTER, request.url));
+    const mature = isMatureVideo(video);
+    if (isPreview && mature) {
+      assetCache.set(cacheKey, {
+        url: null,
+        isMature: true,
+        expiresAt: Date.now() + 15 * 60 * 1000,
+      });
+      return redirectAsset(new URL(RESTRICTED_POSTER, request.url), false);
     }
+
     const folderId = video.onedrive_folder_id;
     if (!folderId) {
       return new NextResponse('OneDrive folder ID not found for video', { status: 404 });
     }
 
-    // ⚡ 3. Check if downloadUrl is already in source_cache and still valid
-    if (video.source_cache) {
-      const cacheData = typeof video.source_cache === 'string'
-        ? JSON.parse(video.source_cache)
-        : video.source_cache;
-      const foundItem = cacheData?.items?.find(
-        (i) => i.name.toLowerCase() === fileName.toLowerCase()
+    // ⚡ 3. Check in-memory sourceCache from videoSourceService (0 Neon egress, 0 Graph calls!)
+    const memSource = sourceCache.get(String(video.id));
+    if (memSource && memSource.expiresAt > Date.now() && Array.isArray(memSource.data?.items)) {
+      const foundItem = memSource.data.items.find(
+        (i) => i.name?.toLowerCase() === fileName.toLowerCase()
       );
       if (foundItem?.downloadUrl && isTempauthValid(foundItem.downloadUrl)) {
         assetCache.set(cacheKey, {
           url: foundItem.downloadUrl,
-          expiresAt: Date.now() + 40 * 60 * 1000,
+          isMature: mature,
+          expiresAt: Date.now() + (isPreview ? 15 : 40) * 60 * 1000,
         });
-        return redirectAsset(resolveTargetUrl(foundItem.downloadUrl, fileName));
+        return redirectAsset(wrapWithWorkerCache(fileName, foundItem.downloadUrl), isPreview && !mature);
       }
     }
 
-    // ⚡ 4. Fetch direct download link from OneDrive via Microsoft Graph
+    // ⚡ 4. Fetch direct download link for this single asset from OneDrive via Microsoft Graph
     const token = await getGraphToken();
     const driveId = await getUserDriveId(token);
 
@@ -142,10 +128,11 @@ export async function GET(request, context) {
 
     assetCache.set(cacheKey, {
       url: downloadUrl,
-      expiresAt: Date.now() + 60 * 60 * 1000,
+      isMature: mature,
+      expiresAt: Date.now() + (isPreview ? 15 : 60) * 60 * 1000,
     });
 
-    return redirectAsset(resolveTargetUrl(downloadUrl, fileName));
+    return redirectAsset(wrapWithWorkerCache(fileName, downloadUrl), isPreview && !mature);
   } catch (err) {
     console.error('[Stream Asset Proxy Error]:', err);
     return new NextResponse(err.message, { status: 500 });

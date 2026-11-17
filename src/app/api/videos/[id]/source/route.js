@@ -41,12 +41,13 @@ export async function GET(request, context) {
       request.cookies.get(POSTER_PREFERENCE)?.value === '1';
     const showAdultPreviews = wantsAdultPreviews && Boolean(await getSessionUserId(sql));
 
-    const [{ data, path, notReady }, [rating]] = await Promise.all([
-      resolveVideoSourceServer(id, { forceFresh, showAdultPreviews }),
-      sql`SELECT category, content_rating FROM videos WHERE id = ${id} AND (status = 'READY' OR status IS NULL)`,
-    ]);
+    const { data, path, notReady } = await resolveVideoSourceServer(id, {
+      forceFresh,
+      showAdultPreviews,
+    });
 
-    if (notReady || !rating) {
+    const rating = data?.video;
+    if (notReady || !rating || (rating.status && rating.status !== 'READY')) {
       return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404, headers: timing(path) });
     }
 

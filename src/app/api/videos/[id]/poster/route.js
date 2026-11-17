@@ -3,7 +3,7 @@ import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
 import { isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
-import { isTempauthValid, sourceCache } from '@/lib/videoSourceService';
+import { assetCache, isTempauthValid, sourceCache } from '@/lib/videoSourceService';
 
 const headers = { 'Cache-Control': 'private, no-store' };
 
@@ -67,12 +67,14 @@ async function loadPoster(request, params, asImage) {
 
     if (new URL(request.url).searchParams.get('fresh') !== '1') {
       const minimumExpiry = Date.now() + 5 * 60 * 1000;
+      const assetCached = assetCache.get(`stream_vid_${video.id}/poster.jpg`);
+      const assetUrl = assetCached && assetCached.expiresAt > Date.now() ? assetCached.url : null;
       const memory = sourceCache.get(String(video.id));
       const memoryUrl = memory?.expiresAt > minimumExpiry
         ? memory.data?.items?.find((item) => item.name?.toLowerCase() === 'poster.jpg')?.downloadUrl
         : null;
       const databaseUrl = Number(video.cached_until) > minimumExpiry ? video.cached_poster : null;
-      const url = [memoryUrl, databaseUrl].find((candidate) => /^https:\/\//i.test(candidate || '') && isTempauthValid(candidate));
+      const url = [assetUrl, memoryUrl, databaseUrl].find((candidate) => /^https:\/\//i.test(candidate || '') && isTempauthValid(candidate));
       if (url) return respondWithPoster(url, asImage);
     }
 
@@ -88,7 +90,14 @@ async function loadPoster(request, params, asImage) {
     if (response.ok) {
       const metadata = await response.json();
       const url = metadata['@microsoft.graph.downloadUrl'];
-      if (url) return respondWithPoster(url, asImage);
+      if (url) {
+        assetCache.set(`stream_vid_${video.id}/poster.jpg`, {
+          url,
+          isMature: true,
+          expiresAt: Date.now() + 15 * 60 * 1000,
+        });
+        return respondWithPoster(url, asImage);
+      }
     }
     return Response.json({ error: 'Poster not found' }, { status: 404, headers });
   } catch (error) {

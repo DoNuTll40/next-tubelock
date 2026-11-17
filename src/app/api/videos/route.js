@@ -1,10 +1,9 @@
 import { protectVideoPoster } from '@/lib/videoUtils';
-import { NextResponse, after } from 'next/server';
+import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
 import { isAdmin, accessError } from '@/lib/access';
 import { isMusicVideo } from '@/lib/videoUtils';
-import { prewarmVideoSourceServer, sourceCache } from '@/lib/videoSourceService';
 
 let tableEnsured = false;
 
@@ -145,7 +144,7 @@ export async function GET(request) {
           SELECT 
             v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
             v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
-            v.user_id, v.source_cache_expires_at,
+            v.user_id,
             h.last_position_seconds,
             (h.id IS NOT NULL) AS has_watched,
             u.name AS author_name,
@@ -161,7 +160,7 @@ export async function GET(request) {
         SELECT 
           v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
           v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
-          v.user_id, v.source_cache_expires_at,
+          v.user_id,
           NULL AS last_position_seconds,
           FALSE AS has_watched,
           u.name AS author_name,
@@ -186,38 +185,15 @@ export async function GET(request) {
 
     const headers = noCacheHeaders;
 
-    const now = Date.now();
-    const expiredVideoIds = [];
-
     const sanitizedRows = (rows || []).map((v) => {
-      const exp = Number(v.source_cache_expires_at || 0);
-      const mem = sourceCache.get(String(v.id));
-      const isMemFresh = mem && mem.expiresAt > now + 10 * 60 * 1000;
-      if ((!isMemFresh || exp <= now + 10 * 60 * 1000) && expiredVideoIds.length < 6) {
-        expiredVideoIds.push(v.id);
-      }
-      const { source_cache_expires_at, ...cleanV } = v;
-      const isMusic = isMusicVideo(cleanV);
-      const hasWatched = Boolean(cleanV.has_watched || (cleanV.last_position_seconds !== null && cleanV.last_position_seconds !== undefined));
+      const isMusic = isMusicVideo(v);
+      const hasWatched = Boolean(v.has_watched || (v.last_position_seconds !== null && v.last_position_seconds !== undefined));
       return {
-        ...protectVideoPoster(cleanV),
+        ...protectVideoPoster(v),
         has_watched: hasWatched,
-        last_position_seconds: isMusic ? 0 : (Number(cleanV.last_position_seconds) || 0),
+        last_position_seconds: isMusic ? 0 : (Number(v.last_position_seconds) || 0),
       };
     });
-
-    // ⚡ Background Auto-Prewarm: เมื่อมีคนเปิดหน้าแรก อุ่น cache ของคลิปที่หมดอายุล่วงหน้าเบื้องหลังทันที
-    if (expiredVideoIds.length > 0) {
-      const lastFeedWarm = globalThis.__tubelock_feed_warmup_ts || 0;
-      if (now - lastFeedWarm > 30 * 1000) {
-        globalThis.__tubelock_feed_warmup_ts = now;
-        after(() => {
-          for (const vid of expiredVideoIds) {
-            prewarmVideoSourceServer(vid);
-          }
-        });
-      }
-    }
 
     return NextResponse.json({ success: true, data: sanitizedRows }, { headers });
   } catch (err) {

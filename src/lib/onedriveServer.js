@@ -16,6 +16,7 @@ function getEnvConfig() {
 
 let cachedToken = null;
 let tokenExpiresAt = 0;
+let inFlightTokenPromise = null;
 
 /**
  * Get Microsoft Graph Access Token using OAuth 2.0 Client Credentials Grant
@@ -25,6 +26,9 @@ export async function getGraphToken(forceRefresh = false) {
   const now = Date.now();
   if (!forceRefresh && cachedToken && tokenExpiresAt > now + 60000) {
     return cachedToken;
+  }
+  if (!forceRefresh && inFlightTokenPromise) {
+    return inFlightTokenPromise;
   }
 
   const { tenantId, clientId, clientSecret } = getEnvConfig();
@@ -37,52 +41,76 @@ export async function getGraphToken(forceRefresh = false) {
     throw new Error(`Azure credentials missing on server: ${missing.join(', ')}. Please check Vercel environment variables.`);
   }
 
-  const tokenRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: clientId,
-      client_secret: clientSecret,
-      scope: 'https://graph.microsoft.com/.default',
-    }),
-  });
+  const promise = (async () => {
+    const tokenRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: 'https://graph.microsoft.com/.default',
+      }),
+    });
 
-  if (!tokenRes.ok) {
-    const err = await tokenRes.text();
-    cachedToken = null;
-    tokenExpiresAt = 0;
-    console.error(`[Azure Token Authentication Error] Status: ${tokenRes.status}, Body: ${err}`);
-    throw new Error(`Failed to authenticate with Microsoft Graph (${tokenRes.status}): ${err}`);
+    if (!tokenRes.ok) {
+      const err = await tokenRes.text();
+      cachedToken = null;
+      tokenExpiresAt = 0;
+      console.error(`[Azure Token Authentication Error] Status: ${tokenRes.status}, Body: ${err}`);
+      throw new Error(`Failed to authenticate with Microsoft Graph (${tokenRes.status}): ${err}`);
+    }
+
+    const data = await tokenRes.json();
+    cachedToken = data.access_token;
+    tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+    return cachedToken;
+  })();
+
+  inFlightTokenPromise = promise;
+  try {
+    return await promise;
+  } finally {
+    if (inFlightTokenPromise === promise) {
+      inFlightTokenPromise = null;
+    }
   }
-
-  const data = await tokenRes.json();
-  cachedToken = data.access_token;
-  tokenExpiresAt = now + (data.expires_in || 3600) * 1000;
-  return cachedToken;
 }
 
 let cachedDriveId = null;
+let inFlightDriveIdPromise = null;
 
 /**
  * Get user's OneDrive Drive ID
  */
 export async function getUserDriveId(token) {
   if (cachedDriveId) return cachedDriveId;
+  if (inFlightDriveIdPromise) return inFlightDriveIdPromise;
   const { userId } = getEnvConfig();
 
-  const driveRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/drive`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const promise = (async () => {
+    const driveRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/drive`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-  if (!driveRes.ok) {
-    const err = await driveRes.text();
-    throw new Error(`Failed to find OneDrive for ${userId} (${driveRes.status}): ${err}`);
+    if (!driveRes.ok) {
+      const err = await driveRes.text();
+      throw new Error(`Failed to find OneDrive for ${userId} (${driveRes.status}): ${err}`);
+    }
+
+    const data = await driveRes.json();
+    cachedDriveId = data.id;
+    return cachedDriveId;
+  })();
+
+  inFlightDriveIdPromise = promise;
+  try {
+    return await promise;
+  } finally {
+    if (inFlightDriveIdPromise === promise) {
+      inFlightDriveIdPromise = null;
+    }
   }
-
-  const data = await driveRes.json();
-  cachedDriveId = data.id;
-  return cachedDriveId;
 }
 
 /**

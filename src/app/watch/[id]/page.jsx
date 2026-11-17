@@ -226,7 +226,13 @@ export default async function WatchPage({ params, searchParams }) {
       relatedRows = [];
     }
 
-    const { source_cache, source_cache_expires_at, ...publicVideo } = rawVideo;
+    const {
+      source_cache,
+      source_cache_br,
+      source_cache_items_count,
+      source_cache_expires_at,
+      ...publicVideo
+    } = rawVideo;
     const videoRows = [protectVideoPoster(publicVideo)];
     const canonicalSlug = encodeVideoSlug(videoRows[0].id, videoRows[0].category) || String(videoRows[0].id);
 

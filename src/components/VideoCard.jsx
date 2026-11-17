@@ -114,15 +114,14 @@ export default function VideoCard({
     />
   );
 
-  // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ และเก็บใน Client Memory Cache
-  // รองรับทั้ง hover (80ms debounce) และ mousedown/touchstart (0ms ทันทีที่แตะ/คลิก)
+  // Pre-warm: ดึง source URL ล่วงหน้าเฉพาะตอนตั้งใจ hover หรือกดคลิกบนเดสก์ท็อป (ไม่ยิงตอนแตะเลื่อนฟีดบนมือถือ)
   const handlePreWarm = () => {
     if (!enablePrewarm || !video?.id || preWarmedIds.has(video.id)) return;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
       preWarmedIds.add(video.id);
       prewarmVideoSourceClient(video.id, { immediate: false });
-    }, 80);
+    }, 250);
   };
 
   const handlePreWarmImmediate = () => {
@@ -216,7 +215,6 @@ export default function VideoCard({
         onMouseEnter={handlePreWarm}
         onMouseLeave={handlePreWarmCancel}
         onMouseDown={handlePreWarmImmediate}
-        onTouchStart={handlePreWarmImmediate}
         onFocus={handlePreWarm}
         style={cardHoverStyle}
       >
@@ -331,7 +329,6 @@ export default function VideoCard({
         onMouseEnter={handlePreWarm}
         onMouseLeave={handlePreWarmCancel}
         onMouseDown={handlePreWarmImmediate}
-        onTouchStart={handlePreWarmImmediate}
         onFocus={handlePreWarm}
         style={cardHoverStyle}
       >

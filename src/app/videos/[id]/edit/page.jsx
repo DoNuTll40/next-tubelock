@@ -146,6 +146,7 @@ function StudioEditorInner() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const statusRevisionsRef = useRef({});
 
   // Initial load from GET /api/videos/[id]/status
   useEffect(() => {
@@ -175,6 +176,7 @@ function StudioEditorInner() {
           return;
         }
 
+        statusRevisionsRef.current = data.revisions || {};
         const v = data.video;
         const snap = buildFormSnapshot(v);
         setVideo(v);
@@ -271,40 +273,71 @@ function StudioEditorInner() {
   // Background polling while AI workflows or HLS transcoding are active
   const hasActiveWorker = Boolean(
     video &&
-      (video.thumbnailStatus === 'extracting' ||
+      (video.thumbnailStatus === 'generating' ||
+        video.thumbnailStatus === 'extracting' ||
+        video.ratingCheckStatus === 'analyzing' ||
         video.ratingCheckStatus === 'checking' ||
+        video.spriteStatus === 'generating' ||
+        video.subtitleStatus === 'processing' ||
         video.subtitleStatus === 'extracting' ||
         video.audioStatus === 'extracting' ||
         video.status === 'TRANSCODING' ||
-        video.status === 'PROCESSING')
+        video.status === 'PROCESSING' ||
+        video.status === 'QUEUED')
   );
 
   useEffect(() => {
     if (!video?.id || !hasActiveWorker) return;
     let cancelled = false;
+    let pending = false;
 
-    const timer = setInterval(async () => {
+    const pollOnce = async () => {
+      if (cancelled || pending || (typeof document !== 'undefined' && document.hidden)) return;
+      pending = true;
       try {
-        const res = await fetch(`/api/videos/${video.id}/status`, { cache: 'no-store' });
+        const rev = statusRevisionsRef.current || {};
+        const params = new URLSearchParams();
+        if (rev.subtitles) params.set('subtitlesRevision', rev.subtitles);
+        if (rev.logs) params.set('logsRevision', rev.logs);
+        if (rev.meta) params.set('metaRevision', rev.meta);
+        const query = params.toString();
+        const res = await fetch(
+          `/api/videos/${video.id}/status${query ? `?${query}` : ''}`,
+          { cache: 'no-store' }
+        );
         if (!res.ok) return;
         const data = await res.json().catch(() => ({}));
         const latest = data?.video;
         if (cancelled || !latest) return;
 
-        setVideo(latest);
+        if (data?.revisions) {
+          statusRevisionsRef.current = data.revisions;
+        }
 
-        if (latest.thumbnailStatus !== 'extracting') setIsDispatchingThumbs(false);
-        if (latest.ratingCheckStatus !== 'checking') setIsDispatchingRating(false);
-        if (latest.status !== 'TRANSCODING' && latest.status !== 'PROCESSING') {
+        setVideo((prev) => ({ ...(prev || {}), ...latest }));
+
+        if (latest.thumbnailStatus !== 'generating' && latest.thumbnailStatus !== 'extracting') {
+          setIsDispatchingThumbs(false);
+        }
+        if (latest.ratingCheckStatus !== 'analyzing' && latest.ratingCheckStatus !== 'checking') {
+          setIsDispatchingRating(false);
+        }
+        if (latest.status !== 'TRANSCODING' && latest.status !== 'PROCESSING' && latest.status !== 'QUEUED') {
           setIsRetranscoding(false);
         }
 
-        // Safely sync newly produced worker assets only if user hasn't unsaved local edits on them
-        const incomingTracks = normalizeSubtitleTracks(
-          latest.subtitleTracks,
-          latest.subtitleSrt || '',
-          latest.subtitleVtt || ''
-        );
+        // Safely sync newly produced worker assets only when payload arrived and user hasn't unsaved local edits
+        const hasSubtitlePayload =
+          Array.isArray(latest.subtitleTracks) ||
+          typeof latest.subtitleSrt === 'string' ||
+          typeof latest.subtitleVtt === 'string';
+        const incomingTracks = hasSubtitlePayload
+          ? normalizeSubtitleTracks(
+              latest.subtitleTracks,
+              latest.subtitleSrt || '',
+              latest.subtitleVtt || ''
+            )
+          : null;
 
         setSavedSnapshot((prevSnap) => {
           if (!prevSnap) return prevSnap;
@@ -313,7 +346,7 @@ function StudioEditorInner() {
             thumbnailUrl: latest.thumbnailUrl || prevSnap.thumbnailUrl,
             contentRating: latest.contentRating || prevSnap.contentRating,
             subtitleTracks:
-              incomingTracks.length > 0 || latest.subtitleStatus === 'done'
+              incomingTracks && (incomingTracks.length > 0 || latest.subtitleStatus === 'done' || latest.subtitleStatus === 'ready')
                 ? incomingTracks
                 : prevSnap.subtitleTracks,
           };
@@ -326,18 +359,29 @@ function StudioEditorInner() {
           setContentRating(latest.contentRating);
         }
         if (
+          incomingTracks &&
           !dirtyFlagsRef.current.subtitles &&
-          (incomingTracks.length > 0 || latest.subtitleStatus === 'done')
+          (incomingTracks.length > 0 || latest.subtitleStatus === 'done' || latest.subtitleStatus === 'ready')
         ) {
           setSubtitleTracks(incomingTracks);
         }
 
         invalidateClientVideoCache(video.id);
-      } catch (_) {}
-    }, 4500);
+      } catch (_) {
+      } finally {
+        pending = false;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) void pollOnce();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const timer = setInterval(pollOnce, 4500);
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       clearInterval(timer);
     };
   }, [video?.id, hasActiveWorker]);

@@ -1,3 +1,4 @@
+import zlib from 'node:zlib';
 import { isMatureVideo, isPreviewImage, protectVideoPoster } from './videoUtils';
 import { after } from 'next/server';
 import { getDb } from '@/lib/db';
@@ -18,6 +19,44 @@ export const sourceCache =
   globalThis.__tubelock_source_cache || (globalThis.__tubelock_source_cache = new Map());
 export const inFlightRequests =
   globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
+export const assetCache =
+  globalThis.__tubelock_asset_cache || (globalThis.__tubelock_asset_cache = new Map());
+
+/**
+ * Invalidate in-memory playback and asset caches for a video ID
+ */
+export function invalidateVideoCaches(videoId) {
+  if (!videoId) return;
+  const idStr = String(videoId);
+  sourceCache.delete(idStr);
+  const prefix = `stream_vid_${idStr}/`;
+  for (const key of assetCache.keys()) {
+    if (key.startsWith(prefix)) {
+      assetCache.delete(key);
+    }
+  }
+}
+
+export function compressSourceCache(payload) {
+  const raw = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  return zlib
+    .brotliCompressSync(Buffer.from(raw, 'utf8'), {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 },
+    })
+    .toString('base64');
+}
+
+export function decompressSourceCache(encoded) {
+  if (!encoded || typeof encoded !== 'string') return null;
+  try {
+    const jsonText = zlib
+      .brotliDecompressSync(Buffer.from(encoded, 'base64'))
+      .toString('utf8');
+    return JSON.parse(jsonText);
+  } catch (_) {
+    return null;
+  }
+}
 
 export function isTempauthValid(url) {
   if (!url || typeof url !== 'string') return false;
@@ -39,7 +78,13 @@ export function isTempauthValid(url) {
 
 function stripHeavyVideoFields(video) {
   if (!video || typeof video !== 'object') return video;
-  const { source_cache, source_cache_expires_at, ...cleanVideo } = video;
+  const {
+    source_cache,
+    source_cache_br,
+    source_cache_items_count,
+    source_cache_expires_at,
+    ...cleanVideo
+  } = video;
   return cleanVideo;
 }
 
@@ -121,14 +166,53 @@ async function listHlsFolderItems(token, driveId, folderId, existingM3u8Map = {}
 }
 
 let columnsChecked = false;
-async function ensureSourceCacheColumns(sql) {
+export async function ensureSourceCacheColumns(sql) {
   if (columnsChecked) return;
   try {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache JSONB;`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_br TEXT;`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_items_count INTEGER DEFAULT 0;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_expires_at BIGINT DEFAULT 0;`;
     columnsChecked = true;
   } catch (_) {}
 }
+
+async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null) {
+  const compressed = compressSourceCache(payloadObj);
+  const itemsCount = Array.isArray(payloadObj?.items) ? payloadObj.items.length : 0;
+
+  const runUpdate = () =>
+    expiresAt == null
+      ? sql`
+          UPDATE videos
+          SET source_cache_br = ${compressed},
+              source_cache_items_count = ${itemsCount},
+              source_cache = NULL
+          WHERE id = ${id};
+        `
+      : sql`
+          UPDATE videos
+          SET source_cache_br = ${compressed},
+              source_cache_items_count = ${itemsCount},
+              source_cache = NULL,
+              source_cache_expires_at = ${expiresAt}
+          WHERE id = ${id};
+        `;
+
+  try {
+    await runUpdate();
+  } catch (dbErr) {
+    try {
+      await ensureSourceCacheColumns(sql);
+      await runUpdate();
+    } catch (retryErr) {
+      console.warn('[DB source_cache_br save warning]:', retryErr.message);
+    }
+  }
+}
+
+const swrRecentRuns =
+  globalThis.__tubelock_swr_runs || (globalThis.__tubelock_swr_runs = new Map());
 
 function scheduleAfterOrBackground(fn) {
   try {
@@ -165,7 +249,7 @@ export function formatSourceForClient(data, showAdultPreviews = false) {
  * Resolve video playback source with 3-tier caching:
  * 1. Global In-Memory Cache (< 1ms)
  * 2. In-Flight Request Coalescing (shares active promise across SSR & API calls)
- * 3. Persistent Neon DB Cache (< 50ms) with OneDrive Graph fallback (~2.5s)
+ * 3. Compressed Persistent Neon DB Cache (< 50ms) with OneDrive Graph fallback
  */
 export async function resolveVideoSourceServer(numericId, { forceFresh = false, showAdultPreviews = false } = {}) {
   const id = Number(numericId);
@@ -183,10 +267,10 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
     if (
       cached &&
       cached.expiresAt > Date.now() &&
-      cached.data?.items?.length > 0 &&
-      cached.data?.video?.author_picture
+      cached.data?.video &&
+      (cached.data?.items?.length > 0 || cached.data?.url)
     ) {
-      const sampleUrl = cached.data.items[0]?.downloadUrl || cached.data.url;
+      const sampleUrl = cached.data.items?.[0]?.downloadUrl || cached.data.url;
       if (isTempauthValid(sampleUrl)) {
         return { data: formatSourceForClient(cached.data, showAdultPreviews), path: 'memory-hit' };
       } else {
@@ -204,7 +288,7 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
     return { data: formatSourceForClient(data, showAdultPreviews), path: 'inflight' };
   }
 
-  // ⚡ 3. Cold Fetch with Promise Coalescing & Database Persistent Cache
+  // ⚡ 3. Cold Fetch with Promise Coalescing & Compressed Database Persistent Cache
   let hitPath = 'cold-onedrive';
   const fetchPromise = (async () => {
     const sql = getDb();
@@ -214,16 +298,37 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
       .then((tk) => getUserDriveId(tk))
       .catch(() => {});
 
-    const rows = await sql`
-      SELECT 
-        v.*,
+    const queryVideoRow = () => sql`
+      SELECT
+        v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, v.bitrate,
+        v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status,
+        v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
+        v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
+        v.content_rating, v.user_id, v.source_cache_expires_at,
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0
+          THEN v.source_cache_br ELSE NULL END AS source_cache_br,
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0 AND v.source_cache_br IS NULL
+          THEN v.source_cache ELSE NULL END AS source_cache,
         u.name AS author_name,
         u.picture AS author_picture
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id
-      WHERE v.id = ${id} 
+      WHERE v.id = ${id}
       LIMIT 1;
     `;
+
+    let rows;
+    try {
+      rows = await queryVideoRow();
+    } catch (err) {
+      if (err?.code === '42703' || /source_cache_br/i.test(err?.message || '')) {
+        await ensureSourceCacheColumns(sql);
+        rows = await queryVideoRow();
+      } else {
+        throw err;
+      }
+    }
+
     if (!rows || rows.length === 0) {
       throw new Error('Video not found');
     }
@@ -250,20 +355,25 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
     // เก็บเนื้อหา .m3u8 เดิมจาก DB cache (ถ้ามี) เพื่อไม่ต้องเสียเวลาโหลด .m3u8 ใหม่แม้ tempauth หมดอายุ
     const existingM3u8Map = {};
     let parsedCache = null;
-    if (rawVideo.source_cache) {
-      try {
-        parsedCache =
-          typeof rawVideo.source_cache === 'string'
-            ? JSON.parse(rawVideo.source_cache)
-            : rawVideo.source_cache;
-        if (Array.isArray(parsedCache?.items)) {
-          for (const item of parsedCache.items) {
-            if (item?.name && item?.content && item.name.toLowerCase().endsWith('.m3u8')) {
-              existingM3u8Map[item.name] = item.content;
-            }
+    const isMigratingFromLegacy = Boolean(!rawVideo.source_cache_br && rawVideo.source_cache);
+    if (Number(rawVideo.source_cache_expires_at || 0) > 0) {
+      if (rawVideo.source_cache_br) {
+        parsedCache = decompressSourceCache(rawVideo.source_cache_br);
+      } else if (rawVideo.source_cache) {
+        try {
+          parsedCache =
+            typeof rawVideo.source_cache === 'string'
+              ? JSON.parse(rawVideo.source_cache)
+              : rawVideo.source_cache;
+        } catch (_) {}
+      }
+      if (Array.isArray(parsedCache?.items)) {
+        for (const item of parsedCache.items) {
+          if (item?.name && item?.content && item.name.toLowerCase().endsWith('.m3u8')) {
+            existingM3u8Map[item.name] = item.content;
           }
         }
-      } catch (_) {}
+      }
     }
 
     // ⚡⚡⚡ PERSISTENT DB CACHE HIT (<50ms) ⚡⚡⚡
@@ -299,61 +409,71 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
           expiresAt: expTime > now ? expTime : now + 5 * 60 * 1000,
         });
 
+        const needsSwrRefresh = expTime <= now + 10 * 60 * 1000;
+
         if (missingM3u8Content && expTime > now) {
           scheduleAfterOrBackground(async () => {
             try {
               await hydrateM3u8Contents(parsedCache.items, existingM3u8Map);
-              await sql`
-                UPDATE videos 
-                SET source_cache = ${JSON.stringify({ success: true, type: 'hls', items: parsedCache.items })}::jsonb
-                WHERE id = ${id};
-              `;
+              await saveSourceCacheToDb(sql, id, {
+                success: true,
+                type: 'hls',
+                items: parsedCache.items,
+              });
             } catch (_) {}
+          });
+        } else if (isMigratingFromLegacy && !needsSwrRefresh) {
+          scheduleAfterOrBackground(async () => {
+            await saveSourceCacheToDb(sql, id, parsedCache, expTime);
           });
         }
 
         // ⚡ Background SWR: Revalidate quietly if expiring within 10 minutes or expired
-        if (expTime <= now + 10 * 60 * 1000) {
-          scheduleAfterOrBackground(async () => {
-            try {
-              const token = await getGraphToken();
-              const driveId = await getUserDriveId(token);
-              if (rawVideo.source_type === 'hls' || rawVideo.onedrive_folder_id) {
-                const folderId = rawVideo.onedrive_folder_id || rawVideo.onedrive_item_id;
-                const allItems = await listHlsFolderItems(
-                  token,
-                  driveId,
-                  folderId,
-                  existingM3u8Map
-                );
-                const freshValid = allItems
-                  .filter((i) => i.name && i['@microsoft.graph.downloadUrl'])
-                  .map((i) => {
-                    const entry = {
-                      name: i.name,
-                      downloadUrl: i['@microsoft.graph.downloadUrl'],
-                    };
-                    if (existingM3u8Map[i.name]) entry.content = existingM3u8Map[i.name];
-                    return entry;
-                  });
-                if (freshValid.length > 0) {
-                  const newExp = Date.now() + 45 * 60 * 1000;
-                  sourceCache.set(cacheKey, {
-                    data: { success: true, type: 'hls', video, items: freshValid },
-                    expiresAt: newExp,
-                  });
-                  await sql`
-                    UPDATE videos 
-                    SET source_cache = ${JSON.stringify({ success: true, type: 'hls', items: freshValid })}::jsonb,
-                        source_cache_expires_at = ${newExp}
-                    WHERE id = ${id};
-                  `;
+        if (needsSwrRefresh) {
+          const lastSwrAt = swrRecentRuns.get(cacheKey) || 0;
+          if (now - lastSwrAt > 120 * 1000) {
+            swrRecentRuns.set(cacheKey, now);
+            scheduleAfterOrBackground(async () => {
+              try {
+                const token = await getGraphToken();
+                const driveId = await getUserDriveId(token);
+                if (rawVideo.source_type === 'hls' || rawVideo.onedrive_folder_id) {
+                  const folderId = rawVideo.onedrive_folder_id || rawVideo.onedrive_item_id;
+                  const allItems = await listHlsFolderItems(
+                    token,
+                    driveId,
+                    folderId,
+                    existingM3u8Map
+                  );
+                  const freshValid = allItems
+                    .filter((i) => i.name && i['@microsoft.graph.downloadUrl'])
+                    .map((i) => {
+                      const entry = {
+                        name: i.name,
+                        downloadUrl: i['@microsoft.graph.downloadUrl'],
+                      };
+                      if (existingM3u8Map[i.name]) entry.content = existingM3u8Map[i.name];
+                      return entry;
+                    });
+                  if (freshValid.length > 0) {
+                    const newExp = Date.now() + 45 * 60 * 1000;
+                    sourceCache.set(cacheKey, {
+                      data: { success: true, type: 'hls', video, items: freshValid },
+                      expiresAt: newExp,
+                    });
+                    await saveSourceCacheToDb(
+                      sql,
+                      id,
+                      { success: true, type: 'hls', items: freshValid },
+                      newExp
+                    );
+                  }
                 }
+              } catch (bgErr) {
+                console.warn('[SWR Background Warning]:', bgErr.message);
               }
-            } catch (bgErr) {
-              console.warn('[SWR Background Warning]:', bgErr.message);
-            }
-          });
+            });
+          }
         }
 
         return resultData;
@@ -402,32 +522,13 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
         expiresAt,
       });
 
-      const cachePayload = JSON.stringify({
-        success: true,
-        type: 'hls',
-        items: validItems,
-      });
       scheduleAfterOrBackground(async () => {
-        try {
-          await sql`
-            UPDATE videos 
-            SET source_cache = ${cachePayload}::jsonb,
-                source_cache_expires_at = ${expiresAt}
-            WHERE id = ${id};
-          `;
-        } catch (dbErr) {
-          try {
-            await ensureSourceCacheColumns(sql);
-            await sql`
-              UPDATE videos 
-              SET source_cache = ${cachePayload}::jsonb,
-                  source_cache_expires_at = ${expiresAt}
-              WHERE id = ${id};
-            `;
-          } catch (retryErr) {
-            console.warn('[DB source_cache save warning]:', retryErr.message);
-          }
-        }
+        await saveSourceCacheToDb(
+          sql,
+          id,
+          { success: true, type: 'hls', items: validItems },
+          expiresAt
+        );
       });
 
       return resultData;
@@ -461,22 +562,13 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
       expiresAt,
     });
 
-    const cachePayload = JSON.stringify({
-      success: true,
-      type: 'mp4',
-      url: downloadUrl,
-    });
     scheduleAfterOrBackground(async () => {
-      try {
-        await sql`
-          UPDATE videos 
-          SET source_cache = ${cachePayload}::jsonb,
-              source_cache_expires_at = ${expiresAt}
-          WHERE id = ${id};
-        `;
-      } catch (dbErr) {
-        console.warn('[DB source_cache save warning]:', dbErr.message);
-      }
+      await saveSourceCacheToDb(
+        sql,
+        id,
+        { success: true, type: 'mp4', url: downloadUrl },
+        expiresAt
+      );
     });
 
     return resultData;

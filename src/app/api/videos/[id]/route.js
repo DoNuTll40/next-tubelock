@@ -3,7 +3,7 @@ import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId, ensureFolderExists } from '@/lib/onedriveServer';
-import { sourceCache } from '@/lib/videoSourceService';
+import { ensureSourceCacheColumns, invalidateVideoCaches } from '@/lib/videoSourceService';
 import { normalizeSubtitleTracks } from '@/lib/videoEditorUtils';
 import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
 
@@ -143,8 +143,7 @@ export async function DELETE(request, context) {
 
     // 3. Delete record completely from Neon DB and invalidate caches
     await sql`DELETE FROM videos WHERE id = ${id} AND (${admin} OR user_id = ${userId});`;
-    sourceCache.delete(String(id));
-    globalThis.__tubelock_asset_cache?.delete(`stream_vid_${id}/poster.jpg`);
+    invalidateVideoCaches(id);
 
     return NextResponse.json(
       {
@@ -210,6 +209,7 @@ export async function PATCH(request, context) {
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_tracks JSONB DEFAULT '[]'::jsonb;`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_selected_rating VARCHAR(50) DEFAULT 'all';`;
+      await ensureSourceCacheColumns(sql);
     } catch (_) {}
 
     const existing = await sql`
@@ -352,6 +352,8 @@ export async function PATCH(request, context) {
           subtitle_vtt = CASE WHEN ${hasSubtitleUpdate} THEN ${nextSubVtt || ''} ELSE subtitle_vtt END,
           subtitle_tracks = CASE WHEN ${hasSubtitleUpdate} THEN ${JSON.stringify(normalizedSubTracks)}::jsonb ELSE subtitle_tracks END,
           source_cache = NULL,
+          source_cache_br = NULL,
+          source_cache_items_count = 0,
           source_cache_expires_at = 0,
           updated_at = NOW()
       WHERE id = ${id} AND (${admin} OR user_id = ${userId})
@@ -361,8 +363,7 @@ export async function PATCH(request, context) {
         subtitle_status, subtitle_srt, subtitle_vtt, subtitle_tracks, updated_at;
     `;
 
-    sourceCache.delete(String(id));
-    globalThis.__tubelock_asset_cache?.delete(`stream_vid_${id}/poster.jpg`);
+    invalidateVideoCaches(id);
 
     const row = updated[0] || {};
     return NextResponse.json({

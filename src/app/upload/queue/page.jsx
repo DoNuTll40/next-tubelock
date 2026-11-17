@@ -29,16 +29,32 @@ export default function UploadQueuePage() {
     }
   }, []);
 
+  const hasActiveQueueItems = queueItems.some((item) =>
+    ['UPLOADING', 'QUEUED', 'PROCESSING', 'TRANSCODING'].includes(item.status)
+  );
+
   useEffect(() => {
     const timer = setTimeout(() => {
       loadQueue();
     }, 0);
-    const interval = setInterval(loadQueue, 4000);
-    return () => {
-      clearTimeout(timer);
-      clearInterval(interval);
-    };
+    return () => clearTimeout(timer);
   }, [loadQueue]);
+
+  useEffect(() => {
+    if (!hasActiveQueueItems) return;
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadQueue();
+    }, 5000);
+    const onVisibility = () => {
+      if (!document.hidden) loadQueue();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [hasActiveQueueItems, loadQueue]);
 
   // Retry Trigger
   const handleRetry = async (vidId, rFileName, vidTitle) => {

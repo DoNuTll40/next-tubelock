@@ -232,12 +232,13 @@ export default function UploadPage() {
       let revisions = {};
       let requestPending = false;
       pollingTimerRef.current = setInterval(async () => {
-        if (requestPending) return;
+        if (requestPending || (typeof document !== 'undefined' && document.hidden)) return;
         requestPending = true;
         try {
           const params = new URLSearchParams();
           if (revisions.subtitles) params.set('subtitlesRevision', revisions.subtitles);
           if (revisions.logs) params.set('logsRevision', revisions.logs);
+          if (revisions.meta) params.set('metaRevision', revisions.meta);
           const res = await fetch(`/api/videos/${videoId}/status?${params}`);
           if (!res.ok) return;
 
@@ -1149,12 +1150,17 @@ export default function UploadPage() {
     const timer = setTimeout(() => {
       fetchQueueCount();
     }, 0);
-    const interval = setInterval(fetchQueueCount, 6000);
-    return () => {
-      clearTimeout(timer);
-      clearInterval(interval);
-    };
+    return () => clearTimeout(timer);
   }, [fetchQueueCount]);
+
+  useEffect(() => {
+    if (queueCount <= 0) return;
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchQueueCount();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [queueCount, fetchQueueCount]);
 
   const hasTitle = Boolean(title && title.trim().length > 0);
   const hasRating = Boolean(contentRating);

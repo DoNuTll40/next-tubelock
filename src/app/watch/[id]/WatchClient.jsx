@@ -15,7 +15,7 @@ import {
   AlertCircle, ArrowLeft, Pencil
 } from 'lucide-react';
 import { useSession } from '@/context/SessionContext';
-import { resolveClientPlaybackSource, fetchVideoSourceClient, prewarmVideoSourceClient, resolveStoryboard } from '@/lib/playbackResolver';
+import { resolveClientPlaybackSource, fetchVideoSourceClient, resolveStoryboard } from '@/lib/playbackResolver';
 import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 
 // ============================================================================
@@ -108,6 +108,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   const playerWrapperRef = useRef(null);
   const [playerHeight, setPlayerHeight] = useState(0);
   const activeBlobUrlsRef = useRef([]);
+  const loadedDetailIdRef = useRef(initialVideo?.id ?? null);
 
   // Compute effective video aspect ratio
   const videoResolution = video?.resolution;
@@ -151,6 +152,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   // Update initial props if server props change (during soft navigation)
   useEffect(() => {
     if (initialVideo) {
+      loadedDetailIdRef.current = initialVideo.id;
       setSelection({ id: initialVideo.id, startTime: initialTime });
       setVideo(initialVideo);
       setAvatarError(false);
@@ -192,9 +194,26 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         const prevBlobUrls = [...activeBlobUrlsRef.current];
         activeBlobUrlsRef.current = [];
 
+        // If switched video in-place (not initial SSR video), also fetch subtitles & description once
+        const needsMetadataDetail = loadedDetailIdRef.current !== id;
+        const metadataPromise = needsMetadataDetail
+          ? fetch(`/api/videos/${id}`, { cache: 'no-store' })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          : Promise.resolve(null);
+
         // ⚡ Step: Fetch Stream Source from OneDrive (uses client in-memory/in-flight cache if pre-warmed!)
-        let sourceData = await fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster });
+        let [sourceData, detailRes] = await Promise.all([
+          fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster }),
+          metadataPromise,
+        ]);
         if (cancelled) return;
+
+        if (needsMetadataDetail && detailRes?.video) {
+          loadedDetailIdRef.current = id;
+        }
+        const detailVideo = detailRes?.video || {};
+
         const needsRestrictedStoryboard = !showAdultPoster && sourceData.type === 'hls' && isMatureVideo(sourceData.video);
         if (needsRestrictedStoryboard) {
           fetch(`/api/videos/${id}/storyboard`, { method: 'POST', signal: storyboardRequest.signal })
@@ -209,16 +228,17 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
             .catch(() => {});
         }
 
-        if (sourceData.video) {
+        if (sourceData.video || detailRes?.video) {
           setVideo((prev) => ({
             ...prev,
-            ...sourceData.video,
-            subtitle_srt: sourceData.video.subtitle_srt ?? prev?.subtitle_srt ?? '',
-            subtitle_vtt: sourceData.video.subtitle_vtt ?? prev?.subtitle_vtt ?? '',
-            subtitle_tracks: sourceData.video.subtitle_tracks ?? prev?.subtitle_tracks ?? [],
-            subtitle_status: sourceData.video.subtitle_status || prev?.subtitle_status || 'waiting',
-            author_name: sourceData.video.author_name || prev?.author_name,
-            author_picture: sourceData.video.author_picture || prev?.author_picture,
+            ...(sourceData.video || {}),
+            ...detailVideo,
+            subtitle_srt: detailVideo.subtitle_srt ?? sourceData.video?.subtitle_srt ?? prev?.subtitle_srt ?? '',
+            subtitle_vtt: detailVideo.subtitle_vtt ?? sourceData.video?.subtitle_vtt ?? prev?.subtitle_vtt ?? '',
+            subtitle_tracks: detailVideo.subtitle_tracks ?? sourceData.video?.subtitle_tracks ?? prev?.subtitle_tracks ?? [],
+            subtitle_status: detailVideo.subtitle_status || sourceData.video?.subtitle_status || prev?.subtitle_status || 'waiting',
+            author_name: detailVideo.author_name || sourceData.video?.author_name || prev?.author_name,
+            author_picture: detailVideo.author_picture || sourceData.video?.author_picture || prev?.author_picture,
           }));
         }
 
@@ -280,17 +300,6 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
       activeBlobUrlsRef.current = [];
     };
   }, [id, showAdultPoster]);
-
-  // เมื่อวิดีโอหลักเริ่มเล่นแล้ว ให้แอบอุ่นวิดีโอแนะนำ 2 อันดับแรกใน background
-  useEffect(() => {
-    if (!streamUrl || !Array.isArray(relatedVideos) || relatedVideos.length === 0) return;
-    const timer = setTimeout(() => {
-      relatedVideos.slice(0, 2).forEach((rv) => {
-        if (rv?.id) prewarmVideoSourceClient(rv.id, { immediate: false });
-      });
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [streamUrl, relatedVideos]);
 
   const handleCopyLink = () => {
     if (typeof window !== 'undefined') {
@@ -616,11 +625,11 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   <span className={isSaved ? 'text-[#FF7A00] font-bold' : ''}>{isSaved ? 'บันทึกแล้ว' : 'บันทึก'}</span>
                 </button>
 
-                {/* Studio Edit Video Pill (Owner / Admin only) */}
+                {/* Studio Edit Video Pill (Desktop Owner / Admin only) */}
                 {canEdit && video?.id && (
                   <Link
                     href={`/videos/${video.id}/edit`}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#FF7A00]/12 hover:bg-[#FF7A00] text-[#FF7A00] hover:text-white border border-[#FF7A00]/30 text-xs font-semibold transition active:scale-95 shrink-0"
+                    className="hidden md:flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#FF7A00]/12 hover:bg-[#FF7A00] text-[#FF7A00] hover:text-white border border-[#FF7A00]/30 text-xs font-semibold transition active:scale-95 shrink-0"
                   >
                     <Pencil className="w-3.5 h-3.5" />
                     <span>แก้ไขวิดีโอ</span>
