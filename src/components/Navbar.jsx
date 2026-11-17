@@ -20,7 +20,7 @@ export default function Navbar({ session }) {
   const pathname = usePathname();
   const router = useRouter();
   const { toggleSidebar, toggleDrawer } = useSidebar();
-  const { mode, isDesktop } = useViewMode();
+  const { mode, isDesktop, mounted } = useViewMode();
   const [avatarUrl, setAvatarUrl] = useState('');
   const [imgError, setImgError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -143,10 +143,14 @@ export default function Navbar({ session }) {
 
   // โปร่งแสงบนหน้า /watch เมื่ออยู่ที่ด้านบนสุด เพื่อให้แสง Ambient ลอยทะลุผ่านเหมือน YouTube
   const isTransparent = isWatchPage && !isScrolled;
+  // ก่อน hydrate/วัดความกว้างจอ isDesktop จะเป็น true เสมอ ทำให้ Navbar แบบ desktop (ช่องค้นหา + ไมค์)
+  // โผล่แวบบนมือถือในหน้า /watch และ /settings -> ซ่อนด้วย CSS บนจอเล็กจนกว่าจะ mounted
+  const hideOnMobileUntilMounted =
+    !mounted && (pathname?.startsWith('/watch') || pathname?.startsWith('/settings'));
 
   return (
     <header
-      className={`sticky top-0 z-40 w-full px-4 py-2 select-none h-14 flex items-center transition-colors duration-300 ${isTransparent
+      className={`${hideOnMobileUntilMounted ? 'max-md:hidden ' : ''}sticky top-0 z-40 w-full px-4 py-2 select-none h-14 flex items-center transition-colors duration-300 ${isTransparent
         ? 'bg-transparent border-b border-transparent backdrop-blur-none'
         : 'bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10'
         }`}
