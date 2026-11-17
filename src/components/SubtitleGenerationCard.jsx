@@ -1,8 +1,13 @@
 'use client';
 
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { SUBTITLE_UNIFIED_SYSTEM_PROMPT } from '@/lib/subtitlePrompts';
+import { SUBTITLE_TRANSCRIPTION_PROMPT, SUBTITLE_THAI_TRANSLATE_PROMPT } from '@/lib/subtitlePrompts';
+
+const PROMPTS = [
+  { id: 'original', label: 'ถอดเสียงต้นฉบับ', text: SUBTITLE_TRANSCRIPTION_PROMPT },
+  { id: 'thai', label: 'แปลไทย', text: SUBTITLE_THAI_TRANSLATE_PROMPT },
+];
 
 export default function SubtitleGenerationCard({
   audioStatus,
@@ -19,6 +24,7 @@ export default function SubtitleGenerationCard({
   onRun,
 }) {
   const promptId = useId();
+  const [activePrompt, setActivePrompt] = useState(PROMPTS[0]);
   const isSubtitleReady = subtitleStatus === 'ready' && !isRunningWorkflow;
   const canStartAiGeneration = canGenerate && !isRunningWorkflow;
 
@@ -65,7 +71,6 @@ export default function SubtitleGenerationCard({
         </span>
       </div>
 
-      {/* Default Unified Auto System Prompt Preview (No choices — single-click auto flow) */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">
@@ -75,8 +80,25 @@ export default function SubtitleGenerationCard({
             อัตโนมัติ: ไทย 1 ภาษา • ต่างประเทศ 2 ภาษา
           </span>
         </div>
-        <pre className="text-[11px] leading-relaxed text-[#6C655D] dark:text-[#AAAAAA] font-mono whitespace-pre-wrap bg-white dark:bg-[#181818] p-3 rounded-xl border border-[#EFECE6] dark:border-white/10 max-h-44 overflow-y-auto">
-          {SUBTITLE_UNIFIED_SYSTEM_PROMPT}
+        <div role="group" aria-label="เลือกดู Prompt ตั้งต้น" className="flex flex-wrap gap-1.5">
+          {PROMPTS.map((prompt) => (
+            <button
+              key={prompt.id}
+              type="button"
+              aria-pressed={activePrompt.id === prompt.id}
+              onClick={() => setActivePrompt(prompt)}
+              className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                activePrompt.id === prompt.id
+                  ? 'border-[#FF7A00]/45 bg-[#FF7A00]/10 text-[#A54B00] dark:text-[#FF9A39]'
+                  : 'border-[#EFECE6] bg-white text-[#6C655D] hover:text-[#A54B00] dark:border-white/10 dark:bg-[#181818] dark:text-[#AAAAAA] dark:hover:text-[#FF9A39]'
+              }`}
+            >
+              {prompt.label}
+            </button>
+          ))}
+        </div>
+        <pre key={activePrompt.id} className="text-[11px] leading-relaxed text-[#6C655D] dark:text-[#AAAAAA] font-mono whitespace-pre-wrap bg-white dark:bg-[#181818] p-3 rounded-xl border border-[#EFECE6] dark:border-white/10 max-h-44 overflow-y-auto">
+          {activePrompt.text}
         </pre>
       </div>
 

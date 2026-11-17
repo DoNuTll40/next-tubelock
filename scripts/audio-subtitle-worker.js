@@ -279,8 +279,46 @@ function cleanTranslatedCueText(text) {
     .trim();
 }
 
+const SPEAKER_LABELS = {
+  M: '(ชาย)', F: '(หญิง)',
+  M1: '(ชาย 1)', M2: '(ชาย 2)',
+  F1: '(หญิง 1)', F2: '(หญิง 2)',
+};
+const SOURCE_SPEAKER_PREFIX = /^\s*\[(M[12]?|F[12]?)\]\s*/;
+const TRANSLATED_SPEAKER_PREFIX = /^\s*(?:\[(?:M[12]?|F[12]?)\]|\((?:ชาย|หญิง)(?:\s*[12])?\))\s*/;
+
+function localizeOriginalSpeakerLabels(text, labels, isThai) {
+  return text.split('\n').map((line) => {
+    const match = line.match(SOURCE_SPEAKER_PREFIX);
+    if (!match) return line;
+    const code = match[1];
+    if (isThai) return `${SPEAKER_LABELS[code]} ${line.slice(match[0].length)}`;
+    const name = labels?.[code[0] === 'M' ? 'male' : 'female'];
+    if (typeof name !== 'string' || !/^[\p{L}\p{M}][\p{L}\p{M} -]{0,31}$/u.test(name) || /\p{Script=Thai}/u.test(name)) return line;
+    const number = code.length > 1 ? ` ${code[1]}` : '';
+    return `(${name.trim()}${number}) ${line.slice(match[0].length)}`;
+  }).join('\n');
+}
+
+function applyOriginalSpeakerLabels(original, translation) {
+  const sourceLines = original.split(/\r?\n/).filter((line) => line.trim());
+  const labels = sourceLines.map((line) => line.match(SOURCE_SPEAKER_PREFIX)?.[1]);
+  const translatedLines = translation.split(/\r?\n/).filter((line) => line.trim());
+  const hasLabels = labels.some(Boolean);
+  if (hasLabels && translatedLines.length !== sourceLines.length) return '';
+
+  const cleaned = translatedLines.map((line, index) => {
+    const text = cleanTranslatedCueText(line.replace(TRANSLATED_SPEAKER_PREFIX, ''));
+    const label = SPEAKER_LABELS[labels[index]];
+    return text && label ? `${label} ${text}` : text;
+  });
+  if (hasLabels && cleaned.some((line) => !line)) return '';
+  return cleaned.filter(Boolean).join(hasLabels ? '\n' : ' ');
+}
+
 function countScriptChars(text) {
   const plainText = String(text || '')
+    .split('\n').map((line) => line.replace(SOURCE_SPEAKER_PREFIX, '')).join('\n')
     .replace(/\d{1,3}:\d{2}(?::\d{2})?[,.]\d{1,3}\s*-->\s*\d{1,3}:\d{2}(?::\d{2})?[,.]\d{1,3}/g, ' ')
     .replace(/^\d+$/gm, ' ');
   const thaiCount = (plainText.match(/[\u0E00-\u0E7F]/g) || []).length;
@@ -340,6 +378,10 @@ function wrapSubtitleLines(text, maxLineChars = 34) {
 function splitOverlongSubtitleCues(cues, { maxDurationMs = 5200, maxChars = 60, idealChars = 44 } = {}) {
   const result = [];
   for (const cue of cues || []) {
+    if (String(cue.text || '').split('\n').some((line) => SOURCE_SPEAKER_PREFIX.test(line))) {
+      result.push(cue);
+      continue;
+    }
     const clean = String(cue.text || '').replace(/\s*\n+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
     if (!clean) continue;
     const dur = Math.max(200, (cue.endMs || 0) - (cue.startMs || 0));
@@ -744,7 +786,26 @@ async function transcribeOriginalAudioWithGemini(
         ],
       },
     ],
-    generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          is_thai: { type: 'BOOLEAN' },
+          detected_lang_code: { type: 'STRING' },
+          detected_lang_name: { type: 'STRING' },
+          context_summary: { type: 'STRING' },
+          speaker_labels: {
+            type: 'OBJECT',
+            properties: { male: { type: 'STRING' }, female: { type: 'STRING' } },
+            required: ['male', 'female'],
+          },
+          original_srt: { type: 'STRING' },
+        },
+        required: ['is_thai', 'detected_lang_code', 'detected_lang_name', 'context_summary', 'speaker_labels', 'original_srt'],
+      },
+    },
     safetySettings: GEMINI_SAFETY_SETTINGS,
   });
 
@@ -786,7 +847,10 @@ async function transcribeOriginalAudioWithGemini(
     detectedLangName: rawName,
   });
 
-  return { ...fixedMeta, originalSrt, elapsedSec };
+  const contextSummary = typeof parsed.context_summary === 'string'
+    ? parsed.context_summary.replace(/\s+/g, ' ').trim().slice(0, 400)
+    : '';
+  return { ...fixedMeta, originalSrt, contextSummary, speakerLabels: parsed.speaker_labels, elapsedSec };
 }
 
 function hasAcceptableThaiTranslation(textSample) {
@@ -803,82 +867,77 @@ async function translateCuesToThaiWithGemini(
   detectedLangName,
   modelName,
   customPrompt,
-  { chunkInfo = '', logger = null } = {}
+  { chunkInfo = '', logger = null, contextSummaries = [], before = [], after = [] } = {}
 ) {
-  const itemsPayload = cuesBatch.map((cue, idx) => ({
+  const items = cuesBatch.map((cue, idx) => ({
     id: idx + 1,
-    text: String(cue.text || '').replace(/\s*\n+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim(),
+    clip_start_seconds: cue.startMs / 1000,
+    text: cue.text.trim(),
   }));
-
   const prompt = [
     SUBTITLE_THAI_TRANSLATE_PROMPT,
     `ภาษาต้นฉบับ: ${detectedLangName}`,
+    contextSummaries.length
+      ? `สรุปจากเสียง: ${JSON.stringify(contextSummaries)}\nเวลาในสรุปเริ่มจากต้นช่วงเสียง ให้บวก clip_offset_seconds เพื่อเทียบกับ clip_start_seconds ของคิว`
+      : '',
     customPrompt ? `คำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}` : '',
-    `รายการคำบรรยาย JSON จำนวน ${itemsPayload.length} ข้อ (แปลให้ครบทุก id แบบ 1-ต่อ-1):\n${JSON.stringify(itemsPayload)}`,
+    `บริบทก่อนและหลัง (อ่านประกอบ): ${JSON.stringify({ before, after })}`,
+    `คิวที่ต้องแปล: ${JSON.stringify(items)}`,
   ].filter(Boolean).join('\n\n');
 
   const requestBody = JSON.stringify({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          translations: {
+            type: 'ARRAY',
+            minItems: items.length,
+            maxItems: items.length,
+            items: {
+              type: 'OBJECT',
+              properties: { id: { type: 'INTEGER' }, text: { type: 'STRING' } },
+              required: ['id', 'text'],
+            },
+          },
+        },
+        required: ['translations'],
+      },
+    },
     safetySettings: GEMINI_SAFETY_SETTINGS,
   });
 
-  const validateThaiTranslation = (rawModelText) => {
-    const parsedCheck = parseJsonResponseSafe(rawModelText);
-    if (Array.isArray(parsedCheck?.translations)) {
-      const items = parsedCheck.translations;
-      if (items.length === 0) return 'รายการ translations ว่างเปล่า';
-      if (itemsPayload.length >= 6 && items.length < Math.ceil(itemsPayload.length * 0.65)) {
-        return `ได้คำแปลไม่ครบ (${items.length}/${itemsPayload.length} รายการ)`;
-      }
-      const joined = items.map((it) => String(it?.text ?? it?.thai ?? (Array.isArray(it) ? it[1] : '') ?? '')).join(' ');
-      if (!joined.trim()) return 'ไม่มีข้อความคำแปลใน translations';
-      return hasAcceptableThaiTranslation(joined);
+  const readTranslations = (text) => {
+    const translations = parseJsonResponseSafe(text)?.translations;
+    if (!Array.isArray(translations) || translations.length !== items.length) return null;
+    const byId = new Map();
+    for (const item of translations) {
+      const id = item?.id;
+      if (!Number.isInteger(id) || id < 1 || id > items.length || byId.has(id) || typeof item.text !== 'string') return null;
+      const clean = applyOriginalSpeakerLabels(items[id - 1].text, item.text);
+      if (!clean) return null;
+      byId.set(id, clean);
     }
-
-    const candidateSrt = String(
-      parsedCheck?.thai_srt ||
-        (parsedCheck?.rawFallbackText?.includes('-->') ? parsedCheck.rawFallbackText : '')
-    ).trim();
-    if (!candidateSrt) return 'ไม่มีเนื้อหา translations หรือ thai_srt';
-    return hasAcceptableThaiTranslation(candidateSrt);
+    return byId;
   };
 
-  const { text, elapsedSec } = await callGeminiWithFallback(
-    requestBody,
-    modelName,
-    logger,
-    chunkInfo ? `แปลไทย ${chunkInfo}` : 'แปลไทย',
-    { validateText: validateThaiTranslation }
-  );
-
-  const parsed = parseJsonResponseSafe(text);
-  if (Array.isArray(parsed?.translations)) {
-    const byId = new Map();
-    for (const item of parsed.translations) {
-      const idVal = Array.isArray(item) ? Number(item[0]) : Number(item?.id ?? item?.index);
-      const rawStr = Array.isArray(item) ? item[1] : (item?.text ?? item?.thai ?? '');
-      const cleanStr = cleanTranslatedCueText(rawStr);
-      if (Number.isFinite(idVal) && idVal >= 1 && idVal <= itemsPayload.length && cleanStr) {
-        byId.set(idVal, cleanStr);
-      }
+  const { text } = await callGeminiWithFallback(
+    requestBody, modelName, logger, chunkInfo ? `แปลไทย ${chunkInfo}` : 'แปลไทย',
+    {
+      validateText: (value) => {
+        const byId = readTranslations(value);
+        if (!byId) return 'คำแปลมี id ขาด ซ้ำ ข้อความว่าง หรือจำนวนบรรทัดไม่ตรงกับป้ายผู้พูด';
+        const speech = [...byId.values()].flatMap((cue) => cue.split('\n'))
+          .map((line) => line.replace(TRANSLATED_SPEAKER_PREFIX, '')).join(' ');
+        return hasAcceptableThaiTranslation(speech);
+      },
     }
-    return {
-      mode: 'indexed',
-      byId,
-      matchedCount: byId.size,
-      elapsedSec,
-    };
-  }
-
-  const fallbackSrt = String(
-    parsed?.thai_srt ||
-      (parsed?.rawFallbackText?.includes('-->') ? parsed.rawFallbackText : '')
-  ).trim();
-  if (!fallbackSrt) {
-    throw new Error('ไม่สามารถแปลบทคำบรรยายจากภาษาต้นฉบับเป็นภาษาไทยได้');
-  }
-  return { mode: 'srt', thaiSrt: fallbackSrt, elapsedSec };
+  );
+  const byId = readTranslations(text);
+  return cuesBatch.map((cue, index) => ({ ...cue, text: byId.get(index + 1) }));
 }
 
 async function sliceAudioToMp3Chunk(sourceAudioPath, startSec, lenSec, outPath, { stepLabel = '', logger = null, logIntervalMs = 10000 } = {}) {
@@ -1101,6 +1160,8 @@ async function generateSubtitlesWithGemini(
       rangeLabel,
       cues: normalizedCues,
       rawSrt: res1.originalSrt,
+      contextSummary: res1.contextSummary,
+      speakerLabels: res1.speakerLabels,
     };
   };
   const recordChunkOutput = (...args) => {
@@ -1243,8 +1304,12 @@ async function generateSubtitlesWithGemini(
   if (allOriginalCues.length === 0) {
     throw new Error(lastChunkErrorMsg || 'ไม่พบคิวซับต้นฉบับที่มีไทม์โค้ดถูกต้อง');
   }
-  const mergedOriginalSrt = cuesToSrt(allOriginalCues);
   const dominantLang = sourceLanguage;
+  const speakerLabels = chunkResults.find((result) => result.speakerLabels)?.speakerLabels;
+  const mergedOriginalSrt = cuesToSrt(allOriginalCues.map((cue) => ({
+    ...cue,
+    text: localizeOriginalSpeakerLabels(cue.text, speakerLabels, dominantLang.isThai),
+  })));
 
   if (dominantLang.isThai) {
     await logger.log(
@@ -1268,147 +1333,52 @@ async function generateSubtitlesWithGemini(
   );
 
   const TRANSLATE_BATCH_MAX_CUES = 65;
-
-  const translateCueBatchWithSplit = async (cuesBatch, batchLabel, depth = 0) => {
+  const allThaiCues = [];
+  const translateRange = async (start, end, batchLabel, depth = 0) => {
+    const batch = allOriginalCues.slice(start, end);
+    const contextSummaries = chunkResults
+      .filter(({ chunk, contextSummary }) => contextSummary &&
+        chunk.startSec * 1000 <= batch.at(-1).endMs && chunk.endSec * 1000 >= batch[0].startMs)
+      .map(({ chunk, contextSummary }) => ({
+        clip_offset_seconds: chunk.startSec,
+        summary: contextSummary,
+      }));
     try {
-      const tr = await translateCuesToThaiWithGemini(
-        cuesBatch,
-        dominantLang.name,
-        modelName,
-        customPrompt,
-        { chunkInfo: batchLabel, logger }
-      );
-
-      if (tr.mode === 'indexed') {
-        if (tr.matchedCount < Math.floor(cuesBatch.length * 0.8) && depth < 2 && cuesBatch.length >= 12) {
-          throw new Error(`ได้คำแปลไม่ครบ (${tr.matchedCount}/${cuesBatch.length} รายการ)`);
-        }
-        return {
-          cues: cuesBatch.map((orig, idx) => ({
-            startMs: orig.startMs,
-            endMs: orig.endMs,
-            text: tr.byId.get(idx + 1) || orig.text,
-          })),
-          elapsedSec: tr.elapsedSec,
-        };
+      return await translateCuesToThaiWithGemini(batch, dominantLang.name, modelName, customPrompt, {
+        chunkInfo: batchLabel,
+        logger,
+        contextSummaries,
+        before: allOriginalCues.slice(Math.max(0, start - 2), start).map(({ text }) => text),
+        after: allOriginalCues.slice(end, end + 2).map(({ text }) => text),
+      });
+    } catch (error) {
+      if (depth >= 2 || batch.length < 2) {
+        throw new Error(`แปล ${batchLabel} ไม่สำเร็จ: ${error.message}`, { cause: error });
       }
-
-      const parsedThai = parseSrtCues(tr.thaiSrt);
-      if (parsedThai.length === cuesBatch.length) {
-        // Lock exact timestamps from Step 1 to guarantee 100% timing alignment across chunks
-        return {
-          cues: cuesBatch.map((orig, idx) => ({
-            startMs: orig.startMs,
-            endMs: orig.endMs,
-            text: cleanTranslatedCueText(parsedThai[idx].text) || orig.text,
-          })),
-          elapsedSec: tr.elapsedSec,
-        };
-      }
-      if (depth < 2 && cuesBatch.length >= 10) {
-        throw new Error(`ได้คำแปลไม่ครบ (${parsedThai.length}/${cuesBatch.length} ช่วง)`);
-      }
-      if (parsedThai.length > 0) {
-        return {
-          cues: cuesBatch.map((orig, idx) => ({
-            startMs: orig.startMs,
-            endMs: orig.endMs,
-            text: cleanTranslatedCueText(parsedThai[idx]?.text) || orig.text,
-          })),
-          elapsedSec: tr.elapsedSec,
-        };
-      }
-      throw new Error('ไม่พบข้อความคำแปล');
-    } catch (trErr) {
-      if (depth < 2 && cuesBatch.length >= 12) {
-        const mid = Math.floor(cuesBatch.length / 2);
-        await logger.log(
-          `⚠️ [ขั้นที่ 2/2] แปล ${batchLabel} ไม่สมบูรณ์ (${trErr.message}) — แบ่งครึ่งแปลทีละ ${mid} ประโยค...`,
-          { level: 'warn', toDb: true }
-        );
-        const left = await translateCueBatchWithSplit(cuesBatch.slice(0, mid), `${batchLabel}-A`, depth + 1);
-        const right = await translateCueBatchWithSplit(cuesBatch.slice(mid), `${batchLabel}-B`, depth + 1);
-        const sumSec = (parseFloat(left.elapsedSec || 0) + parseFloat(right.elapsedSec || 0)).toFixed(1);
-        return { cues: [...left.cues, ...right.cues], elapsedSec: sumSec };
-      }
-      await logger.log(
-        `⚠️ [ขั้นที่ 2/2] แปล ${batchLabel} ไม่สำเร็จ (${trErr.message}) — คงข้อความต้นฉบับในช่วงนี้ไว้`,
-        { level: 'warn', toDb: true }
-      );
-      return { cues: cuesBatch, elapsedSec: '0.0' };
+      const middle = start + Math.floor(batch.length / 2);
+      await logger.log(`⚠️ [ขั้นที่ 2/2] แปล ${batchLabel} ไม่ครบ — แบ่งครึ่งแล้วลองใหม่`, { level: 'warn', toDb: true });
+      const left = await translateRange(start, middle, `${batchLabel}-A`, depth + 1);
+      const right = await translateRange(middle, end, `${batchLabel}-B`, depth + 1);
+      return [...left, ...right];
     }
   };
 
-  let allThaiCues = [];
-  for (const r of chunkResults) {
-    if (r.cues.length === 0) continue;
-
-    await logger.log(`🌐 [ขั้นที่ 2/2] กำลังแปล ${r.rangeLabel} (${r.cues.length} ประโยค) -> ไทย...`, { toDb: true });
-    let chunkElapsed = 0;
-    let chunkTranslatedCount = 0;
-    const totalBatches = Math.ceil(r.cues.length / TRANSLATE_BATCH_MAX_CUES);
-    for (let offset = 0; offset < r.cues.length; offset += TRANSLATE_BATCH_MAX_CUES) {
-      const subBatch = r.cues.slice(offset, offset + TRANSLATE_BATCH_MAX_CUES);
-      const batchNo = Math.floor(offset / TRANSLATE_BATCH_MAX_CUES) + 1;
-      const subLabel = totalBatches > 1 ? `${r.rangeLabel} (ชุด ${batchNo}/${totalBatches})` : r.rangeLabel;
-      const translated = await translateCueBatchWithSplit(subBatch, subLabel);
-      allThaiCues.push(...translated.cues);
-      chunkTranslatedCount += translated.cues.length;
-      chunkElapsed += parseFloat(translated.elapsedSec || 0);
-    }
-    await logger.log(`✅ [ขั้นที่ 2/2] แปล ${r.rangeLabel} เสร็จใน ${chunkElapsed.toFixed(1)}s (${chunkTranslatedCount} ประโยค)`, {
-      level: 'success',
-      toDb: true,
-    });
+  const batchCount = Math.ceil(allOriginalCues.length / TRANSLATE_BATCH_MAX_CUES);
+  for (let start = 0; start < allOriginalCues.length; start += TRANSLATE_BATCH_MAX_CUES) {
+    const end = Math.min(start + TRANSLATE_BATCH_MAX_CUES, allOriginalCues.length);
+    const label = `ชุด ${Math.floor(start / TRANSLATE_BATCH_MAX_CUES) + 1}/${batchCount} (คิว ${start + 1}–${end})`;
+    await logger.log(`🌐 [ขั้นที่ 2/2] กำลังแปล ${label} → ไทย`, { toDb: true });
+    allThaiCues.push(...await translateRange(start, end, label));
+    await logger.log(`✅ [ขั้นที่ 2/2] แปล ${label} เสร็จแล้ว`, { level: 'success', toDb: true });
   }
 
-  // Final safety sweep: catch any individual straggler cues still left in foreign script without Thai
-  const stragglerIndices = [];
-  for (let i = 0; i < allThaiCues.length; i++) {
-    const sc = countScriptChars(allThaiCues[i].text);
-    const nonLatin = sc.cjkCount + sc.kanaCount + sc.hangulCount;
-    if (sc.thaiCount === 0 && (nonLatin >= 2 || sc.latinCount >= 10)) {
-      stragglerIndices.push(i);
-    }
-  }
-  if (stragglerIndices.length > 0) {
-    await logger.log(
-      `🔍 [ขั้นที่ 2/2] พบคำบรรยายค้างภาษาต่างประเทศ ${stragglerIndices.length} ช่วง — กำลังแปลเก็บตกเป็นภาษาไทย...`,
-      { level: 'warn', toDb: true }
-    );
-    const BATCH_LIMIT = 35;
-    for (let start = 0; start < stragglerIndices.length; start += BATCH_LIMIT) {
-      const idxSlice = stragglerIndices.slice(start, start + BATCH_LIMIT);
-      const cueSlice = idxSlice.map((idx) => allThaiCues[idx]);
-      const fixed = await translateCueBatchWithSplit(cueSlice, `เก็บตก-${Math.floor(start / BATCH_LIMIT) + 1}`, 1);
-      if (fixed.cues.length === cueSlice.length) {
-        idxSlice.forEach((origIdx, j) => {
-          allThaiCues[origIdx] = {
-            startMs: allThaiCues[origIdx].startMs,
-            endMs: allThaiCues[origIdx].endMs,
-            text: fixed.cues[j].text || allThaiCues[origIdx].text,
-          };
-        });
-      }
-    }
-  }
-
-  allThaiCues = normalizeSubtitleTimeline(
-    splitOverlongSubtitleCues(trimRunawayCueEndsBeforeSplit(allThaiCues), {
-      maxDurationMs: 5200,
-      maxChars: 60,
-      idealChars: 44,
-    }),
-    { maxVideoDurationMs: maxVideoMs }
-  );
-  const mergedThaiSrt = cuesToSrt(allThaiCues);
   return {
     isThai: false,
     detectedLangCode: dominantLang.code,
     detectedLangName: dominantLang.name,
     originalSrt: mergedOriginalSrt,
-    thaiSrt: mergedThaiSrt || mergedOriginalSrt,
-    totalCues: allThaiCues.length || allOriginalCues.length,
+    thaiSrt: cuesToSrt(allThaiCues),
+    totalCues: allOriginalCues.length,
   };
 }
 
