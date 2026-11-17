@@ -22,6 +22,12 @@ import PlayerStatsModal from './player/PlayerStatsModal';
 import PlayerContextMenu from './player/PlayerContextMenu';
 import PlayerEndScreen from './player/PlayerEndScreen';
 
+function unlockBrowserOrientation() {
+  if (!window.matchMedia('(display-mode: standalone)').matches) {
+    window.screen.orientation?.unlock?.();
+  }
+}
+
 export default function VideoPlayer({
   src,
   poster,
@@ -1752,12 +1758,12 @@ export default function VideoPlayer({
         }
         setIsFullscreen(false);
 
-        // Allow natural free rotation again after rotating back to portrait
+        // Browser tabs can follow the device again after leaving fullscreen.
         if (typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
           setTimeout(() => {
             if (document.fullscreenElement || document.webkitFullscreenElement) return;
             try {
-              window.screen.orientation.unlock();
+              unlockBrowserOrientation();
             } catch (_) { }
           }, 600);
         }
@@ -1817,7 +1823,7 @@ export default function VideoPlayer({
     } catch (err) {
       console.log('Manual orientation toggle notice:', err);
       if (window.screen.orientation.unlock) {
-        window.screen.orientation.unlock();
+        unlockBrowserOrientation();
       }
       showToast('หมุนหน้าจอตามการเอียงของอุปกรณ์');
     }
@@ -1838,7 +1844,7 @@ export default function VideoPlayer({
           setTimeout(() => {
             if (document.fullscreenElement || document.webkitFullscreenElement) return;
             try {
-              window.screen.orientation.unlock();
+              unlockBrowserOrientation();
             } catch (_) { }
           }, 600);
         }
@@ -1851,7 +1857,7 @@ export default function VideoPlayer({
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       if (typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
         try {
-          window.screen.orientation.unlock();
+          unlockBrowserOrientation();
         } catch (_) { }
       }
     };

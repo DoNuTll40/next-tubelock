@@ -7,6 +7,7 @@ export default function manifest() {
     start_url: '/',
     scope: '/',
     display: 'standalone',
+    orientation: 'portrait-primary',
     background_color: '#0F0F0F',
     theme_color: '#0F0F0F',
     icons: [192, 512].map((size) => ({
