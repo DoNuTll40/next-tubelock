@@ -12,16 +12,18 @@ import {
   ListPlus,
   Bookmark,
   Share2,
-  LockKeyhole
+  LockKeyhole,
+  Pencil
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { formatResolutionBadge, encodeVideoSlug, isMatureVideo, getVideoResumeTime } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
-import { prewarmVideoSourceClient } from '@/lib/playbackResolver';
+import { prewarmVideoSourceClient, invalidateClientVideoCache } from '@/lib/playbackResolver';
 import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
 import { useSession } from '@/context/SessionContext';
+import DeleteVideoModal from '@/components/DeleteVideoModal';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
 const preWarmedIds = new Set();
@@ -32,6 +34,12 @@ export default function VideoCard({
   compact = false,
   half = false,
   onDelete = null,
+  href = null,
+  enablePrewarm = true,
+  progressPctOverride = null,
+  renderMeta = null,
+  renderMenu = null,
+  isMenuOpen = false,
 }) {
   const [showMenu, setShowMenu] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -44,7 +52,11 @@ export default function VideoCard({
 
   // 18+ / Mature Content Filter preference (Global settings + per-card reveal)
   const isMature = isMatureVideo(video);
-  const isLoggedIn = Boolean(useSession());
+  const session = useSession();
+  const isLoggedIn = Boolean(session);
+  const canEdit = Boolean(
+    session?.isAdmin || (session?.id && video?.user_id === session.id)
+  );
   const allow18Plus = usePosterPreference(isMature);
   const videoId = video.id;
   const { poster: currentPoster, revealPoster } = usePosterReveal(isMature ? videoId : null, !allow18Plus);
@@ -105,7 +117,7 @@ export default function VideoCard({
   // Pre-warm: ดึง source URL ล่วงหน้าเงียบๆ และเก็บใน Client Memory Cache
   // รองรับทั้ง hover (80ms debounce) และ mousedown/touchstart (0ms ทันทีที่แตะ/คลิก)
   const handlePreWarm = () => {
-    if (!video?.id || preWarmedIds.has(video.id)) return;
+    if (!enablePrewarm || !video?.id || preWarmedIds.has(video.id)) return;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
       preWarmedIds.add(video.id);
@@ -114,7 +126,7 @@ export default function VideoCard({
   };
 
   const handlePreWarmImmediate = () => {
-    if (!video?.id) return;
+    if (!enablePrewarm || !video?.id) return;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     preWarmedIds.add(video.id);
     prewarmVideoSourceClient(video.id, { immediate: true });
@@ -133,6 +145,7 @@ export default function VideoCard({
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'ไม่สามารถลบวิดีโอได้');
       }
+      invalidateClientVideoCache(video.id);
       setShowDeleteModal(false);
       onDelete?.(video.id);
     } catch (err) {
@@ -171,7 +184,8 @@ export default function VideoCard({
   const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
   const videoSlug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
   const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, video.duration);
-  const watchUrl = videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/';
+  const watchUrl = href || (videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/');
+  const effectiveProgressPct = progressPctOverride !== null ? progressPctOverride : progressPct;
 
   // สกัดสีเด่นเมื่อภาพ Thumbnail โหลดเสร็จ (สไตล์ YouTube Themed Color)
   const handleImageLoad = (e) => {
@@ -290,11 +304,12 @@ export default function VideoCard({
               setShowMenu={setShowMenu}
               onOpenDeleteModal={() => setShowDeleteModal(true)}
               canDelete={Boolean(onDelete)}
+              canEdit={canEdit}
             />
           </div>
         </div>
 
-        <DeleteModal
+        <DeleteVideoModal
           isOpen={showDeleteModal}
           onClose={() => setShowDeleteModal(false)}
           onConfirm={handleDelete}
@@ -384,7 +399,7 @@ export default function VideoCard({
           </div>
         </div>
 
-        {onDelete && (
+        {(onDelete || canEdit) && (
           <VideoMenu
             video={video}
             variant="compact"
@@ -392,10 +407,11 @@ export default function VideoCard({
             setShowMenu={setShowMenu}
             onOpenDeleteModal={() => setShowDeleteModal(true)}
             canDelete={Boolean(onDelete)}
+            canEdit={canEdit}
           />
         )}
 
-        <DeleteModal
+        <DeleteVideoModal
           isOpen={showDeleteModal}
           onClose={() => setShowDeleteModal(false)}
           onConfirm={handleDelete}
@@ -412,7 +428,7 @@ export default function VideoCard({
   // ==========================================
   return (
     <div
-      className="flex flex-col group relative select-none rounded-2xl p-2 yt-card-hover cursor-pointer"
+      className={`flex flex-col group relative select-none rounded-2xl p-2 yt-card-hover cursor-pointer ${isMenuOpen ? 'z-30' : ''}`}
       onMouseEnter={handlePreWarm}
       onMouseLeave={handlePreWarmCancel}
       onFocus={handlePreWarm}
@@ -476,11 +492,11 @@ export default function VideoCard({
         )}
 
         {/* YouTube Watch Progress Bar */}
-        {progressPct > 0 && (
+        {effectiveProgressPct > 0 && (
           <div className="absolute left-0 right-0 bottom-0 z-30 h-1 bg-black/40 overflow-hidden pointer-events-none">
             <div
               className="h-full bg-[#FF7A00]"
-              style={{ width: `${progressPct}%`}}
+              style={{ width: `${effectiveProgressPct}%`}}
             />
           </div>
         )}
@@ -509,45 +525,56 @@ export default function VideoCard({
             {video.title}
           </h3>
 
-          <div className="flex flex-col text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-normal">
-            <span className="relative z-20 truncate font-medium cursor-default">
-              {video.author_name || 'DONUŤ'}
-            </span>
-            <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
-              {isMature && (
-                <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
-                  18+
-                </span>
-              )}
-              <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px]">
-                {video.codec ? video.codec.toUpperCase() : 'H264'}
+          {renderMeta ? (
+            renderMeta()
+          ) : (
+            <div className="flex flex-col text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-normal">
+              <span className="relative z-20 truncate font-medium cursor-default">
+                {video.author_name || 'DONUŤ'}
               </span>
-              <span>•</span>
-              <span className="font-mono">{fileSizeMB} MB</span>
-              <span>•</span>
-              <span>{video.source_type === 'hls' ? 'HLS Stream' : 'Direct'}</span>
+              <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
+                {isMature && (
+                  <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
+                    18+
+                  </span>
+                )}
+                <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px]">
+                  {video.codec ? video.codec.toUpperCase() : 'H264'}
+                </span>
+                <span>•</span>
+                <span className="font-mono">{fileSizeMB} MB</span>
+                <span>•</span>
+                <span>{video.source_type === 'hls' ? 'HLS Stream' : 'Direct'}</span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
-        <VideoMenu
-          video={video}
-          variant="grid"
-          showMenu={showMenu}
-          setShowMenu={setShowMenu}
-          onOpenDeleteModal={() => setShowDeleteModal(true)}
-          canDelete={Boolean(onDelete)}
-        />
+        {renderMenu ? (
+          renderMenu()
+        ) : (
+          <VideoMenu
+            video={video}
+            variant="grid"
+            showMenu={showMenu}
+            setShowMenu={setShowMenu}
+            onOpenDeleteModal={() => setShowDeleteModal(true)}
+            canDelete={Boolean(onDelete)}
+            canEdit={canEdit}
+          />
+        )}
       </div>
 
-      <DeleteModal
-        isOpen={showDeleteModal}
-        onClose={() => setShowDeleteModal(false)}
-        onConfirm={handleDelete}
-        isDeleting={isDeleting}
-        deleteError={deleteError}
-        videoTitle={video.title}
-      />
+      {!renderMenu && (
+        <DeleteVideoModal
+          isOpen={showDeleteModal}
+          onClose={() => setShowDeleteModal(false)}
+          onConfirm={handleDelete}
+          isDeleting={isDeleting}
+          deleteError={deleteError}
+          videoTitle={video.title}
+        />
+      )}
     </div>
   );
 }
@@ -562,6 +589,7 @@ function VideoMenu({
   setShowMenu,
   onOpenDeleteModal,
   canDelete = false,
+  canEdit = false,
 }) {
   const isHalf = variant === 'half';
   const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
@@ -650,6 +678,20 @@ function VideoMenu({
                 <span>แชร์ / คัดลอกลิงก์</span>
               </button>
 
+              {canEdit && safeId && (
+                <Link
+                  href={`/videos/${safeId}/edit`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMenu(false);
+                  }}
+                  className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
+                >
+                  <Pencil className="w-5 h-5 text-[#FF7A00] stroke-[1.8]" />
+                  <span>แก้ไขวิดีโอ</span>
+                </Link>
+              )}
+
               {canDelete && (
                 <>
                   <div className="h-px bg-[#EFECE6] dark:bg-white/10 my-1.5" />
@@ -696,6 +738,20 @@ function VideoMenu({
                 <span>คัดลอกลิงก์</span>
               </button>
 
+              {canEdit && safeId && (
+                <Link
+                  href={`/videos/${safeId}/edit`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMenu(false);
+                  }}
+                  className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-2 text-[#606060] dark:text-zinc-300 transition-colors cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5 text-[#FF7A00]" />
+                  <span>แก้ไขวิดีโอ</span>
+                </Link>
+              )}
+
               {canDelete && (
                 <>
                   <div className="h-px bg-[#EFECE6] dark:bg-white/10 my-0.5" />
@@ -716,80 +772,6 @@ function VideoMenu({
           )}
         </>
       )}
-    </div>
-  );
-}
-
-// ==========================================
-// Sub-component: Delete Confirmation Modal
-// ==========================================
-function DeleteModal({ isOpen, onClose, onConfirm, isDeleting, deleteError, videoTitle }) {
-  if (!isOpen) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!isDeleting) onClose();
-      }}
-    >
-      <div
-        className="bg-white dark:bg-[#181818] rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-zinc-100 dark:border-white/10 flex flex-col gap-4 text-left"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-100 dark:border-rose-900/50 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0">
-            <Trash2 className="w-5 h-5" />
-          </div>
-          <div className="flex flex-col min-w-0">
-            <h3 className="text-base font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-tight">
-              ลบวิดีโอนี้?
-            </h3>
-            <span className="text-xs text-[#8C857B] dark:text-[#AAAAAA] truncate">{videoTitle}</span>
-          </div>
-        </div>
-
-        <p className="text-xs text-[#606060] dark:text-[#AAAAAA] leading-relaxed">
-          วิดีโอนี้จะถูกลบออกจากฐานข้อมูลและลบไฟล์ทั้งหมดบน{' '}
-          <strong className="text-[#0F0F0F] dark:text-[#F1F1F1]">OneDrive ถาวร</strong> โดยไม่สามารถกู้คืนได้
-        </p>
-
-        {deleteError && (
-          <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 rounded-xl text-xs text-rose-600 dark:text-rose-400 font-medium">
-            {deleteError}
-          </div>
-        )}
-
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            disabled={isDeleting}
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-[#0F0F0F] dark:text-[#F1F1F1] bg-zinc-100 dark:bg-white/10 hover:bg-zinc-200 dark:hover:bg-white/15 disabled:opacity-50 transition cursor-pointer"
-          >
-            ยกเลิก
-          </button>
-          <button
-            type="button"
-            disabled={isDeleting}
-            onClick={onConfirm}
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 disabled:opacity-50 transition flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200 dark:shadow-none"
-          >
-            {isDeleting ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>กำลังลบ...</span>
-              </>
-            ) : (
-              <>
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>ยืนยันการลบ</span>
-              </>
-            )}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

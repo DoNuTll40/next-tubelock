@@ -388,6 +388,12 @@ export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriorit
   return promise;
 }
 
+export function invalidateClientVideoCache(videoId) {
+  if (!videoId) return;
+  clientSourceCache.delete(String(videoId));
+  clientSourceCache.delete(`${videoId}:previews`);
+}
+
 export function prewarmVideoSourceClient(videoId, { immediate = false } = {}) {
   if (!videoId) return;
   fetchVideoSourceClient(videoId, { lowPriority: !immediate }).catch(() => {});

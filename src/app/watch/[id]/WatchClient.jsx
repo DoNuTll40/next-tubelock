@@ -12,8 +12,9 @@ import DescriptionBox from '@/components/watch/DescriptionBox';
 import {
   Share2, ThumbsUp, ThumbsDown,
   Film, Bookmark, UploadCloud,
-  AlertCircle, ArrowLeft
+  AlertCircle, ArrowLeft, Pencil
 } from 'lucide-react';
+import { useSession } from '@/context/SessionContext';
 import { resolveClientPlaybackSource, fetchVideoSourceClient, prewarmVideoSourceClient, resolveStoryboard } from '@/lib/playbackResolver';
 import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 
@@ -50,6 +51,10 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
   // SSR Initialized State — Zero Waiting, Zero Mock Skeletons!
   const [video, setVideo] = useState(initialVideo);
+  const session = useSession();
+  const canEdit = Boolean(
+    session?.isAdmin || (session?.id && video?.user_id === session.id)
+  );
   const isMusic = isMusicVideo(video);
   const matureVideo = isMatureVideo(video);
   const showAdultPoster = usePosterPreference(matureVideo, initialShowAdultPosters);
@@ -208,8 +213,9 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           setVideo((prev) => ({
             ...prev,
             ...sourceData.video,
-            subtitle_srt: sourceData.video.subtitle_srt || prev?.subtitle_srt || '',
-            subtitle_vtt: sourceData.video.subtitle_vtt || prev?.subtitle_vtt || '',
+            subtitle_srt: sourceData.video.subtitle_srt ?? prev?.subtitle_srt ?? '',
+            subtitle_vtt: sourceData.video.subtitle_vtt ?? prev?.subtitle_vtt ?? '',
+            subtitle_tracks: sourceData.video.subtitle_tracks ?? prev?.subtitle_tracks ?? [],
             subtitle_status: sourceData.video.subtitle_status || prev?.subtitle_status || 'waiting',
             author_name: sourceData.video.author_name || prev?.author_name,
             author_picture: sourceData.video.author_picture || prev?.author_picture,
@@ -609,6 +615,17 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
                   <span className={isSaved ? 'text-[#FF7A00] font-bold' : ''}>{isSaved ? 'บันทึกแล้ว' : 'บันทึก'}</span>
                 </button>
+
+                {/* Studio Edit Video Pill (Owner / Admin only) */}
+                {canEdit && video?.id && (
+                  <Link
+                    href={`/videos/${video.id}/edit`}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#FF7A00]/12 hover:bg-[#FF7A00] text-[#FF7A00] hover:text-white border border-[#FF7A00]/30 text-xs font-semibold transition active:scale-95 shrink-0"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>แก้ไขวิดีโอ</span>
+                  </Link>
+                )}
               </div>
             </div>
 

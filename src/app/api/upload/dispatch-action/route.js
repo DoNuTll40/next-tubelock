@@ -2,6 +2,7 @@ import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
+import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
 
 async function ensureAiColumns(sql) {
   try {
@@ -177,14 +178,19 @@ export async function POST(request) {
 
       const targetUserRating = userRating || video.content_rating || 'auto';
 
-      await sql`
+      const claimedRating = await sql`
         UPDATE videos
         SET sprite_status = 'generating',
             rating_check_status = 'analyzing',
             user_selected_rating = ${targetUserRating},
             updated_at = NOW()
-        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
+          AND NOT (COALESCE(rating_check_status, '') = ANY(${EVALUATED_RATING_STATUSES}::text[]))
+        RETURNING id;
       `;
+      if (!claimedRating.length) {
+        return NextResponse.json({ success: false, error: 'ประเมินเรตแล้วและล็อกการแก้ไข' }, { status: 409 });
+      }
 
       await triggerGitHubWorkflow('sprite-content-rating.yml', {
         video_id: String(videoId),

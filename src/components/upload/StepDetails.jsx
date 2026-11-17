@@ -11,71 +11,13 @@ import {
   Sparkles,
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
-
-function formatThumbTime(sec = 0) {
-  const s = Math.max(0, Math.round(Number(sec) || 0));
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${m}:${String(rem).padStart(2, '0')}`;
-}
-
-function resizeThumbnailFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('ไม่สามารถอ่านไฟล์รูปภาพได้'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('ไฟล์รูปภาพไม่ถูกต้อง'));
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-
-        if (img.width < img.height) {
-          // Format portrait cover onto 16:9 canvas with blurred dark backdrop + sharp centered frame
-          const targetW = 960;
-          const targetH = 540;
-          canvas.width = targetW;
-          canvas.height = targetH;
-
-          const bgScale = Math.max(targetW / img.width, targetH / img.height);
-          const bgW = img.width * bgScale;
-          const bgH = img.height * bgScale;
-          ctx.save();
-          ctx.filter = 'blur(26px) brightness(0.62) saturate(0.9)';
-          ctx.drawImage(img, (targetW - bgW) / 2, (targetH - bgH) / 2, bgW, bgH);
-          ctx.restore();
-
-          const fgScale = targetH / img.height;
-          const fgW = img.width * fgScale;
-          ctx.drawImage(img, (targetW - fgW) / 2, 0, fgW, targetH);
-        } else {
-          const maxWidth = 960;
-          const scale = img.width > maxWidth ? maxWidth / img.width : 1;
-          canvas.width = Math.max(1, Math.round(img.width * scale));
-          canvas.height = Math.max(1, Math.round(img.height * scale));
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        }
-
-        resolve(canvas.toDataURL('image/jpeg', 0.86));
-      };
-      img.src = String(reader.result || '');
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-const UPLOAD_CATEGORIES = [
-  { value: 'general', label: 'ทั่วไป (General)' },
-  { value: 'shorts', label: 'วิดีโอสั้น (Shorts)' },
-  { value: 'cinema', label: 'ภาพยนตร์ / ซีรีส์ (Cinema)' },
-  { value: 'music', label: 'เพลง / ดนตรี (Music)' },
-  { value: 'entertainment', label: 'บันเทิง / วาไรตี้' },
-  { value: 'gaming', label: 'เกม (Gaming)' },
-  { value: 'tech', label: 'เทคโนโลยี / ไอที' },
-  { value: 'education', label: 'การศึกษา / สาระ' },
-];
-
-const SUGGESTED_TAGS = ['Shorts', '4K', '1080p', 'Music', 'Gaming', 'HLS', 'Tech', 'Vlog', 'Tutorial', 'Highlight'];
+import {
+  UPLOAD_CATEGORIES,
+  SUGGESTED_TAGS,
+  cleanVideoTitle,
+  formatThumbTime,
+  resizeThumbnailFile,
+} from '@/lib/videoEditorUtils';
 
 export default function StepDetails({
   title,
@@ -119,12 +61,7 @@ export default function StepDetails({
   // Clean filename helper
   const handleCleanTitle = () => {
     if (!title) return;
-    const cleaned = title
-      .replace(/\.(mp4|mkv|mov|avi|webm|flv|m4v|wmv)$/i, '')
-      .replace(/[_\-]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    setTitle(cleaned);
+    setTitle(cleanVideoTitle(title));
   };
 
   // Insert timestamp sample helper

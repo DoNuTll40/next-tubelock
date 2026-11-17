@@ -6,33 +6,7 @@ import {
   AlertTriangle,
   Loader2,
 } from 'lucide-react';
-
-const CONTENT_RATINGS = [
-  {
-    id: 'all',
-    label: 'ทั่วไป',
-    badge: 'G / ALL',
-    desc: 'เหมาะสำหรับผู้ชมทุกวัย ไม่มีเนื้อหารุนแรงหรือคำหยาบ',
-  },
-  {
-    id: '13+',
-    label: '13 ปีขึ้นไป',
-    badge: '13+',
-    desc: 'อาจมีคำพูดหรือฉากที่เหมาะกับผู้ชมวัยรุ่นขึ้นไป',
-  },
-  {
-    id: '18+',
-    label: 'ผู้ใหญ่ 18+',
-    badge: '18+',
-    desc: 'มีเนื้อหาที่ต้องใช้วิจารณญาณหรือฉากรุนแรง',
-  },
-  {
-    id: 'mature',
-    label: 'จำกัดเฉพาะ',
-    badge: 'RESTRICTED',
-    desc: 'จำกัดการรับชมเฉพาะบัญชีที่ได้รับอนุญาต',
-  },
-];
+import { CONTENT_RATINGS } from '@/lib/videoEditorUtils';
 
 function formatThaiModerationText(text) {
   if (!text) return '';

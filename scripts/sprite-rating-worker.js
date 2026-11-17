@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { neon } from '@neondatabase/serverless';
+import { EVALUATED_RATING_STATUSES } from '../src/lib/ratingStatus.js';
 import {
   ensureWorkerLogsColumn,
   createWorkerLogger,
@@ -526,13 +527,19 @@ async function main() {
         ? USER_RATING
         : video.user_selected_rating || video.content_rating || 'auto';
 
-    await sql`
+    const claimedRating = await sql`
       UPDATE videos
       SET sprite_status = 'generating',
           rating_check_status = 'analyzing',
           updated_at = NOW()
-      WHERE id = ${vidNum};
+      WHERE id = ${vidNum}
+        AND NOT (COALESCE(rating_check_status, '') = ANY(${EVALUATED_RATING_STATUSES}::text[]))
+      RETURNING id;
     `;
+    if (!claimedRating.length) {
+      await logger.log('ℹ️ ประเมินเรตแล้วและล็อกการแก้ไข');
+      return;
+    }
     await logger.log(`⚙️ ตั้งค่าเรตเริ่มต้น: ${effectiveUserRating} | ต้นฉบับ OneDrive: ${activeRawName || '(ไม่มี — ใช้ภาพในสตรีม)'}`);
 
     await logger.log('🔑 กำลังขอ Access Token จาก Microsoft Graph และตรวจสอบโฟลเดอร์ OneDrive...');
@@ -729,7 +736,8 @@ async function main() {
           rating_check_status = ${verificationStatus},
           vision_analysis = ${JSON.stringify(fullAnalysis)}::jsonb,
           updated_at = NOW()
-      WHERE id = ${vidNum};
+      WHERE id = ${vidNum}
+        AND NOT (COALESCE(rating_check_status, '') = ANY(${EVALUATED_RATING_STATUSES}::text[]));
     `;
 
     await logger.log(
@@ -745,7 +753,8 @@ async function main() {
         SET sprite_status = CASE WHEN sprite_status = 'ready' THEN 'ready' ELSE 'failed' END,
             rating_check_status = 'failed',
             updated_at = NOW()
-        WHERE id = ${vidNum};
+        WHERE id = ${vidNum}
+          AND NOT (COALESCE(rating_check_status, '') = ANY(${EVALUATED_RATING_STATUSES}::text[]));
       `;
     } catch (_) {}
     process.exit(1);

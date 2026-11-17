@@ -7,8 +7,12 @@ import { Home, History, Plus, PlaySquare, Settings } from 'lucide-react';
 export default function BottomNav() {
   const pathname = usePathname();
 
-  // Hide BottomNav when watching a video or in settings
-  if (pathname?.startsWith('/watch') || pathname?.startsWith('/settings')) {
+  // Hide BottomNav when watching a video, in settings, or in the Studio video editor
+  if (
+    pathname?.startsWith('/watch') ||
+    pathname?.startsWith('/settings') ||
+    /^\/videos\/[^/]+\/edit/.test(pathname || '')
+  ) {
     return null;
   }
 

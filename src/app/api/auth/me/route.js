@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
+import { isAdmin } from '@/lib/access';
 
 export async function GET() {
     const cookieStore = await cookies();
@@ -30,6 +31,8 @@ export async function GET() {
 
         return NextResponse.json({
             session: {
+                id: row.user_id,
+                isAdmin: isAdmin(row.user_id),
                 provider: row.provider,
                 name:     user?.name    || null,
                 email:    user?.email   || null,

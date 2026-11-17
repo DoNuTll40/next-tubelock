@@ -2,6 +2,7 @@ import { protectVideoPoster } from '@/lib/videoUtils';
 import { NextResponse, after } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
+import { isAdmin, accessError } from '@/lib/access';
 import { isMusicVideo } from '@/lib/videoUtils';
 import { prewarmVideoSourceServer, sourceCache } from '@/lib/videoSourceService';
 
@@ -88,6 +89,54 @@ export async function GET(request) {
       } catch (_) {}
     }
 
+    const isMine = searchParams.get('mine') === '1';
+    if (isMine && userId == null) {
+      return accessError(401);
+    }
+
+    const noCacheHeaders = {
+      'Cache-Control': 'no-cache, no-store, max-age=0, must-revalidate',
+      'CDN-Cache-Control': 'no-cache, no-store',
+      'Vercel-CDN-Cache-Control': 'no-cache, no-store',
+    };
+
+    if (isMine) {
+      const admin = isAdmin(userId);
+      const studioRows = await sql`
+        SELECT
+          v.id, v.title, v.description, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec,
+          v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.updated_at,
+          v.status, v.transcode_progress, v.stage_detail, v.error_message, v.raw_file_name, v.source_type,
+          v.user_id,
+          to_jsonb(v)->>'subtitle_status' AS subtitle_status,
+          to_jsonb(v)->>'thumbnail_status' AS thumbnail_status,
+          to_jsonb(v)->>'user_selected_rating' AS user_selected_rating,
+          to_jsonb(v)->>'ai_suggested_rating' AS ai_suggested_rating,
+          to_jsonb(v)->>'rating_check_status' AS rating_check_status,
+          (
+            SELECT COALESCE(jsonb_agg(jsonb_build_object('id', t->>'id', 'label', t->>'label', 'lang', t->>'lang')), '[]'::jsonb)
+            FROM jsonb_array_elements(COALESCE(to_jsonb(v)->'subtitle_tracks', '[]'::jsonb)) AS t
+          ) AS subtitle_tracks_meta,
+          u.name AS author_name,
+          u.picture AS author_picture
+        FROM videos v
+        LEFT JOIN users u ON v.user_id = u.id
+        WHERE (${admin} OR v.user_id = ${userId})
+        ORDER BY v.created_at DESC;
+      `;
+
+      const studioData = (studioRows || []).map((row) => {
+        const tracksMeta = Array.isArray(row.subtitle_tracks_meta) ? row.subtitle_tracks_meta : [];
+        return {
+          ...protectVideoPoster(row),
+          subtitle_tracks_meta: tracksMeta,
+          subtitle_count: tracksMeta.length,
+        };
+      });
+
+      return NextResponse.json({ success: true, data: studioData }, { headers: noCacheHeaders });
+    }
+
     // ⚡ Ultra-fast Slim Projection with personalized watch_history
     let rows;
     const fetchVideos = async () => {
@@ -135,11 +184,7 @@ export async function GET(request) {
       }
     }
 
-    const headers = {
-      'Cache-Control': 'no-cache, no-store, max-age=0, must-revalidate',
-      'CDN-Cache-Control': 'no-cache, no-store',
-      'Vercel-CDN-Cache-Control': 'no-cache, no-store',
-    };
+    const headers = noCacheHeaders;
 
     const now = Date.now();
     const expiredVideoIds = [];

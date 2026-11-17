@@ -1,9 +1,11 @@
-import { protectVideoPoster } from '@/lib/videoUtils';
+import { protectVideoPoster, decodeVideoSlug } from '@/lib/videoUtils';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId, ensureFolderExists } from '@/lib/onedriveServer';
-import { decodeVideoSlug } from '@/lib/videoUtils';
+import { sourceCache } from '@/lib/videoSourceService';
+import { normalizeSubtitleTracks } from '@/lib/videoEditorUtils';
+import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -139,8 +141,10 @@ export async function DELETE(request, context) {
       }
     }
 
-    // 3. Delete record completely from Neon DB
+    // 3. Delete record completely from Neon DB and invalidate caches
     await sql`DELETE FROM videos WHERE id = ${id} AND (${admin} OR user_id = ${userId});`;
+    sourceCache.delete(String(id));
+    globalThis.__tubelock_asset_cache?.delete(`stream_vid_${id}/poster.jpg`);
 
     return NextResponse.json(
       {
@@ -165,9 +169,24 @@ export async function DELETE(request, context) {
 
 const DATA_IMAGE_RE = /^data:(image\/(?:jpe?g|png|webp));base64,(.+)$/i;
 
+async function uploadBufferToStreamFolder(token, driveId, folderId, fileName, buffer, contentType) {
+  await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(folderId)}:/${encodeURIComponent(fileName)}:/content`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': contentType,
+        'Content-Length': String(buffer.length),
+      },
+      body: buffer,
+    }
+  );
+}
+
 /**
  * PATCH /api/videos/[id]
- * Saves thumbnail choice/custom cover, extracted options, and draft metadata for the video owner
+ * Updates thumbnail, metadata, rating, and subtitle tracks for the video owner/admin
  */
 export async function PATCH(request, context) {
   try {
@@ -186,6 +205,11 @@ export async function PATCH(request, context) {
     try {
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(50) DEFAULT 'waiting';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_options JSONB DEFAULT '[]'::jsonb;`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_status VARCHAR(50) DEFAULT 'waiting';`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_tracks JSONB DEFAULT '[]'::jsonb;`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_selected_rating VARCHAR(50) DEFAULT 'all';`;
     } catch (_) {}
 
     const existing = await sql`
@@ -197,7 +221,18 @@ export async function PATCH(request, context) {
     if (!existing.length) return accessError(404);
 
     const body = await request.json();
-    const { thumbnailUrl, thumbnailOptions, title, description, category, tags, contentRating } = body || {};
+    const {
+      thumbnailUrl,
+      thumbnailOptions,
+      title,
+      description,
+      category,
+      tags,
+      contentRating,
+      subtitleTracks,
+      subtitleSrt,
+      subtitleVtt,
+    } = body || {};
 
     let validThumbUrl = null;
     let decodedImageBuffer = null;
@@ -233,58 +268,126 @@ export async function PATCH(request, context) {
       }
     }
 
-    // Best-effort sync of custom/selected poster.jpg to OneDrive
+    let hasSubtitleUpdate = false;
+    let normalizedSubTracks = [];
+    let nextSubSrt = null;
+    let nextSubVtt = null;
+    let nextSubStatus = null;
+
+    if (Array.isArray(subtitleTracks) || typeof subtitleSrt === 'string' || typeof subtitleVtt === 'string') {
+      hasSubtitleUpdate = true;
+      normalizedSubTracks = Array.isArray(subtitleTracks)
+        ? normalizeSubtitleTracks(subtitleTracks)
+        : normalizeSubtitleTracks(null, subtitleSrt || '', subtitleVtt || '');
+
+      const primaryTrack =
+        normalizedSubTracks.find((t) => t.id === 'th' || t.lang === 'th') ||
+        normalizedSubTracks[0] ||
+        null;
+      nextSubSrt = primaryTrack ? primaryTrack.srt : '';
+      nextSubVtt = primaryTrack ? primaryTrack.vtt : '';
+      nextSubStatus = normalizedSubTracks.length > 0 ? 'ready' : 'waiting';
+    }
+
+    const sanitizedTitle = typeof title === 'string' && title.trim() ? title.trim().slice(0, 150) : null;
+    const sanitizedDesc = typeof description === 'string' ? description : null;
+    const sanitizedCategory = typeof category === 'string' && category.trim() ? category.trim().slice(0, 100) : null;
+    const sanitizedTags = Array.isArray(tags)
+      ? tags.map((t) => String(t || '').trim().replace(/^[#,]+/, '')).filter(Boolean).slice(0, 15)
+      : null;
+    const sanitizedRating = typeof contentRating === 'string' ? contentRating.trim() : null;
+
+    // Best-effort sync of custom/selected poster.jpg & subtitles to OneDrive
     let syncedFolderId = existing[0].onedrive_folder_id || '';
-    if (decodedImageBuffer) {
+    const shouldSyncOneDrive = Boolean(decodedImageBuffer || (hasSubtitleUpdate && normalizedSubTracks.length > 0));
+    if (shouldSyncOneDrive) {
       try {
         const token = await getGraphToken();
         const driveId = await getUserDriveId(token);
         const folderId = syncedFolderId || (await ensureFolderExists(token, driveId, `/streams/stream_vid_${id}`));
         if (folderId) {
           syncedFolderId = folderId;
-          await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${encodeURIComponent(folderId)}:/poster.jpg:/content`,
-            {
-              method: 'PUT',
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': decodedContentType,
-                'Content-Length': String(decodedImageBuffer.length),
-              },
-              body: decodedImageBuffer,
+          const uploads = [];
+          if (decodedImageBuffer) {
+            uploads.push(uploadBufferToStreamFolder(token, driveId, folderId, 'poster.jpg', decodedImageBuffer, decodedContentType));
+          }
+          if (hasSubtitleUpdate && normalizedSubTracks.length > 0) {
+            uploads.push(
+              uploadBufferToStreamFolder(token, driveId, folderId, 'subtitles.srt', Buffer.from(nextSubSrt, 'utf8'), 'text/plain; charset=utf-8'),
+              uploadBufferToStreamFolder(token, driveId, folderId, 'subtitles.vtt', Buffer.from(nextSubVtt, 'utf8'), 'text/vtt; charset=utf-8')
+            );
+            const origTrack = normalizedSubTracks.find((t) => t.id === 'orig' || (t.lang && t.lang !== 'th' && t.id !== 'th'));
+            if (origTrack) {
+              uploads.push(
+                uploadBufferToStreamFolder(token, driveId, folderId, 'subtitles_original.srt', Buffer.from(origTrack.srt, 'utf8'), 'text/plain; charset=utf-8'),
+                uploadBufferToStreamFolder(token, driveId, folderId, 'subtitles_original.vtt', Buffer.from(origTrack.vtt, 'utf8'), 'text/vtt; charset=utf-8')
+              );
             }
-          );
+          }
+          await Promise.all(uploads);
         }
       } catch (odErr) {
-        console.warn('[PATCH Thumbnail OneDrive Sync Warning]:', odErr.message);
+        console.warn('[PATCH OneDrive Sync Warning]:', odErr.message);
       }
     }
 
     const updated = await sql`
-      UPDATE videos
+      UPDATE videos v
       SET thumbnail_url = COALESCE(${validThumbUrl}, thumbnail_url),
           thumbnail_options = COALESCE(${validOptions ? JSON.stringify(validOptions) : null}::jsonb, thumbnail_options),
           thumbnail_status = CASE WHEN ${Boolean(validOptions)} THEN 'ready' ELSE thumbnail_status END,
           onedrive_folder_id = COALESCE(NULLIF(${syncedFolderId}, ''), onedrive_folder_id),
-          title = COALESCE(${typeof title === 'string' && title.trim() ? title.trim().slice(0, 150) : null}, title),
-          description = COALESCE(${typeof description === 'string' ? description : null}, description),
-          category = COALESCE(${typeof category === 'string' && category.trim() ? category.trim() : null}, category),
-          tags = COALESCE(${Array.isArray(tags) ? tags : null}, tags),
-          content_rating = COALESCE(${typeof contentRating === 'string' && contentRating !== 'auto' ? contentRating : null}, content_rating),
-          user_selected_rating = COALESCE(${typeof contentRating === 'string' ? contentRating : null}, user_selected_rating),
+          title = COALESCE(${sanitizedTitle}, title),
+          description = COALESCE(${sanitizedDesc}, description),
+          category = COALESCE(${sanitizedCategory}, category),
+          tags = COALESCE(${sanitizedTags}, tags),
+          content_rating = CASE
+            WHEN to_jsonb(v)->>'rating_check_status' = ANY(${EVALUATED_RATING_STATUSES}::text[]) THEN content_rating
+            ELSE COALESCE(${sanitizedRating && sanitizedRating !== 'auto' ? sanitizedRating : null}, content_rating) END,
+          user_selected_rating = CASE
+            WHEN to_jsonb(v)->>'rating_check_status' = ANY(${EVALUATED_RATING_STATUSES}::text[]) THEN user_selected_rating
+            ELSE COALESCE(${sanitizedRating}, user_selected_rating) END,
+          subtitle_status = COALESCE(${nextSubStatus}, subtitle_status),
+          subtitle_srt = CASE WHEN ${hasSubtitleUpdate} THEN ${nextSubSrt || ''} ELSE subtitle_srt END,
+          subtitle_vtt = CASE WHEN ${hasSubtitleUpdate} THEN ${nextSubVtt || ''} ELSE subtitle_vtt END,
+          subtitle_tracks = CASE WHEN ${hasSubtitleUpdate} THEN ${JSON.stringify(normalizedSubTracks)}::jsonb ELSE subtitle_tracks END,
           source_cache = NULL,
           source_cache_expires_at = 0,
           updated_at = NOW()
       WHERE id = ${id} AND (${admin} OR user_id = ${userId})
-      RETURNING id, thumbnail_url, thumbnail_status, thumbnail_options;
+      RETURNING
+        id, title, description, category, tags, content_rating, user_selected_rating,
+        thumbnail_url, thumbnail_status, thumbnail_options,
+        subtitle_status, subtitle_srt, subtitle_vtt, subtitle_tracks, updated_at;
     `;
 
+    sourceCache.delete(String(id));
+    globalThis.__tubelock_asset_cache?.delete(`stream_vid_${id}/poster.jpg`);
+
+    const row = updated[0] || {};
     return NextResponse.json({
       success: true,
       videoId: id,
-      thumbnailUrl: updated[0]?.thumbnail_url || '',
-      thumbnailStatus: updated[0]?.thumbnail_status || 'waiting',
-      thumbnailOptions: updated[0]?.thumbnail_options || [],
+      thumbnailUrl: row.thumbnail_url || '',
+      thumbnailStatus: row.thumbnail_status || 'waiting',
+      thumbnailOptions: row.thumbnail_options || [],
+      video: {
+        id: row.id,
+        title: row.title || '',
+        description: row.description || '',
+        category: row.category || 'general',
+        tags: row.tags || [],
+        contentRating: row.content_rating || 'all',
+        userSelectedRating: row.user_selected_rating || 'all',
+        thumbnailUrl: row.thumbnail_url || '',
+        thumbnailStatus: row.thumbnail_status || 'waiting',
+        thumbnailOptions: row.thumbnail_options || [],
+        subtitleStatus: row.subtitle_status || 'waiting',
+        subtitleSrt: row.subtitle_srt || '',
+        subtitleVtt: row.subtitle_vtt || '',
+        subtitleTracks: row.subtitle_tracks || [],
+        updatedAt: row.updated_at,
+      },
     });
   } catch (err) {
     console.error('[PATCH_VIDEO_ERROR]:', err);

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Upload, RefreshCw, CheckCircle2, Play,
-  RotateCcw, Trash2, ListOrdered, Clock
+  RotateCcw, Trash2, ListOrdered, Clock, Pencil
 } from 'lucide-react';
 import { encodeUploadId, encodeVideoSlug } from '@/lib/videoUtils';
 
@@ -207,6 +207,13 @@ export default function UploadQueuePage() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                    <Link
+                      href={`/videos/${item.id}/edit`}
+                      className="flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-1.5 text-xs font-semibold hover:bg-white/10"
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-[#FF7A00]" />
+                      <span>แก้ไข</span>
+                    </Link>
                     <Link
                       href={`/upload?upload_id=${encodeUploadId(item.id)}`}
                       className="rounded-xl border border-white/15 px-3 py-1.5 text-xs font-semibold hover:bg-white/10"

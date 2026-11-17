@@ -1,6 +1,7 @@
 import "./globals.css";
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
+import { isAdmin } from '@/lib/access';
 import NextTopLoader from 'nextjs-toploader';
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ViewModeProvider } from "@/context/ViewModeContext";
@@ -76,7 +77,7 @@ export default async function RootLayout({ children }) {
     try {
       const sql = getDb();
       const [row] = await sql`
-        SELECT u.provider, u.name, u.email, u.picture
+        SELECT u.id, u.provider, u.name, u.email, u.picture
         FROM user_sessions s
         JOIN users u ON u.id = s.user_id
         WHERE s.session_token = ${token}
@@ -84,7 +85,7 @@ export default async function RootLayout({ children }) {
           AND s.expires_at > NOW()
         LIMIT 1
       `;
-      session = row || null;
+      session = row ? { ...row, isAdmin: isAdmin(row.id) } : null;
     } catch {
       session = null;
     }

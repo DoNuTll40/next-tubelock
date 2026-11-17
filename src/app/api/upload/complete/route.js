@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { triggerGitHubWorkflow } from '@/app/api/upload/dispatch-action/route';
 import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
+import { EVALUATED_RATING_STATUSES, isRatingEvaluated } from '@/lib/ratingStatus';
 
 /**
  * POST /api/upload/complete
@@ -121,8 +122,10 @@ export async function POST(request) {
         description = ${finalDescription},
         category = ${finalCategory},
         tags = ${finalTags},
-        content_rating = ${finalRating === 'auto' ? 'all' : finalRating},
-        user_selected_rating = ${finalRating},
+        content_rating = CASE WHEN rating_check_status = ANY(${EVALUATED_RATING_STATUSES}::text[])
+          THEN content_rating ELSE ${finalRating === 'auto' ? 'all' : finalRating} END,
+        user_selected_rating = CASE WHEN rating_check_status = ANY(${EVALUATED_RATING_STATUSES}::text[])
+          THEN user_selected_rating ELSE ${finalRating} END,
         subtitle_status = CASE WHEN ${hasManualSub} THEN 'ready' ELSE subtitle_status END,
         subtitle_srt = CASE WHEN ${hasManualSub} THEN ${manualSubtitleSrt} ELSE subtitle_srt END,
         subtitle_vtt = CASE WHEN ${hasManualSub} THEN ${manualSubtitleVtt} ELSE subtitle_vtt END,
@@ -254,30 +257,33 @@ export async function POST(request) {
     const shouldDispatchSpriteRating =
       runAiRatingVerify &&
       currentVideo.rating_check_status !== 'analyzing' &&
-      currentVideo.rating_check_status !== 'VERIFIED_MATCH' &&
-      currentVideo.rating_check_status !== 'AI_AUTO_SELECTED';
+      !isRatingEvaluated(currentVideo.rating_check_status);
 
     if (shouldDispatchSpriteRating) {
       try {
-        await sql`
+        const claimedRating = await sql`
           UPDATE videos
           SET sprite_status = CASE WHEN sprite_status = 'ready' THEN 'ready' ELSE 'generating' END,
               rating_check_status = 'analyzing',
               updated_at = NOW()
-          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
+            AND NOT (COALESCE(rating_check_status, '') = ANY(${EVALUATED_RATING_STATUSES}::text[]))
+          RETURNING id;
         `;
-        await triggerGitHubWorkflow('sprite-content-rating.yml', {
-          video_id: String(videoId),
-          raw_file_name: String(finalRawFileName),
-          user_rating: String(finalRating),
-          auto_apply: finalRating === 'auto' ? 'true' : 'false',
-          model: String(resolvedModel),
-        });
-        await appendWorkerLog(sql, videoId, {
-          source: 'rating',
-          label: 'Sprite & Rating',
-          message: `🚀 ส่งคำสั่งตรวจเรตเนื้อหาด้วย Gemini Vision (เรต: ${finalRating})`,
-        });
+        if (claimedRating.length) {
+          await triggerGitHubWorkflow('sprite-content-rating.yml', {
+            video_id: String(videoId),
+            raw_file_name: String(finalRawFileName),
+            user_rating: String(finalRating),
+            auto_apply: finalRating === 'auto' ? 'true' : 'false',
+            model: String(resolvedModel),
+          });
+          await appendWorkerLog(sql, videoId, {
+            source: 'rating',
+            label: 'Sprite & Rating',
+            message: `🚀 ส่งคำสั่งตรวจเรตเนื้อหาด้วย Gemini Vision (เรต: ${finalRating})`,
+          });
+        }
       } catch (spErr) {
         console.warn('[Auto-dispatch Sprite Rating Warning]:', spErr.message);
         await appendWorkerLog(sql, videoId, {
