@@ -1710,14 +1710,20 @@ export default function VideoPlayer({
         if (typeof window !== 'undefined' && window.screen?.orientation?.lock) {
           try {
             const vEl = video.current;
-            const isVertical = (vEl && vEl.videoHeight > 0 && vEl.videoWidth > 0 && vEl.videoHeight > vEl.videoWidth)
-              || isVerticalVideo
-              || (videoRatio < 0.95);
-
-            if (isVertical) {
-              await window.screen.orientation.lock('portrait').catch(() => { });
-            } else {
-              await window.screen.orientation.lock('landscape').catch(() => { });
+            // The loaded stream takes precedence over the catalog's orientation hint.
+            const hasVideoSize = vEl?.videoWidth > 0 && vEl?.videoHeight > 0;
+            const isPortrait = hasVideoSize
+              ? vEl.videoHeight > vEl.videoWidth
+              : isVerticalVideo || videoRatio < 1;
+            const target = isPortrait ? 'portrait' : 'landscape';
+            try {
+              await window.screen.orientation.lock(target);
+            } catch (firstError) {
+              // Some Android browsers apply fullscreen before accepting the orientation lock.
+              await new Promise((resolve) => requestAnimationFrame(resolve));
+              const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+              if (!fullscreenElement || fullscreenElement !== containerRef.current) throw firstError;
+              await window.screen.orientation.lock(target);
             }
           } catch (orientErr) {
             console.log('Orientation lock notice:', orientErr);
@@ -1749,6 +1755,7 @@ export default function VideoPlayer({
         // Allow natural free rotation again after rotating back to portrait
         if (typeof window !== 'undefined' && window.screen?.orientation?.unlock) {
           setTimeout(() => {
+            if (document.fullscreenElement || document.webkitFullscreenElement) return;
             try {
               window.screen.orientation.unlock();
             } catch (_) { }
@@ -1780,7 +1787,7 @@ export default function VideoPlayer({
 
   // 📱 Manual Screen Orientation Toggle (สั่งหมุน แนวนอน <-> แนวตั้ง ได้เองตามต้องการ)
   const toggleOrientation = useCallback(async () => {
-    if (typeof window === 'undefined' || !window.screen?.orientation) {
+    if (typeof window === 'undefined' || !window.screen?.orientation?.lock) {
       showToast('เบราว์เซอร์ไม่รองรับคำสั่งหมุนหน้าจอ');
       return;
     }
@@ -1790,20 +1797,20 @@ export default function VideoPlayer({
 
       if (isLandscape) {
         if (window.screen.orientation.lock) {
-          await window.screen.orientation.lock('portrait').catch(() => { });
+          await window.screen.orientation.lock('portrait');
           showToast('หมุนเป็นแนวตั้ง (Portrait)');
         }
       } else {
         // If entering landscape, entering fullscreen provides the best mobile experience
         if (!isFullscreen && containerRef.current) {
           if (containerRef.current.requestFullscreen) {
-            await containerRef.current.requestFullscreen().catch(() => { });
+            await containerRef.current.requestFullscreen();
           } else if (containerRef.current.webkitRequestFullscreen) {
-            await containerRef.current.webkitRequestFullscreen().catch(() => { });
+            await containerRef.current.webkitRequestFullscreen();
           }
         }
         if (window.screen.orientation.lock) {
-          await window.screen.orientation.lock('landscape').catch(() => { });
+          await window.screen.orientation.lock('landscape');
           showToast('หมุนเป็นแนวนอน (Landscape)');
         }
       }
@@ -1829,6 +1836,7 @@ export default function VideoPlayer({
         }
         if (window.screen?.orientation?.unlock) {
           setTimeout(() => {
+            if (document.fullscreenElement || document.webkitFullscreenElement) return;
             try {
               window.screen.orientation.unlock();
             } catch (_) { }
@@ -2131,7 +2139,7 @@ export default function VideoPlayer({
         resetControlsTimer();
       }}
       className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
-        ? 'fixed inset-0 z-50 h-screen w-screen border-0 rounded-none'
+        ? 'fixed inset-0 z-50 h-dvh w-dvw border-0 rounded-none [--player-safe-top:env(safe-area-inset-top,0px)] [--player-safe-right:env(safe-area-inset-right,0px)] [--player-safe-bottom:env(safe-area-inset-bottom,0px)] [--player-safe-left:env(safe-area-inset-left,0px)]'
         : (videoRatio && videoRatio < 0.98)
           ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
           : 'w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border-0 sm:border-black/10 shadow-none sm:shadow-none'

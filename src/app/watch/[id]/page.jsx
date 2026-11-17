@@ -10,6 +10,7 @@ import WatchClient from './WatchClient';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const viewport = { viewportFit: 'cover' };
 
 // Deduplicate video query between generateMetadata and WatchPage in the same request
 const getVideoById = cache(async (numericId) => {
