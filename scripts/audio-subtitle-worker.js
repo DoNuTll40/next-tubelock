@@ -712,7 +712,7 @@ async function transcribeOriginalAudioWithGemini(
   videoTitle,
   modelName,
   customPrompt,
-  { chunkInfo = '', chunkDurationSec = 0, logger = null, allowEmptySpeech = false, languageReview = '' } = {}
+  { chunkInfo = '', chunkDurationSec = 0, logger = null, allowEmptySpeech = false, sourceLanguage } = {}
 ) {
   if (!GEMINI_API_KEY) {
     throw new Error('ไม่ได้ตั้งค่า GEMINI_API_KEY ในระบบ Environment / GitHub Secrets');
@@ -733,7 +733,7 @@ async function transcribeOriginalAudioWithGemini(
     ? `${SUBTITLE_TRANSCRIPTION_PROMPT}${chunkHint}\n\nข้อมูลบริบทชื่อวิดีโอ: "${videoTitle || ''}"\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nกรุณาถอดเสียงภาษาต้นฉบับจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`
     : `${SUBTITLE_TRANSCRIPTION_PROMPT}${chunkHint}\n\nข้อมูลบริบทชื่อวิดีโอ: "${videoTitle || ''}"\nกรุณาถอดเสียงภาษาต้นฉบับจากไฟล์เสียงนี้เป็น JSON ตามโครงสร้างที่กำหนด:`;
 
-  const prompt = languageReview ? `${basePrompt}\n\n${languageReview}` : basePrompt;
+  const prompt = `${basePrompt}\n\nภาษาต้นฉบับที่ตรวจจากเสียงแล้วคือ ${sourceLanguage.name} (${sourceLanguage.code}) ให้ถอดด้วยภาษาและอักษรนี้ตามเสียงจริง ห้ามแปลหรือสร้างข้อความขึ้นมาเอง${sourceLanguage.isThai ? '' : ' และห้ามใส่อักษรไทยใน original_srt'}`;
   const requestBody = JSON.stringify({
     contents: [
       {
@@ -881,54 +881,6 @@ async function translateCuesToThaiWithGemini(
   return { mode: 'srt', thaiSrt: fallbackSrt, elapsedSec };
 }
 
-async function translateOriginalSrtToThaiWithGemini(
-  originalSrt,
-  detectedLangName,
-  modelName,
-  customPrompt,
-  { chunkInfo = '', logger = null } = {}
-) {
-  const prompt = customPrompt
-    ? `${SUBTITLE_THAI_TRANSLATE_PROMPT}\n\nภาษาต้นฉบับ: ${detectedLangName}\nคำสั่งเพิ่มเติมจากผู้ใช้งาน:\n${customPrompt}\n\nข้อความคำบรรยายภาษาต้นฉบับ:\n${originalSrt}`
-    : `${SUBTITLE_THAI_TRANSLATE_PROMPT}\n\nภาษาต้นฉบับ: ${detectedLangName}\n\nข้อความคำบรรยายภาษาต้นฉบับ:\n${originalSrt}`;
-
-  const requestBody = JSON.stringify({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-    safetySettings: GEMINI_SAFETY_SETTINGS,
-  });
-
-  const { text, elapsedSec } = await callGeminiWithFallback(
-    requestBody,
-    modelName,
-    logger,
-    chunkInfo ? `แปลไทย ${chunkInfo}` : 'แปลไทย',
-    {
-      validateText: (rawModelText) => {
-        const parsedCheck = parseJsonResponseSafe(rawModelText);
-        if (Array.isArray(parsedCheck?.translations) && parsedCheck.translations.length > 0) {
-          const joined = parsedCheck.translations.map((it) => String(it?.text ?? '')).join('\n');
-          return hasAcceptableThaiTranslation(joined);
-        }
-        const s = String(parsedCheck?.thai_srt || parsedCheck?.rawFallbackText || '').trim();
-        return s ? hasAcceptableThaiTranslation(s) : 'ไม่มีเนื้อหาคำแปล';
-      },
-    }
-  );
-  const parsed = parseJsonResponseSafe(text);
-  if (Array.isArray(parsed?.translations) && parsed.translations.length > 0) {
-    return {
-      thaiSrt: parsed.translations.map((it) => cleanTranslatedCueText(it?.text ?? '')).filter(Boolean).join('\n'),
-      elapsedSec,
-    };
-  }
-  const thaiSrt = String(parsed?.thai_srt || parsed?.rawFallbackText || '').trim();
-  if (!thaiSrt) {
-    throw new Error('ไม่สามารถแปลบทคำบรรยายจากภาษาต้นฉบับเป็นภาษาไทยได้');
-  }
-  return { thaiSrt, elapsedSec };
-}
-
 async function sliceAudioToMp3Chunk(sourceAudioPath, startSec, lenSec, outPath, { stepLabel = '', logger = null, logIntervalMs = 10000 } = {}) {
   const isPcmWav = /\.wav$/i.test(String(sourceAudioPath || ''));
   // PCM WAV supports sample-exact input seeking; for compressed MP3 place -ss after -i to eliminate bitrate-estimate drift
@@ -1014,6 +966,45 @@ async function splitSubChunkAudio(seekAudioPath, tempDir, startSec, lenSec, labe
   return sliceAudioToMp3Chunk(seekAudioPath, startSec, lenSec, outPath, { logIntervalMs: 10000 });
 }
 
+async function detectSubtitleLanguage(audioPath, seekAudioPath, tempDir, duration, modelName, logger) {
+  const parts = [];
+  const sampleLength = 20;
+  if (duration > sampleLength * 3) {
+    for (const [index, fraction] of [0.15, 0.5, 0.85].entries()) {
+      const samplePath = await splitSubChunkAudio(
+        seekAudioPath, tempDir, Math.min(duration - sampleLength, duration * fraction),
+        sampleLength, `language_${index}`
+      );
+      try {
+        parts.push({ inlineData: { mimeType: 'audio/mp3', data: (await fs.promises.readFile(samplePath)).toString('base64') } });
+      } finally {
+        await fs.promises.rm(samplePath, { force: true });
+      }
+    }
+  } else {
+    parts.push({ inlineData: { mimeType: 'audio/mp3', data: (await fs.promises.readFile(audioPath)).toString('base64') } });
+  }
+  parts.push({ text: 'Listen to the speech in these audio samples. Identify the primary spoken language. Ignore music, names, and incidental words. Do not transcribe or translate. Return only a JSON object with the keys language_code (BCP 47) and language_name. Use "und" if speech cannot be identified.' });
+  const readLanguage = (text) => {
+    const result = parseJsonResponseSafe(text);
+    const code = String(result?.language_code || '').trim();
+    const name = String(result?.language_name || '').trim();
+    if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(code) || /^und$/i.test(code) || !name) return null;
+    return { code, name, isThai: /^th(?:-|$)/i.test(code) };
+  };
+  await logger.log('🔎 กำลังตรวจภาษาพูดจากตัวอย่างเสียงก่อนถอดซับ', { toDb: true });
+  const { text } = await callGeminiWithFallback(JSON.stringify({
+    contents: [{ role: 'user', parts }],
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+    safetySettings: GEMINI_SAFETY_SETTINGS,
+  }), modelName, logger, 'ตรวจภาษาพูด', {
+    validateText: (value) => readLanguage(value) ? null : 'ระบุภาษาพูดจากตัวอย่างเสียงไม่ได้',
+  });
+  const language = readLanguage(text);
+  await logger.log(`✅ ตรวจพบภาษาพูด ${language.name} (${language.code}) — ใช้ภาษานี้ในการถอดซับต้นฉบับ`, { toDb: true });
+  return language;
+}
+
 async function generateSubtitlesWithGemini(
   localAudioPath,
   videoTitle,
@@ -1024,10 +1015,10 @@ async function generateSubtitlesWithGemini(
   logger,
   { seekAudioPath = localAudioPath } = {}
 ) {
+  const sourceLanguage = await detectSubtitleLanguage(localAudioPath, seekAudioPath, tempDir, audioDurationSec, modelName, logger);
   const chunks = await buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger);
 
   const chunkResults = [];
-  const langTally = new Map();
   let lastChunkErrorMsg = '';
 
   const buildChunkOutput = (rangeLabel, chunkMeta, res1, chunkStartSec) => {
@@ -1054,9 +1045,6 @@ async function generateSubtitlesWithGemini(
       rangeLabel,
       cues: normalizedCues,
       rawSrt: res1.originalSrt,
-      isThai: res1.isThai,
-      code: res1.detectedLangCode,
-      name: res1.detectedLangName,
     };
   };
   const recordChunkOutput = (...args) => {
@@ -1083,6 +1071,7 @@ async function generateSubtitlesWithGemini(
         chunkDurationSec: Math.max(0, (ch.endSec || 0) - (ch.startSec || 0)),
         logger,
         allowEmptySpeech: chunks.length > 1,
+        sourceLanguage,
       });
       const count = recordChunkOutput(rangeLabel, ch, res1, ch.startSec);
       await logger.log(
@@ -1116,6 +1105,7 @@ async function generateSubtitlesWithGemini(
             chunkDurationSec: sliceLen,
             logger,
             allowEmptySpeech: true,
+            sourceLanguage,
           });
           const subCount = recordChunkOutput(subLabel, { ...ch, startSec: sliceStart, endSec: sliceStart + sliceLen }, subRes, sliceStart);
           await logger.log(
@@ -1155,92 +1145,45 @@ async function generateSubtitlesWithGemini(
     }
   }
 
-  const foreignReference = chunkResults.reduce((best, result) => (
-    !result.isThai && result.cues.length > (best?.cues.length ?? 0) ? result : best
-  ), null);
-  if (foreignReference) {
+  if (!sourceLanguage.isThai) {
     for (const [index, result] of chunkResults.entries()) {
-      if (!result.rawSrt || (!result.isThai && !/[\u0E01-\u0E5B]/u.test(result.rawSrt))) continue;
+      if (!/[\u0E01-\u0E5B]/u.test(result.rawSrt)) continue;
       const { chunk, rangeLabel } = result;
       const length = chunk.endSec - chunk.startSec;
-      await logger.log(`🔎 [ขั้นที่ 1/2] ${rangeLabel} มีผลถอดเสียงเป็นไทย แต่ช่วงอื่นพบภาษา${foreignReference.name} — ตรวจเสียงช่วงนี้ใหม่ก่อนรวมซับต้นฉบับ`, { toDb: true });
-      const reviewPath = await splitSubChunkAudio(seekAudioPath, tempDir, chunk.startSec, length, `review_${index}`);
+      await logger.log(`🔎 [ขั้นที่ 1/2] ${rangeLabel} มีอักษรไทยในซับต้นฉบับ — ถอดใหม่เป็นภาษา${sourceLanguage.name}`, { toDb: true });
+      const reviewPath = length > 0
+        ? await splitSubChunkAudio(seekAudioPath, tempDir, chunk.startSec, length, `review_${index}`)
+        : localAudioPath;
       try {
         const reviewed = await transcribeOriginalAudioWithGemini(reviewPath, videoTitle, modelName, '', {
           chunkInfo: rangeLabel,
           chunkDurationSec: length,
           logger,
-          languageReview: `ฟังคำพูดจริงใหม่ทีละประโยค ช่วงอื่นพบภาษา${foreignReference.name} แต่ช่วงนี้อาจสลับภาษาได้ ให้เขียนภาษาไทยเฉพาะประโยคที่ได้ยินว่าพูดไทยจริง ห้ามแปลหรือทับศัพท์คำพูดภาษาอื่นเป็นไทย ให้คืน original_srt ตามเสียงเท่านั้น`,
+          sourceLanguage,
         });
         const replacement = buildChunkOutput(rangeLabel, chunk, reviewed, chunk.startSec);
-        if (!replacement.cues.length) throw new Error(`ตรวจซ้ำ ${rangeLabel} แล้วไม่พบไทม์โค้ดที่ใช้ได้`);
+        if (!replacement.cues.length || /[\u0E01-\u0E5B]/u.test(replacement.rawSrt)) {
+          throw new Error(`ตรวจซ้ำ ${rangeLabel} แล้วซับต้นฉบับยังไม่ผ่านการตรวจภาษา ${sourceLanguage.code}`);
+        }
         chunkResults[index] = replacement;
-        await logger.log(`✅ [ขั้นที่ 1/2] ตรวจซ้ำ ${rangeLabel}: ${replacement.cues.length} ประโยค (${replacement.name})`, { toDb: true });
+        await logger.log(`✅ [ขั้นที่ 1/2] ตรวจซ้ำ ${rangeLabel}: ${replacement.cues.length} ประโยค (${sourceLanguage.name})`, { toDb: true });
       } finally {
-        await fs.promises.rm(reviewPath, { force: true });
+        if (reviewPath !== localAudioPath) await fs.promises.rm(reviewPath, { force: true });
       }
     }
   }
 
-  for (const result of chunkResults) {
-    if (!result.cues.length) continue;
-    const key = `${result.isThai}:${result.code}`;
-    langTally.set(key, {
-      count: (langTally.get(key)?.count || 0) + result.cues.length,
-      isThai: result.isThai,
-      code: result.code,
-      name: result.name,
-    });
-  }
-
   // Merge all original cues seamlessly in strict chronological, overlap-free order
   const maxVideoMs = audioDurationSec ? Math.round(audioDurationSec * 1000) + 1500 : Infinity;
-  let allOriginalCues = normalizeSubtitleTimeline(
+  const allOriginalCues = normalizeSubtitleTimeline(
     chunkResults.flatMap((r) => r.cues),
     { maxVideoDurationMs: maxVideoMs }
   );
   if (allOriginalCues.length === 0) {
-    const firstRaw = chunkResults.find((r) => r.rawSrt)?.rawSrt || '';
-    if (!firstRaw) {
-      throw new Error(lastChunkErrorMsg || 'AI ไม่พบเสียงพูดที่สามารถถอดเป็นคำบรรยาย .SRT ได้ในคลิปนี้');
-    }
-    const firstMeta = chunkResults[0];
-    if (firstMeta.isThai) {
-      return {
-        isThai: true,
-        detectedLangCode: 'th',
-        detectedLangName: 'ไทย',
-        originalSrt: firstRaw,
-        thaiSrt: firstRaw,
-        totalCues: 1,
-      };
-    }
-    const tr = await translateOriginalSrtToThaiWithGemini(firstRaw, firstMeta.name, modelName, customPrompt, { logger });
-    return {
-      isThai: false,
-      detectedLangCode: firstMeta.code,
-      detectedLangName: firstMeta.name,
-      originalSrt: firstRaw,
-      thaiSrt: tr.thaiSrt,
-      totalCues: 1,
-    };
+    throw new Error(lastChunkErrorMsg || 'ไม่พบคิวซับต้นฉบับที่มีไทม์โค้ดถูกต้อง');
   }
-
-  // Determine dominant language across all spoken chunks AND verify merged original SRT script before deciding Step 2
-  const tallyEntries = [...langTally.values()].sort((a, b) => b.count - a.count);
-  const nonThaiEntry = tallyEntries.find((e) => !e.isThai);
-  const rawDominant = nonThaiEntry || tallyEntries[0] || { isThai: true, code: 'th', name: 'ไทย' };
   const mergedOriginalSrt = cuesToSrt(allOriginalCues);
-  const reconciledDominant = reconcileDetectedLanguageFromSrt(mergedOriginalSrt, {
-    isThai: rawDominant.isThai,
-    detectedLangCode: rawDominant.code,
-    detectedLangName: rawDominant.name,
-  });
-  const dominantLang = {
-    isThai: reconciledDominant.isThai,
-    code: reconciledDominant.detectedLangCode,
-    name: reconciledDominant.detectedLangName,
-  };
+  const dominantLang = sourceLanguage;
 
   if (dominantLang.isThai) {
     await logger.log(
@@ -1338,14 +1281,6 @@ async function generateSubtitlesWithGemini(
   let allThaiCues = [];
   for (const r of chunkResults) {
     if (r.cues.length === 0) continue;
-
-    // Only skip if genuinely Thai AND does not contain significant untranslated foreign text
-    const chunkScript = countScriptChars(r.cues.map((c) => c.text).join(' '));
-    const isTrulyThaiChunk = r.isThai && !(chunkScript.thaiCount === 0 && chunkScript.foreignTotal >= 2);
-    if (isTrulyThaiChunk) {
-      allThaiCues.push(...r.cues);
-      continue;
-    }
 
     await logger.log(`🌐 [ขั้นที่ 2/2] กำลังแปล ${r.rangeLabel} (${r.cues.length} ประโยค) -> ไทย...`, { toDb: true });
     let chunkElapsed = 0;
