@@ -38,16 +38,15 @@ export async function GET(request) {
       const slimJson = JSON.stringify(slimRows);
       const slimBytes = Buffer.byteLength(slimJson);
 
-      // Full Projection with source_cache (Legacy unoptimized)
-      const tFull0 = performance.now();
-      const fullRows = await sql`
-        SELECT * FROM videos 
-        WHERE status = 'READY' OR status IS NULL 
-        ORDER BY created_at DESC;
+      // Estimate the legacy JSON payload in Postgres without sending the rows.
+      const [full] = await sql`
+        SELECT count(*) AS items_count,
+          COALESCE(sum(octet_length(row_to_json(v)::text)), 0)
+            + GREATEST(count(*) - 1, 0) + 2 AS payload_bytes
+        FROM videos v
+        WHERE status = 'READY' OR status IS NULL;
       `;
-      const tFull1 = performance.now();
-      const fullJson = JSON.stringify(fullRows);
-      const fullBytes = Buffer.byteLength(fullJson);
+      const fullBytes = Number(full.payload_bytes);
 
       results.tests.db = {
         pingMs: Math.round((t1 - t0) * 100) / 100,
@@ -58,14 +57,13 @@ export async function GET(request) {
           itemsCount: slimRows.length,
         },
         fullQuery: {
-          timeMs: Math.round((tFull1 - tFull0) * 100) / 100,
+          timeMs: null,
           payloadBytes: fullBytes,
           payloadKb: Math.round((fullBytes / 1024) * 100) / 100,
-          itemsCount: fullRows.length,
+          itemsCount: Number(full.items_count),
         },
         savings: {
           byteReductionPct: Math.round((1 - slimBytes / (fullBytes || 1)) * 1000) / 10,
-          speedupMultiplier: Math.round(((tFull1 - tFull0) / (tSlim1 - tSlim0 || 1)) * 10) / 10,
         },
         status: 'SUCCESS',
       };
@@ -87,7 +85,15 @@ export async function GET(request) {
 
       // Test a sample item download URL from video 829 or latest video
       const sampleVid = await sql`
-        SELECT id, title, onedrive_folder_id, source_cache 
+        SELECT id, title, (
+          SELECT jsonb_build_object('name', item->>'name', 'downloadUrl', item->>'downloadUrl')
+          FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(source_cache->'items') = 'array'
+              THEN source_cache->'items' ELSE '[]'::jsonb END
+          ) AS items(item)
+          WHERE lower(item->>'name') LIKE '%.ts' OR lower(item->>'name') LIKE '%.m3u8'
+          LIMIT 1
+        ) AS chunk
         FROM videos 
         WHERE source_cache IS NOT NULL 
         ORDER BY id DESC 
@@ -95,21 +101,14 @@ export async function GET(request) {
       `;
 
       let sampleChunk = null;
-      if (sampleVid?.[0]?.source_cache) {
-        const cache = typeof sampleVid[0].source_cache === 'string'
-          ? JSON.parse(sampleVid[0].source_cache)
-          : sampleVid[0].source_cache;
-        
-        // Find an actual TS chunk or m3u8
-        const chunk = cache.items?.find((i) => /\.(?:ts|m3u8)$/i.test(i.name || ''));
-        if (chunk) {
-          sampleChunk = {
-            videoId: sampleVid[0].id,
-            videoTitle: sampleVid[0].title,
-            fileName: chunk.name,
-            downloadUrl: chunk.downloadUrl,
-          };
-        }
+      const chunk = sampleVid[0]?.chunk;
+      if (chunk) {
+        sampleChunk = {
+          videoId: sampleVid[0].id,
+          videoTitle: sampleVid[0].title,
+          fileName: chunk.name,
+          downloadUrl: chunk.downloadUrl,
+        };
       }
 
       results.tests.storage = {
@@ -127,23 +126,18 @@ export async function GET(request) {
   // 3. System & Quota Stats
   if (testType === 'all' || testType === 'system') {
     try {
-      const [{ total_videos }] = await sql`SELECT count(*) as total_videos FROM videos;`;
-      const [{ ready_videos }] = await sql`SELECT count(*) as ready_videos FROM videos WHERE status = 'READY' OR status IS NULL;`;
-
-      // Estimate total chunks managed
-      const rowsWithCache = await sql`SELECT source_cache FROM videos WHERE source_cache IS NOT NULL;`;
-      let totalChunks = 0;
-      for (const r of rowsWithCache) {
-        try {
-          const c = typeof r.source_cache === 'string' ? JSON.parse(r.source_cache) : r.source_cache;
-          totalChunks += c.items?.length || 0;
-        } catch (_) {}
-      }
+      const [{ total_videos, ready_videos, total_files }] = await sql`
+        SELECT count(*) AS total_videos,
+          count(*) FILTER (WHERE status = 'READY' OR status IS NULL) AS ready_videos,
+          COALESCE(sum(CASE WHEN jsonb_typeof(source_cache->'items') = 'array'
+            THEN jsonb_array_length(source_cache->'items') ELSE 0 END), 0) AS total_files
+        FROM videos;
+      `;
 
       results.tests.system = {
         totalVideos: parseInt(total_videos, 10),
         readyVideos: parseInt(ready_videos, 10),
-        totalManagedFiles: totalChunks,
+        totalManagedFiles: Number(total_files),
         nodeVersion: process.version,
         environment: process.env.NODE_ENV || 'production',
         status: 'SUCCESS',

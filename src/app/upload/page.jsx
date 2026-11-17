@@ -229,15 +229,23 @@ export default function UploadPage() {
     (videoId) => {
       if (pollingTimerRef.current) clearInterval(pollingTimerRef.current);
 
+      let revisions = {};
+      let requestPending = false;
       pollingTimerRef.current = setInterval(async () => {
+        if (requestPending) return;
+        requestPending = true;
         try {
-          const res = await fetch(`/api/videos/${videoId}/status`);
+          const params = new URLSearchParams();
+          if (revisions.subtitles) params.set('subtitlesRevision', revisions.subtitles);
+          if (revisions.logs) params.set('logsRevision', revisions.logs);
+          const res = await fetch(`/api/videos/${videoId}/status?${params}`);
           if (!res.ok) return;
 
           const data = await res.json();
           if (!data.success || !data.video) return;
 
           const vid = data.video;
+          revisions = data.revisions || {};
           if (vid.status && vid.status !== 'UPLOADING') {
             setCurrentStatus(vid.status);
           }
@@ -247,7 +255,7 @@ export default function UploadPage() {
           // Workflow #1: Audio & Subtitles status
           if (vid.audioStatus) setAudioStatus(vid.audioStatus);
           if (vid.subtitleStatus) setSubtitleStatus(vid.subtitleStatus);
-          if (vid.subtitleSrt) setGeneratedSubtitleSrt(vid.subtitleSrt);
+          if (typeof vid.subtitleSrt === 'string') setGeneratedSubtitleSrt(vid.subtitleSrt);
           if (Array.isArray(vid.subtitleTracks)) setSubtitleTracks(vid.subtitleTracks);
 
           // Workflow #2: Sprite Sheet Grid & Content Rating status
@@ -314,6 +322,8 @@ export default function UploadPage() {
           }
         } catch (err) {
           console.warn('Status poll error:', err.message);
+        } finally {
+          requestPending = false;
         }
       }, 3000);
     },

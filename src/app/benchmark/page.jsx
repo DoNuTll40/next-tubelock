@@ -90,7 +90,7 @@ export default function BenchmarkPage() {
       if (data?.tests?.db) {
         setDbBench(data.tests.db);
         addLog(
-          `DB Benchmark สำเร็จ: Slim Query ${data.tests.db.slimQuery.timeMs}ms (${data.tests.db.slimQuery.payloadKb}KB) vs Full Query ${data.tests.db.fullQuery.timeMs}ms (${data.tests.db.fullQuery.payloadKb}KB)`,
+          `DB Benchmark สำเร็จ: Slim Query ${data.tests.db.slimQuery.timeMs}ms (${data.tests.db.slimQuery.payloadKb}KB) · Full payload ประมาณ ${data.tests.db.fullQuery.payloadKb}KB`,
           'success'
         );
       }
@@ -492,11 +492,11 @@ export default function BenchmarkPage() {
             </div>
             <div className="mt-3">
               <div className="text-2xl sm:text-3xl font-extrabold font-mono tracking-tight text-purple-600 dark:text-purple-400">
-                {dbBench ? `-${dbBench.savings.byteReductionPct}%` : '-99.0%'}
+                {dbBench ? `${dbBench.savings.byteReductionPct}%` : '—'}
               </div>
               <div className="text-[11px] text-[#8C857B] dark:text-[#888888] mt-1 flex items-center gap-1 font-medium">
                 <span className="text-purple-600 dark:text-purple-300 font-semibold truncate">
-                  {dbBench ? `${dbBench.slimQuery.payloadKb} KB vs ${dbBench.fullQuery.payloadKb} KB` : '30.6 KB vs 2,920 KB'}
+                  {dbBench ? `${dbBench.slimQuery.payloadKb} KB vs ~${dbBench.fullQuery.payloadKb} KB` : 'รัน DB Benchmark เพื่อวัดขนาด'}
                 </span>
               </div>
             </div>
@@ -616,35 +616,35 @@ export default function BenchmarkPage() {
                 <div className="flex justify-between text-[#212529] dark:text-zinc-300 font-medium">
                   <span>⚡ Slim Projection (Optimized)</span>
                   <span className="font-mono text-cyan-600 dark:text-cyan-400 font-bold">
-                    {dbBench?.slimQuery?.timeMs ? `${dbBench.slimQuery.timeMs} ms` : '75.4 ms'}
+                    {dbBench ? `${dbBench.slimQuery.timeMs} ms` : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between text-[11px] text-[#8C857B] dark:text-zinc-500">
                   <span>Payload Size:</span>
                   <span className="font-mono text-[#212529] dark:text-zinc-300">
-                    {dbBench?.slimQuery?.payloadKb ? `${dbBench.slimQuery.payloadKb} KB` : '30.6 KB'}
+                    {dbBench ? `${dbBench.slimQuery.payloadKb} KB` : '—'}
                   </span>
                 </div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-[#FBF9F5] dark:bg-[#111213] border border-[#EFECE6] dark:border-white/5 space-y-1">
                 <div className="flex justify-between text-[#212529] dark:text-zinc-300 font-medium">
-                  <span>🐢 Full Query (SELECT * with Cache)</span>
+                  <span>Full Payload (ประมาณจาก PostgreSQL)</span>
                   <span className="font-mono text-rose-600 dark:text-rose-400 font-bold">
-                    {dbBench?.fullQuery?.timeMs ? `${dbBench.fullQuery.timeMs} ms` : '509.7 ms'}
+                    —
                   </span>
                 </div>
                 <div className="flex justify-between text-[11px] text-[#8C857B] dark:text-zinc-500">
                   <span>Payload Size:</span>
                   <span className="font-mono text-[#212529] dark:text-zinc-300">
-                    {dbBench?.fullQuery?.payloadKb ? `${dbBench.fullQuery.payloadKb} KB` : '2,920 KB (2.85 MB)'}
+                    {dbBench ? `${dbBench.fullQuery.payloadKb} KB` : '—'}
                   </span>
                 </div>
               </div>
 
               <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[11px] flex items-center gap-2 font-medium">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>ประหยัดเน็ตเวิร์กได้ 99.0% และเร็วขึ้นกว่าเดิม 7-10 เท่า</span>
+                <span>{dbBench ? `Slim payload เล็กลงประมาณ ${dbBench.savings.byteReductionPct}%` : 'รัน DB Benchmark เพื่อดูส่วนต่างขนาดข้อมูล'}</span>
               </div>
             </div>
           </div>

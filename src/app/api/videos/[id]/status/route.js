@@ -2,7 +2,7 @@ import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { encodeVideoSlug } from '@/lib/videoUtils';
+import { decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
 
 /**
  * GET /api/videos/[id]/status
@@ -10,8 +10,9 @@ import { encodeVideoSlug } from '@/lib/videoUtils';
  */
 export async function GET(request, context) {
   try {
-    const { id } = await context.params;
-    if (!id) {
+    const { id: rawId } = await context.params;
+    const id = decodeVideoSlug(rawId) || parseInt(rawId, 10);
+    if (!id || isNaN(id)) {
       return NextResponse.json(
         { success: false, error: 'Video ID is required' },
         { status: 400 }
@@ -21,9 +22,39 @@ export async function GET(request, context) {
     const sql = getDb();
     const userId = await getSessionUserId(sql);
     if (userId == null) return accessError(401);
+    const query = new URL(request.url).searchParams;
     const rows = await sql`
-      SELECT *
-      FROM videos 
+      SELECT
+        id, title, description, tags, category, status, transcode_progress, stage_detail,
+        error_message, raw_file_name, master_playlist_path, onedrive_folder_id, duration,
+        resolution, fps, codec, bitrate, thumbnail_url, file_size_bytes, created_at, updated_at,
+        extras.metadata - ARRAY['subtitle_srt', 'subtitle_vtt', 'subtitle_tracks', 'worker_logs'] AS metadata,
+        CASE WHEN revisions.subtitles <> ${query.get('subtitlesRevision') || ''}
+          THEN jsonb_build_object('subtitle_srt', extras.metadata->'subtitle_srt',
+            'subtitle_vtt', extras.metadata->'subtitle_vtt', 'subtitle_tracks', extras.metadata->'subtitle_tracks')
+        END AS subtitles,
+        CASE WHEN revisions.logs <> ${query.get('logsRevision') || ''}
+          THEN extras.metadata->'worker_logs' END AS worker_logs,
+        revisions.subtitles AS subtitles_revision, revisions.logs AS logs_revision
+      FROM videos v
+      CROSS JOIN LATERAL (
+        SELECT to_jsonb(v) - ARRAY['source_cache', 'source_cache_expires_at'] AS row_data
+      ) d
+      CROSS JOIN LATERAL (
+        SELECT jsonb_object_agg(key, value) AS metadata
+        FROM jsonb_each(d.row_data)
+        WHERE key IN ('subtitle_srt', 'subtitle_vtt', 'subtitle_tracks', 'worker_logs',
+          'thumbnail_status', 'thumbnail_options', 'runner_specs', 'audio_status',
+          'subtitle_status', 'subtitle_model', 'sprite_status', 'sprite_preview_url',
+          'content_rating', 'user_selected_rating', 'ai_suggested_rating',
+          'rating_check_status', 'vision_analysis')
+      ) m
+      CROSS JOIN LATERAL (SELECT COALESCE(m.metadata, '{}'::jsonb) AS metadata) extras
+      CROSS JOIN LATERAL (
+        SELECT md5(jsonb_build_array(extras.metadata->'subtitle_srt', extras.metadata->'subtitle_vtt',
+          extras.metadata->'subtitle_tracks')::text) AS subtitles,
+          md5(COALESCE(extras.metadata->'worker_logs', 'null'::jsonb)::text) AS logs
+      ) revisions
       WHERE id = ${id} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
     `;
@@ -35,10 +66,11 @@ export async function GET(request, context) {
       );
     }
 
-    const video = rows[0];
+    const row = rows[0];
+    const video = { ...row, ...row.metadata, ...row.subtitles };
 
     let rawUploaded;
-    if (new URL(request.url).searchParams.get('restore') === '1' &&
+    if (query.get('restore') === '1' &&
         ['UPLOADING', 'FAILED'].includes(video.status) && video.raw_file_name) {
       const token = await getGraphToken();
       const drive = encodeURIComponent(await getUserDriveId(token));
@@ -63,6 +95,7 @@ export async function GET(request, context) {
 
     return NextResponse.json({
       success: true,
+      revisions: { subtitles: row.subtitles_revision, logs: row.logs_revision },
       video: {
         id: video.id,
         title: video.title,
@@ -88,13 +121,16 @@ export async function GET(request, context) {
         thumbnailOptions: parseJsonSafe(video.thumbnail_options) || [],
         fileSizeBytes: video.file_size_bytes || 0,
         runnerSpecs: parseJsonSafe(video.runner_specs),
-        workerLogs: parseJsonSafe(video.worker_logs) || [],
+        workerLogs: query.get('logsRevision') === row.logs_revision
+          ? undefined : parseJsonSafe(video.worker_logs) || [],
         // AI Workflows Real-time Fields
         audioStatus: video.audio_status || 'waiting',
         subtitleStatus: video.subtitle_status || 'waiting',
-        subtitleSrt: video.subtitle_srt || '',
-        subtitleVtt: video.subtitle_vtt || '',
-        subtitleTracks: parseJsonSafe(video.subtitle_tracks) || [],
+        ...(row.subtitles && {
+          subtitleSrt: video.subtitle_srt || '',
+          subtitleVtt: video.subtitle_vtt || '',
+          subtitleTracks: parseJsonSafe(video.subtitle_tracks) || [],
+        }),
         subtitleModel: video.subtitle_model || '',
         spriteStatus: video.sprite_status || 'waiting',
         spritePreviewUrl: video.sprite_preview_url || '',
