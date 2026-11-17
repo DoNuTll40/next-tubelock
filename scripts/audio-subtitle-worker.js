@@ -1005,6 +1005,62 @@ async function detectSubtitleLanguage(audioPath, seekAudioPath, tempDir, duratio
   return language;
 }
 
+const THAI_SCRIPT = /[\u0E01-\u0E5B]/u;
+
+function mergeReviewedOriginalCues(original, reviewed) {
+  const clean = original
+    .filter((cue) => !THAI_SCRIPT.test(cue.text))
+    .sort((a, b) => a.startMs - b.startMs);
+  const contaminated = original.filter((cue) => THAI_SCRIPT.test(cue.text));
+  const overlaps = (a, b) => a.startMs < b.endMs && b.startMs < a.endMs;
+  const overlapMs = (a, b) => Math.max(0, Math.min(a.endMs, b.endMs) - Math.max(a.startMs, b.startMs));
+
+  const replacements = [];
+  for (const cue of reviewed) {
+    if (THAI_SCRIPT.test(cue.text)) continue;
+    const totalContamMs = contaminated.reduce((sum, prev) => sum + overlapMs(prev, cue), 0);
+    if (totalContamMs <= 0) continue;
+    const totalCleanMs = clean.reduce((sum, prev) => sum + overlapMs(prev, cue), 0);
+    if (totalContamMs < totalCleanMs) continue;
+
+    // Subtract clean cue intervals so existing clean cues are never overwritten or clipped
+    let spans = [[cue.startMs, cue.endMs]];
+    for (const c of clean) {
+      const next = [];
+      for (const [s, e] of spans) {
+        if (c.endMs <= s || c.startMs >= e) {
+          next.push([s, e]);
+        } else {
+          if (c.startMs > s) next.push([s, c.startMs]);
+          if (c.endMs < e) next.push([c.endMs, e]);
+        }
+      }
+      spans = next;
+    }
+
+    let bestSpan = null;
+    let bestScore = 0;
+    for (const [s, e] of spans) {
+      if (e - s < 200) continue;
+      const score = contaminated.reduce((sum, prev) => sum + overlapMs(prev, { startMs: s, endMs: e }), 0);
+      if (score > bestScore) {
+        bestScore = score;
+        bestSpan = [s, e];
+      }
+    }
+    if (bestSpan) {
+      replacements.push({ ...cue, startMs: bestSpan[0], endMs: bestSpan[1] });
+    }
+  }
+
+  return {
+    cues: [...clean, ...replacements].sort((a, b) => a.startMs - b.startMs),
+    preservedCount: clean.length,
+    replacementCount: replacements.length,
+    unresolved: contaminated.filter((cue) => !replacements.some((replacement) => overlaps(cue, replacement))),
+  };
+}
+
 async function generateSubtitlesWithGemini(
   localAudioPath,
   videoTitle,
@@ -1147,7 +1203,7 @@ async function generateSubtitlesWithGemini(
 
   if (!sourceLanguage.isThai) {
     for (const [index, result] of chunkResults.entries()) {
-      if (!/[\u0E01-\u0E5B]/u.test(result.rawSrt)) continue;
+      if (!THAI_SCRIPT.test(result.rawSrt)) continue;
       const { chunk, rangeLabel } = result;
       const length = chunk.endSec - chunk.startSec;
       await logger.log(`🔎 [ขั้นที่ 1/2] ${rangeLabel} มีอักษรไทยในซับต้นฉบับ — ถอดใหม่เป็นภาษา${sourceLanguage.name}`, { toDb: true });
@@ -1162,11 +1218,16 @@ async function generateSubtitlesWithGemini(
           sourceLanguage,
         });
         const replacement = buildChunkOutput(rangeLabel, chunk, reviewed, chunk.startSec);
-        if (!replacement.cues.length || /[\u0E01-\u0E5B]/u.test(replacement.rawSrt)) {
+        if (!replacement.cues.length || THAI_SCRIPT.test(replacement.rawSrt)) {
           throw new Error(`ตรวจซ้ำ ${rangeLabel} แล้วซับต้นฉบับยังไม่ผ่านการตรวจภาษา ${sourceLanguage.code}`);
         }
-        chunkResults[index] = replacement;
-        await logger.log(`✅ [ขั้นที่ 1/2] ตรวจซ้ำ ${rangeLabel}: ${replacement.cues.length} ประโยค (${sourceLanguage.name})`, { toDb: true });
+        const merged = mergeReviewedOriginalCues(result.cues, replacement.cues);
+        if (merged.unresolved.length) {
+          const first = formatDurationShort(merged.unresolved[0].startMs / 1000);
+          throw new Error(`ตรวจซ้ำ ${rangeLabel} แล้วยังเติมซับต้นฉบับไม่ได้ ${merged.unresolved.length} คิว (คิวแรกที่ ${first})`);
+        }
+        chunkResults[index] = { ...result, cues: merged.cues };
+        await logger.log(`✅ [ขั้นที่ 1/2] ตรวจซ้ำ ${rangeLabel}: เก็บคิวเดิม ${merged.preservedCount} คิว เติมจากการถอดซ้ำ ${merged.replacementCount} คิว`, { toDb: true });
       } finally {
         if (reviewPath !== localAudioPath) await fs.promises.rm(reviewPath, { force: true });
       }
