@@ -44,38 +44,40 @@ export default function Sidebar() {
   // MINI RAIL SIDEBAR (Collapsed Desktop)
   if (!isExpanded) {
     return (
-      <aside className="flex flex-col items-center py-3 w-[72px] shrink-0 sticky top-14 h-[calc(100vh-56px)] bg-[#FBF9F5] dark:bg-[#0F0F0F] border-r border-[#EFECE6] dark:border-white/10 select-none z-20">
-        {[
-          { label: 'หน้าแรก', path: '/', icon: Home, exact: true },
-          { label: 'อัปโหลด', path: '/upload', icon: PlusSquare, exact: true },
-          { label: 'คิวงาน', path: '/upload/queue', icon: ListOrdered, exact: true },
-          { label: 'ประวัติ', path: '/history', icon: History, exact: false },
-          { label: 'เบนช์มาร์ก', path: '/benchmark', icon: Gauge, exact: false },
-          { label: 'ตั้งค่า', path: '/settings', icon: Settings, exact: false },
-        ].map((item) => {
-          const Icon = item.icon;
-          const isActive = item.exact ? pathname === item.path : (pathname === item.path || pathname?.startsWith(item.path + '/'));
-          return (
-            <Link
-              key={item.path + item.label}
-              href={item.path}
-              className={`w-16 h-16 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-colors mb-1 ${
-                isActive
-                  ? 'text-[#FF7A00] bg-[#FFF4EB] dark:bg-[#FF7A00]/15'
-                  : 'text-[#212529] dark:text-[#E1E1E1] hover:bg-[#F0EDE6] dark:hover:bg-white/5'
-              }`}
-            >
-              <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : 'stroke-[2]'}`} />
-              <span className={`text-[10px] font-medium leading-none tracking-tight ${isActive ? 'font-bold' : ''}`}>
-                {item.label}
-              </span>
-            </Link>
-          );
-        })}
-
-        <div className="mt-auto pb-2 text-[9px] text-[#A09A90] dark:text-[#666666] font-mono">
-          v1.0
-        </div>
+      <aside className="sticky top-14 z-20 h-[calc(100dvh-56px)] w-[72px] shrink-0 select-none overflow-y-auto border-r border-[#EFECE6] bg-[#FBF9F5] dark:border-white/10 dark:bg-[#0F0F0F]">
+        <nav aria-label="เมนูหลัก" className="px-1.5 py-2.5">
+          {[
+            { label: 'เมนูหลัก', items: mainItems },
+            { label: 'คุณ', items: userItems },
+            { label: 'ระบบ', items: systemItems },
+          ].map(({ label, items }) => (
+            <ul key={label} aria-label={label} className="space-y-0.5 pb-2 last:pb-0 [&+ul]:border-t [&+ul]:border-[#EFECE6] [&+ul]:pt-2 dark:[&+ul]:border-white/10">
+              {items.map((item) => {
+                const Icon = item.icon;
+                const isActive = isItemActive(item);
+                const shortLabel = item.path === '/history' ? 'ประวัติ' : item.label;
+                return (
+                  <li key={item.path}>
+                    <Link
+                      href={item.path}
+                      aria-label={item.label}
+                      aria-current={isActive ? 'page' : undefined}
+                      title={item.label}
+                      className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-0.5 py-1.5 text-center transition-colors focus-visible:outline-2 focus-visible:outline-[#FF7A00] focus-visible:-outline-offset-2 ${
+                        isActive
+                          ? 'bg-[#FFF4EB] font-bold text-[#FF7A00] dark:bg-[#FF7A00]/15'
+                          : 'font-medium text-[#212529] hover:bg-[#F0EDE6] dark:text-[#E1E1E1] dark:hover:bg-white/5'
+                      }`}
+                    >
+                      <Icon aria-hidden="true" className={`size-[18px] shrink-0 ${isActive ? 'stroke-[2.5]' : 'stroke-2'}`} />
+                      <span className="text-[10px] leading-tight">{shortLabel}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          ))}
+        </nav>
       </aside>
     );
   }
