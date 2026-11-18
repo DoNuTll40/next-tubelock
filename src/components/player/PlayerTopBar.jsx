@@ -8,7 +8,6 @@ import { getGearBadge } from '@/lib/videoUtils';
 
 export default function PlayerTopBar({
   showControls,
-  isPlaying,
   isFullscreen,
   isMobileView,
   title,
@@ -27,14 +26,14 @@ export default function PlayerTopBar({
   showToast,
   resetControlsTimer,
 }) {
-  if (!showControls && isPlaying) return null;
+  if (!showControls) return null;
   if (!isFullscreen && !isMobileView) return null;
 
   const gearBadge = getGearBadge(activeLevelLabel);
 
   return (
     <div
-      className="absolute top-0 left-0 right-0 [--bar-x:0.625rem] sm:[--bar-x:1.5rem] [--bar-top:0.625rem] sm:[--bar-top:1rem] pl-[calc(var(--bar-x)+var(--player-safe-left,0px))] pr-[calc(var(--bar-x)+var(--player-safe-right,0px))] pt-[calc(var(--bar-top)+var(--player-safe-top,0px))] pb-6 sm:pb-8 bg-gradient-to-b from-black/40 via-black/10 to-transparent flex items-center justify-between z-30 transition-opacity duration-150"
+      className={`absolute top-0 left-0 right-0 [--bar-x:0.625rem] sm:[--bar-x:1.5rem] [--bar-top:0.625rem] sm:[--bar-top:1rem] pl-[calc(var(--bar-x)+var(--player-safe-left,0px))] pr-[calc(var(--bar-x)+var(--player-safe-right,0px))] pt-[calc(var(--bar-top)+var(--player-safe-top,0px))] pb-6 sm:pb-8 bg-gradient-to-b from-black/40 via-black/10 to-transparent flex items-center justify-between z-30 transition-opacity duration-150 ${isMobileView ? 'pointer-events-none [&_button]:pointer-events-auto' : ''}`}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Top-Left: Title in Fullscreen, or Back Button in Mobile Portrait */}
@@ -129,6 +128,7 @@ export default function PlayerTopBar({
           <button
             type="button"
             data-settings-btn="true"
+            aria-label="การตั้งค่า"
             onClick={() => {
               setSettingsPlacement?.('top');
               setShowSettingsMenu(!showSettingsMenu);

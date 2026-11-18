@@ -802,19 +802,42 @@ export default function VideoPlayer({
     showControlsRef.current = showControls;
   }, [showControls]);
 
-  // Controls Auto-Hide
+  const mobileControlsCanHide = isMobileView && !isScrubbing && !showSettingsMenu &&
+    !showStats && !isEnded && !isBuffering && !isSwitchingVideo;
+
+  const scheduleControlsHide = useCallback((delay) => {
+    controlsTimeoutRef.current = setTimeout(() => {
+      controlsTimeoutRef.current = null;
+      showControlsRef.current = false;
+      setShowControls(false);
+    }, delay);
+  }, []);
+
   const resetControlsTimer = useCallback((customDelay = null) => {
     showControlsRef.current = true;
     setShowControls(true);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    if (isPlaying && !isScrubbing && !showSettingsMenu && !showStats) {
-      const delay = customDelay || (isMobileView ? 4500 : 2800);
-      controlsTimeoutRef.current = setTimeout(() => {
-        showControlsRef.current = false;
-        setShowControls(false);
-      }, delay);
+    clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = null;
+    const canHide = isMobileView
+      ? mobileControlsCanHide
+      : isPlaying && !isScrubbing && !showSettingsMenu && !showStats;
+    if (canHide) {
+      scheduleControlsHide(customDelay || (isMobileView ? 4500 : 2800));
     }
-  }, [isPlaying, isScrubbing, showSettingsMenu, showStats, isMobileView]);
+  }, [isPlaying, isScrubbing, showSettingsMenu, showStats, isMobileView, mobileControlsCanHide, scheduleControlsHide]);
+
+  // Opening a sheet or starting a seek suspends the mobile timer. Closing it
+  // gives the controls a fresh timeout, including while playback is paused.
+  useEffect(() => {
+    if (!isMobileView) return;
+    clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = null;
+    if (showControls && mobileControlsCanHide) scheduleControlsHide(4500);
+    return () => {
+      clearTimeout(controlsTimeoutRef.current);
+      controlsTimeoutRef.current = null;
+    };
+  }, [isMobileView, mobileControlsCanHide, showControls, isPlaying, scheduleControlsHide]);
 
   // Reliable Autoplay with YouTube-style graceful unmuted -> muted fallback
   const attemptAutoPlay = useCallback(() => {
@@ -2119,17 +2142,17 @@ export default function VideoPlayer({
       ? formatTimePair(previewTime, duration)
       : formatTimePair(currentVideoTime, duration);
 
+  const controlsVisible = showControls || (!isMobileView && !isPlaying);
   const subtitleLayout = useMemo(
     () => computeSubtitleBoxLayout({
       containerWidth: containerSize.width,
       containerHeight: containerSize.height,
       videoRatio,
       aspectMode,
-      showControls,
-      isPlaying,
+      controlsVisible: controlsVisible || (isMobileView && isScrubbing),
       isMobile: isMobileView,
     }),
-    [containerSize.width, containerSize.height, videoRatio, aspectMode, showControls, isPlaying, isMobileView]
+    [containerSize.width, containerSize.height, videoRatio, aspectMode, controlsVisible, isMobileView, isScrubbing]
   );
 
   const initialBufferPct = 0;
@@ -2360,7 +2383,8 @@ export default function VideoPlayer({
           checkAndUpdateRatio();
           attemptAutoPlay();
         }}
-        onCanPlay={() => {
+        onCanPlay={(event) => {
+          if (isMobileView && event.currentTarget.paused) setIsBuffering(false);
           checkAndUpdateRatio();
           attemptAutoPlay();
         }}
@@ -2453,8 +2477,7 @@ export default function VideoPlayer({
 
       {/* Top Bar: Fullscreen / Mobile */}
       <PlayerTopBar
-        showControls={showControls}
-        isPlaying={isPlaying}
+        showControls={controlsVisible}
         isFullscreen={isFullscreen}
         isMobileView={isMobileView}
         title={title}
@@ -2480,7 +2503,7 @@ export default function VideoPlayer({
         centerRipple={centerRipple}
         doubleTapSide={doubleTapSide}
         accumulatedSeconds={accumulatedSeconds}
-        showControls={showControls}
+        showControls={controlsVisible}
         isPlaying={isPlaying}
         isEnded={isEnded}
         isBuffering={isBuffering || isSwitchingVideo}
@@ -2609,7 +2632,7 @@ export default function VideoPlayer({
 
       {/* Modern High-Performance Bottom Controls Bar */}
       <PlayerBottomBar
-        showControls={showControls}
+        showControls={controlsVisible}
         isPlaying={isPlaying}
         isEnded={isEnded}
         isScrubbing={isScrubbing}

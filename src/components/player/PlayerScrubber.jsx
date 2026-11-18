@@ -45,6 +45,7 @@ export default function PlayerScrubber({
   return (
     <div
       ref={seekTrackRef}
+      data-player-seek=""
       onPointerDown={handlePointerDown}
       onPointerMove={handleSeekMouseMove}
       onPointerUp={handlePointerUp}

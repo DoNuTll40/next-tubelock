@@ -81,11 +81,13 @@ export default function PlayerBottomBar({
   isScrubbingRef,
 }) {
   const gearBadge = getGearBadge(activeLevelLabel);
+  const isVisible = showControls || isScrubbing;
 
   return (
     <div
-      className={`absolute bottom-0 left-0 right-0 [--bar-x:0.625rem] sm:[--bar-x:1.5rem] pl-[calc(var(--bar-x)+var(--player-safe-left,0px))] pr-[calc(var(--bar-x)+var(--player-safe-right,0px))] pb-[calc(0.5rem+var(--player-safe-bottom,0px))] pt-0 sm:pt-8 bg-gradient-to-t from-black/85 via-black/40 to-transparent flex flex-col gap-0 sm:gap-0.5 sm:gap-0 z-30 transition-all duration-200 ${showControls || !isPlaying || isScrubbing
-        ? 'opacity-100 pointer-events-auto translate-y-0'
+      inert={isMobileView && !isVisible ? true : undefined}
+      className={`absolute bottom-0 left-0 right-0 [--bar-x:0.625rem] sm:[--bar-x:1.5rem] pl-[calc(var(--bar-x)+var(--player-safe-left,0px))] pr-[calc(var(--bar-x)+var(--player-safe-right,0px))] pb-[calc(0.5rem+var(--player-safe-bottom,0px))] pt-0 sm:pt-8 bg-gradient-to-t from-black/85 via-black/40 to-transparent flex flex-col gap-0 sm:gap-0.5 sm:gap-0 z-30 transition-all duration-200 ${isVisible
+        ? `opacity-100 translate-y-0 ${isMobileView ? 'pointer-events-none [&_button]:pointer-events-auto [&>[data-player-seek]]:pointer-events-auto' : 'pointer-events-auto'}`
         : 'opacity-0 pointer-events-none translate-y-1'
         }`}
       onClick={(e) => e.stopPropagation()}

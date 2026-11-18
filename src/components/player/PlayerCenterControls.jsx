@@ -89,11 +89,11 @@ export default function PlayerCenterControls({
             </svg>
           </div>
         ) : (
-          (showControls || !isPlaying) && !doubleTapSide && !isEnded && (
+          showControls && !doubleTapSide && !isEnded && (
             <>
               {isMobileView ? (
                 /* Mobile Trio — CSS fade-in, active:scale CSS (ไม่ใช้ whileTap Framer บน mobile) */
-                <div className="flex items-center gap-6 sm:gap-14 pointer-events-auto select-none [animation:fadein_0.15s_ease-out]">
+                <div className="flex items-center gap-6 sm:gap-14 [&_button]:pointer-events-auto select-none [animation:fadein_0.15s_ease-out]">
                   {/* Skip -10s */}
                   <button
                     type="button"
@@ -112,6 +112,7 @@ export default function PlayerCenterControls({
                   {/* Center Play/Pause */}
                   <button
                     type="button"
+                    aria-label={isPlaying ? 'หยุดชั่วคราว' : 'เล่น'}
                     onClick={(e) => { e.stopPropagation(); togglePlay(); }}
                     className="w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-black/50 active:bg-[#FF7A00] active:scale-90 border border-white/20 text-white flex items-center justify-center transition-[transform,background-color] duration-100 shadow-[0_8px_32px_rgba(0,0,0,0.7)] cursor-pointer"
                   >

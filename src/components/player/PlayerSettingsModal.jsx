@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import {
+  animate, AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform,
+} from 'framer-motion';
 import {
   ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, RotateCcw
 } from 'lucide-react';
@@ -17,6 +19,43 @@ import {
   SUBTITLE_FONT_OPACITIES,
   SUBTITLE_EDGE_STYLES,
 } from './playerUtils';
+
+const SHEET_SPRING = { type: 'spring', stiffness: 440, damping: 36, mass: 0.85 };
+
+function MobileSettingsContent({ tab, reduceMotion, children }) {
+  const scrollRef = useRef(null);
+  const contentRef = useRef(null);
+  const [height, setHeight] = useState(null);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const measure = () => setHeight(content.offsetHeight);
+    const observer = new ResizeObserver(measure);
+    measure();
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    scrollRef.current.scrollTop = 0;
+  }, [tab]);
+
+  return (
+    <motion.div
+      ref={scrollRef}
+      initial={false}
+      animate={{ height: height ?? 'auto' }}
+      transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.2, 0.8, 0.2, 1] }}
+      className="min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain touch-pan-y"
+    >
+      <div ref={contentRef} className="relative">
+        <AnimatePresence mode="popLayout" initial={false}>
+          {children}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  );
+}
 
 export default function PlayerSettingsModal({
   showSettingsMenu,
@@ -53,6 +92,12 @@ export default function PlayerSettingsModal({
   const [mounted, setMounted] = useState(false);
   const [isClientSmall, setIsClientSmall] = useState(false);
   const [portalTarget, setPortalTarget] = useState(null);
+  const mobileDragControls = useDragControls();
+  const sheetY = useMotionValue(0);
+  const dragScrimOpacity = useTransform(sheetY, (offset) =>
+    typeof offset === 'number' ? 1 - Math.min(0.75, Math.max(0, offset) / 350) : 1
+  );
+  const reduceMotion = useReducedMotion();
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -191,48 +236,75 @@ export default function PlayerSettingsModal({
   if (isMobile) {
     if (!mounted || !portalTarget) return null;
 
+    const closeSheet = () => setShowSettingsMenu?.(false);
+    const startSheetDrag = (event) => {
+      if (event.target.closest('button')) return;
+      mobileDragControls.start(event);
+    };
+    const finishSheetDrag = (event, { offset, velocity }) => {
+      const height = settingsMenuRef?.current?.offsetHeight || 360;
+      const distance = Math.max(0, sheetY.get());
+      const dismissDistance = Math.min(120, height * 0.28);
+      const isDownwardFlick = offset.y > 12 && velocity.y > 500;
+      if (event.type !== 'pointercancel' && (distance > dismissDistance || isDownwardFlick)) {
+        closeSheet();
+      } else {
+        animate(sheetY, 0, reduceMotion ? { duration: 0 } : SHEET_SPRING);
+      }
+    };
+
     return createPortal(
       <AnimatePresence>
         {showSettingsMenu && (
           <div
-            className={`${isFullscreen ? 'absolute' : 'fixed'} inset-0 z-[9999] flex flex-col justify-end overflow-hidden`}
+            className={`${isFullscreen ? 'absolute' : 'fixed'} inset-0 z-[9999] flex flex-col justify-end overflow-hidden overscroll-none`}
           >
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="absolute inset-0 bg-black/65"
-              onClick={() => setShowSettingsMenu?.(false)}
-            />
+              transition={{ duration: reduceMotion ? 0 : 0.2 }}
+              className="absolute inset-0 touch-none"
+              aria-hidden="true"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={closeSheet}
+            >
+              <motion.div className="absolute inset-0 bg-black/65" style={{ opacity: dragScrimOpacity }} />
+            </motion.div>
 
             <motion.div
               ref={settingsMenuRef}
-              initial={{ y: '100%' }}
+              role="dialog"
+              aria-modal="true"
+              aria-label={getHeaderTitle()}
+              style={{ y: sheetY }}
+              initial={{ y: reduceMotion ? 0 : '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{
-                type: 'spring',
-                damping: 30,
-                stiffness: 350,
-                mass: 0.8,
-              }}
+              exit={{ y: '100%', transition: { duration: reduceMotion ? 0 : 0.22, ease: [0.32, 0.72, 0, 1] } }}
+              transition={reduceMotion ? { duration: 0 } : SHEET_SPRING}
               drag="y"
+              dragControls={mobileDragControls}
+              dragListener={false}
+              dragMomentum={false}
               dragConstraints={{ top: 0 }}
-              dragElastic={{ top: 0, bottom: 0.5 }}
-              onDragEnd={(_, info) => {
-                if (info.offset.y > 60 || info.velocity.y > 350) {
-                  setShowSettingsMenu?.(false);
-                }
-              }}
-              className="relative z-10 w-full max-w-lg mx-auto bg-black/45 backdrop-blur-xl text-[#F1F1F1] rounded-t-2xl pb-7 pt-2 shadow-2xl border-t border-white/15 select-none overflow-hidden will-change-transform"
+              dragElastic={0}
+              onDragEnd={finishSheetDrag}
+              className="relative z-10 mx-auto flex max-h-[calc(100%_-_max(0.5rem,env(safe-area-inset-top)))] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border-t border-white/15 bg-[#181818]/95 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-[#F1F1F1] shadow-2xl select-none"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Drag Pill Handle */}
-              <div className="w-10 h-1 bg-white/30 rounded-full mx-auto my-1.5 cursor-grab active:cursor-grabbing" />
+              <div
+                aria-hidden="true"
+                onPointerDown={startSheetDrag}
+                className="flex h-7 shrink-0 touch-none cursor-grab items-center justify-center active:cursor-grabbing"
+              >
+                <div className="h-1 w-9 rounded-full bg-white/30" />
+              </div>
 
               {/* Sheet Header */}
-              <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
+              <div
+                onPointerDown={startSheetDrag}
+                className="flex shrink-0 touch-none items-center justify-between border-b border-white/10 px-4 pb-2"
+              >
                 <div className="flex items-center gap-2">
                   {activeMenuTab !== 'main' && (
                     <button
@@ -261,7 +333,7 @@ export default function PlayerSettingsModal({
                   )}
                   <button
                     type="button"
-                    onClick={() => setShowSettingsMenu?.(false)}
+                    onClick={closeSheet}
                     className="p-1 rounded-full hover:bg-white/10 active:bg-white/20 text-zinc-400 hover:text-white cursor-pointer"
                     title="ปิด"
                   >
@@ -271,7 +343,7 @@ export default function PlayerSettingsModal({
               </div>
 
               {/* Animated Tab Body */}
-              <AnimatePresence mode="wait">
+              <MobileSettingsContent tab={activeMenuTab} reduceMotion={reduceMotion}>
                 {/* Tab: Main Menu */}
                 {activeMenuTab === 'main' && (
                   <motion.div
@@ -477,7 +549,7 @@ export default function PlayerSettingsModal({
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -8 }}
                     transition={{ duration: 0.12 }}
-                    className="flex flex-col max-h-[58vh] overflow-y-auto py-1"
+                    className="flex flex-col py-1"
                   >
                     {SUBTITLE_OPTION_ROWS.map((row) => (
                       <button
@@ -515,7 +587,7 @@ export default function PlayerSettingsModal({
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -8 }}
                     transition={{ duration: 0.12 }}
-                    className="flex flex-col max-h-[55vh] overflow-y-auto py-1"
+                    className="flex flex-col py-1"
                   >
                     {activeSubOpt.options.map((opt) => {
                       const isSelected = s[activeSubOpt.key] === opt.value;
@@ -555,7 +627,7 @@ export default function PlayerSettingsModal({
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -8 }}
                     transition={{ duration: 0.12 }}
-                    className="flex flex-col max-h-[55vh] overflow-y-auto py-1"
+                    className="flex flex-col py-1"
                   >
                     {[...levels]
                       .sort((a, b) => (b.height || 0) - (a.height || 0))
@@ -674,7 +746,7 @@ export default function PlayerSettingsModal({
                     ))}
                   </motion.div>
                 )}
-              </AnimatePresence>
+              </MobileSettingsContent>
             </motion.div>
           </div>
         )}
