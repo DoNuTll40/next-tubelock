@@ -70,9 +70,9 @@ export async function transcribeAudio(audio, offsetMs, apiKey, request) {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: `models/${TRANSCRIBE_MODEL}`,
+        model: TRANSCRIBE_MODEL,
         store: false,
-        input: [{ type: 'file', file_uri: file.uri }],
+        input: [{ type: 'audio', uri: file.uri, mime_type: file.mimeType || 'audio/mpeg' }],
         generation_config: {
           transcription_config: { mode: { type: 'verbatim', timestamp_granularities: ['word'] } },
         },
