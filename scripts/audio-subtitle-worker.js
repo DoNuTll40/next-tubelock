@@ -401,7 +401,8 @@ function buildRequestBodyForModel(rawBodyStr, modelName, allowThinkingTune = tru
       if (lower.startsWith('gemini-2.5-')) {
         genCfg.thinkingConfig = { thinkingBudget: lower.includes('pro') ? 128 : 0 };
       } else {
-        genCfg.thinkingConfig = { thinkingLevel: 'minimal' };
+        const requiresLow = /^gemini-3\.[78]-flash(?:-|$)/.test(lower);
+        genCfg.thinkingConfig = { thinkingLevel: requiresLow ? 'low' : 'minimal' };
       }
     }
     payload.generationConfig = genCfg;
