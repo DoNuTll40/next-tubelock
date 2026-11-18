@@ -21,15 +21,49 @@ import {
 } from './playerUtils';
 
 const SHEET_SPRING = { type: 'spring', stiffness: 440, damping: 36, mass: 0.85 };
+const MENU_TRANSITION = { duration: 0.22, ease: [0.22, 1, 0.36, 1] };
 
-function MobileSettingsContent({ tab, reduceMotion, children }) {
+const MENU_PANEL_VARIANTS = {
+  enter: (dir) => ({ opacity: 0, x: dir > 0 ? 18 : -18 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir) => ({ opacity: 0, x: dir > 0 ? -18 : 18 }),
+};
+
+function getMenuDepth(tab) {
+  if (tab === 'main') return 0;
+  if (tab === 'subtitle_options') return 2;
+  if (String(tab).startsWith('subtitle_opt_')) return 3;
+  return 1;
+}
+
+function getPanelMotionProps(slideDir, reduceMotion) {
+  return {
+    custom: slideDir,
+    variants: MENU_PANEL_VARIANTS,
+    initial: reduceMotion ? false : 'enter',
+    animate: 'center',
+    exit: reduceMotion ? undefined : 'exit',
+    transition: reduceMotion ? { duration: 0 } : MENU_TRANSITION,
+  };
+}
+
+function AnimatedMenuBody({
+  tab,
+  slideDir = 1,
+  reduceMotion = false,
+  className = 'overflow-hidden',
+  children,
+}) {
   const scrollRef = useRef(null);
   const contentRef = useRef(null);
   const [height, setHeight] = useState(null);
 
   useLayoutEffect(() => {
     const content = contentRef.current;
-    const measure = () => setHeight(content.offsetHeight);
+    if (!content) return;
+    const measure = () => {
+      if (content.offsetHeight > 0) setHeight(content.offsetHeight);
+    };
     const observer = new ResizeObserver(measure);
     measure();
     observer.observe(content);
@@ -37,7 +71,9 @@ function MobileSettingsContent({ tab, reduceMotion, children }) {
   }, []);
 
   useLayoutEffect(() => {
-    scrollRef.current.scrollTop = 0;
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
   }, [tab]);
 
   return (
@@ -45,11 +81,11 @@ function MobileSettingsContent({ tab, reduceMotion, children }) {
       ref={scrollRef}
       initial={false}
       animate={{ height: height ?? 'auto' }}
-      transition={{ duration: reduceMotion ? 0 : 0.2, ease: [0.2, 0.8, 0.2, 1] }}
-      className="min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain touch-pan-y"
+      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className={className}
     >
       <div ref={contentRef} className="relative">
-        <AnimatePresence mode="popLayout" initial={false}>
+        <AnimatePresence mode="popLayout" initial={false} custom={slideDir}>
           {children}
         </AnimatePresence>
       </div>
@@ -230,6 +266,18 @@ export default function PlayerSettingsModal({
   const hasMultipleVersions = playableVersions.length > 1;
   const activeVersionBadgeOrLabel = activeVersion?.badge || activeVersion?.label || 'ปกติ';
 
+  const [navState, setNavState] = useState(() => ({ tab: activeMenuTab, dir: 1 }));
+  if (navState.tab !== activeMenuTab) {
+    const nextDepth = getMenuDepth(activeMenuTab);
+    const prevDepth = getMenuDepth(navState.tab);
+    setNavState({
+      tab: activeMenuTab,
+      dir: nextDepth >= prevDepth ? 1 : -1,
+    });
+  }
+  const slideDir = navState.dir;
+  const panelMotionProps = getPanelMotionProps(slideDir, reduceMotion);
+
   const getHeaderTitle = () => {
     if (activeSubOpt) return activeSubOpt.title;
     if (activeMenuTab === 'subtitle_options') return 'ตัวเลือก';
@@ -354,23 +402,57 @@ export default function PlayerSettingsModal({
               </div>
 
               {/* Animated Tab Body */}
-              <MobileSettingsContent tab={activeMenuTab} reduceMotion={reduceMotion}>
+              <AnimatedMenuBody
+                tab={activeMenuTab}
+                slideDir={slideDir}
+                reduceMotion={reduceMotion}
+                className="min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain touch-pan-y"
+              >
                 {/* Tab: Main Menu */}
                 {activeMenuTab === 'main' && (
                   <motion.div
                     key="main"
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 8 }}
-                    transition={{ duration: 0.12 }}
+                    custom={slideDir}
+                    variants={MENU_PANEL_VARIANTS}
+                    initial={reduceMotion ? false : 'enter'}
+                    animate="center"
+                    exit={reduceMotion ? undefined : 'exit'}
+                    transition={reduceMotion ? { duration: 0 } : MENU_TRANSITION}
                     className="flex flex-col py-1"
                   >
+                    {/* Version Switcher (Top priority when multi-version) */}
+                    {hasMultipleVersions && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveMenuTab?.('version')}
+                        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <Layers className="w-5 h-5 text-zinc-300 shrink-0" />
+                          <span className="text-[14px] text-zinc-200 font-medium">เวอร์ชันวิดีโอ</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-zinc-400 max-w-[52%]">
+                          <span className="text-[13px] text-[#FF7A00] font-semibold truncate">
+                            {isSwitchingVersion ? 'กำลังสลับ...' : (activeVersion?.label || activeVersionBadgeOrLabel)}
+                          </span>
+                          {!isSwitchingVersion && activeVersion?.badge && (
+                            <span className="text-[9.5px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#FF7A00] text-white shrink-0">
+                              {activeVersion.badge}
+                            </span>
+                          )}
+                          <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
+                        </div>
+                      </button>
+                    )}
+
                     {/* Quality */}
                     <button
                       type="button"
                       disabled={levels.length <= 1}
                       onClick={() => setActiveMenuTab?.('quality')}
-                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition disabled:opacity-50 cursor-pointer"
+                      className={`w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition disabled:opacity-50 cursor-pointer ${
+                        hasMultipleVersions ? 'border-t border-white/5' : ''
+                      }`}
                     >
                       <div className="flex items-center gap-3.5">
                         <Sliders className="w-5 h-5 text-zinc-300 shrink-0" />
@@ -438,26 +520,6 @@ export default function PlayerSettingsModal({
                       </div>
                     </button>
 
-                    {/* Version Switcher (Multi-Version) */}
-                    {hasMultipleVersions && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveMenuTab?.('version')}
-                        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
-                      >
-                        <div className="flex items-center gap-3.5">
-                          <Layers className="w-5 h-5 text-[#FF7A00] shrink-0" />
-                          <span className="text-[14px] text-zinc-200 font-medium">เวอร์ชันวิดีโอ</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-zinc-400 max-w-[48%]">
-                          <span className="text-[13px] text-[#FF7A00] font-semibold truncate">
-                            {isSwitchingVersion ? 'กำลังสลับ...' : activeVersionBadgeOrLabel}
-                          </span>
-                          <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
-                        </div>
-                      </button>
-                    )}
-
                     {/* Ambient Mode Toggle */}
                     <button
                       type="button"
@@ -488,10 +550,7 @@ export default function PlayerSettingsModal({
                 {activeMenuTab === 'subtitles' && (
                   <motion.div
                     key="subtitles"
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -8 }}
-                    transition={{ duration: 0.12 }}
+                    {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
                     {/* Off */}
@@ -576,10 +635,7 @@ export default function PlayerSettingsModal({
                 {activeMenuTab === 'subtitle_options' && (
                   <motion.div
                     key="subtitle_options"
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -8 }}
-                    transition={{ duration: 0.12 }}
+                    {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
                     {SUBTITLE_OPTION_ROWS.map((row) => (
@@ -614,10 +670,7 @@ export default function PlayerSettingsModal({
                 {activeSubOpt && (
                   <motion.div
                     key={activeMenuTab}
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -8 }}
-                    transition={{ duration: 0.12 }}
+                    {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
                     {activeSubOpt.options.map((opt) => {
@@ -654,10 +707,7 @@ export default function PlayerSettingsModal({
                 {activeMenuTab === 'quality' && (
                   <motion.div
                     key="quality"
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -8 }}
-                    transition={{ duration: 0.12 }}
+                    {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
                     {[...levels]
@@ -712,10 +762,7 @@ export default function PlayerSettingsModal({
                 {activeMenuTab === 'speed' && (
                   <motion.div
                     key="speed"
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -8 }}
-                    transition={{ duration: 0.12 }}
+                    {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
                     {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
@@ -744,10 +791,7 @@ export default function PlayerSettingsModal({
                 {activeMenuTab === 'aspect' && (
                   <motion.div
                     key="aspect"
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -8 }}
-                    transition={{ duration: 0.12 }}
+                    {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
                     {[
@@ -782,10 +826,7 @@ export default function PlayerSettingsModal({
                 {activeMenuTab === 'version' && hasMultipleVersions && (
                   <motion.div
                     key="version"
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -8 }}
-                    transition={{ duration: 0.12 }}
+                    {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
                     {playableVersions.map((ver) => {
@@ -835,7 +876,7 @@ export default function PlayerSettingsModal({
                     })}
                   </motion.div>
                 )}
-              </MobileSettingsContent>
+              </AnimatedMenuBody>
             </motion.div>
           </div>
         )}
@@ -868,15 +909,47 @@ export default function PlayerSettingsModal({
           } text-zinc-200 z-40 shadow-[0_16px_40px_rgba(0,0,0,0.65)] backdrop-blur-md overflow-hidden select-none will-change-transform transition-[width] duration-150`}
           onClick={(e) => e.stopPropagation()}
         >
+          <AnimatedMenuBody tab={activeMenuTab} slideDir={slideDir} reduceMotion={reduceMotion}>
           {/* Tab: Main Menu */}
           {activeMenuTab === 'main' && (
-            <div className="flex flex-col">
+            <motion.div
+              key="main"
+              {...panelMotionProps}
+              className="flex flex-col w-full"
+            >
+              {/* Version Switcher Item (Top priority when multi-version) */}
+              {hasMultipleVersions && (
+                <button
+                  type="button"
+                  onClick={() => setActiveMenuTab?.('version')}
+                  className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3.5 shrink-0">
+                    <Layers className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition shrink-0" />
+                    <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">เวอร์ชันวิดีโอ</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 max-w-[175px]">
+                    <span className="text-[13px] text-[#FF7A00] font-semibold truncate">
+                      {isSwitchingVersion ? 'กำลังสลับ...' : (activeVersion?.label || activeVersionBadgeOrLabel)}
+                    </span>
+                    {!isSwitchingVersion && activeVersion?.badge && (
+                      <span className="text-[9px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#FF7A00] text-white shrink-0">
+                        {activeVersion.badge}
+                      </span>
+                    )}
+                    <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
+                  </div>
+                </button>
+              )}
+
               {/* Quality Item */}
               <button
                 type="button"
                 disabled={levels.length <= 1}
                 onClick={() => setActiveMenuTab?.('quality')}
-                className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer group"
+                className={`w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition disabled:opacity-50 cursor-pointer group ${
+                  hasMultipleVersions ? 'border-t border-white/5' : ''
+                }`}
               >
                 <div className="flex items-center gap-3.5 shrink-0">
                   <Sliders className="w-4.5 h-4.5 text-zinc-400 group-hover:text-zinc-200 transition shrink-0" />
@@ -947,26 +1020,6 @@ export default function PlayerSettingsModal({
                 </div>
               </button>
 
-              {/* Version Switcher Item (Desktop Multi-Version) */}
-              {hasMultipleVersions && (
-                <button
-                  type="button"
-                  onClick={() => setActiveMenuTab?.('version')}
-                  className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
-                >
-                  <div className="flex items-center gap-3.5 shrink-0">
-                    <Layers className="w-4.5 h-4.5 text-[#FF7A00] transition shrink-0" />
-                    <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">เวอร์ชันวิดีโอ</span>
-                  </div>
-                  <div className="flex items-center gap-2 max-w-[140px]">
-                    <span className="text-[13px] text-[#FF7A00] font-semibold truncate">
-                      {isSwitchingVersion ? 'กำลังสลับ...' : activeVersionBadgeOrLabel}
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
-                  </div>
-                </button>
-              )}
-
               {/* Ambient Mode Toggle */}
               <button
                 type="button"
@@ -990,12 +1043,12 @@ export default function PlayerSettingsModal({
                   </div>
                 </div>
               </button>
-            </div>
+            </motion.div>
           )}
 
           {/* Tab: Subtitles Track Selector (with top-right "ตัวเลือก" button like YouTube) */}
           {activeMenuTab === 'subtitles' && (
-            <div className="flex flex-col">
+            <motion.div key="subtitles" {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10 flex items-center justify-between">
                 <button
                   type="button"
@@ -1094,12 +1147,12 @@ export default function PlayerSettingsModal({
                   <ChevronRight className="w-4 h-4 text-zinc-400" />
                 </button>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Tab: YouTube Subtitle Options (< ตัวเลือก) */}
           {activeMenuTab === 'subtitle_options' && (
-            <div className="flex flex-col">
+            <motion.div key="subtitle_options" {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10 flex items-center justify-between">
                 <button
                   type="button"
@@ -1139,12 +1192,12 @@ export default function PlayerSettingsModal({
                   </button>
                 ))}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Tab: Specific Subtitle Property Picker (subtitle_opt_*) */}
           {activeSubOpt && (
-            <div className="flex flex-col">
+            <motion.div key={activeMenuTab} {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
@@ -1187,12 +1240,12 @@ export default function PlayerSettingsModal({
                   );
                 })}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Tab: Quality Submenu */}
           {activeMenuTab === 'quality' && (
-            <div className="flex flex-col">
+            <motion.div key="quality" {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
@@ -1249,12 +1302,12 @@ export default function PlayerSettingsModal({
                   {currentLevelIndex === -1 && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
                 </button>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Tab: Playback Speed Submenu */}
           {activeMenuTab === 'speed' && (
-            <div className="flex flex-col">
+            <motion.div key="speed" {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
@@ -1290,12 +1343,12 @@ export default function PlayerSettingsModal({
                   </button>
                 ))}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Tab: Aspect Ratio Submenu */}
           {activeMenuTab === 'aspect' && (
-            <div className="flex flex-col">
+            <motion.div key="aspect" {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
@@ -1335,12 +1388,12 @@ export default function PlayerSettingsModal({
                   </button>
                 ))}
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Tab: Version Submenu (Desktop) */}
           {activeMenuTab === 'version' && hasMultipleVersions && (
-            <div className="flex flex-col">
+            <motion.div key="version" {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10">
                 <button
                   type="button"
@@ -1400,8 +1453,9 @@ export default function PlayerSettingsModal({
                   );
                 })}
               </div>
-            </div>
+            </motion.div>
           )}
+          </AnimatedMenuBody>
         </motion.div>
       )}
     </AnimatePresence>

@@ -14,7 +14,6 @@ import {
   Check,
   Trash2,
   ExternalLink,
-  ListOrdered,
   RefreshCw,
   Loader2,
   LockKeyhole,
@@ -34,7 +33,6 @@ import { usePosterReveal } from '@/lib/usePosterReveal';
 import { invalidateClientVideoCache } from '@/lib/playbackResolver';
 import {
   encodeVideoSlug,
-  encodeUploadId,
   formatResolutionBadge,
   isMatureVideo,
   RESTRICTED_POSTER,
@@ -205,14 +203,6 @@ function StudioActionDropdown({
           >
             <ExternalLink className="w-3.5 h-3.5 text-[#8C857B] dark:text-[#AAAAAA]" />
             <span>ดูใน TubeLock</span>
-          </Link>
-          <Link
-            href={`/upload?upload_id=${encodeUploadId(video.id)}`}
-            onClick={onClose}
-            className="flex items-center gap-2.5 px-3.5 py-2 hover:bg-[#F4F0E8] dark:hover:bg-white/10 transition"
-          >
-            <ListOrdered className="w-3.5 h-3.5 text-[#8C857B] dark:text-[#AAAAAA]" />
-            <span>เปิดหน้า Pipeline อัปโหลด</span>
           </Link>
           <button
             type="button"

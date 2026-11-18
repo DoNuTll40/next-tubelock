@@ -12,10 +12,8 @@ import DescriptionBox from '@/components/watch/DescriptionBox';
 import {
   Share2, ThumbsUp, ThumbsDown,
   Film, Bookmark, UploadCloud,
-  AlertCircle, ArrowLeft, Pencil,
-  Layers, Loader2
+  AlertCircle, ArrowLeft
 } from 'lucide-react';
-import { useSession } from '@/context/SessionContext';
 import { resolveClientPlaybackSource, fetchVideoSourceClient, resolveStoryboard } from '@/lib/playbackResolver';
 import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 
@@ -85,10 +83,6 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
     return fallbackActiveVersion || null;
   }, [playableVersions, activeVersionKey, fallbackActiveVersion]);
 
-  const session = useSession();
-  const canEdit = Boolean(
-    session?.isAdmin || (session?.id && video?.user_id === session.id)
-  );
   const isMusic = isMusicVideo(video);
   const matureVideo = isMatureVideo(video);
   const showAdultPoster = usePosterPreference(matureVideo, initialShowAdultPosters);
@@ -669,75 +663,6 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
               {video?.title || ''}
             </h1>
 
-            {/* 1.5 Multi-Version Switcher (Disney+ IMAX Enhanced Style) */}
-            {playableVersions.length > 1 && (
-              <div className="flex flex-col gap-1.5 rounded-2xl bg-black/[0.03] dark:bg-white/[0.04] border border-[#E5E0D8] dark:border-white/10 p-2.5 sm:px-3.5 sm:py-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-wider text-[#606060] dark:text-zinc-400">
-                    <Layers className="w-3.5 h-3.5 text-[#FF7A00]" />
-                    <span>เวอร์ชัน</span>
-                    {isSwitchingVersion && (
-                      <span className="inline-flex items-center gap-1 text-[#FF7A00] normal-case font-semibold ml-1">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        กำลังสลับเวอร์ชัน...
-                      </span>
-                    )}
-                  </div>
-                  {activeVersion?.aspectLabel && (
-                    <span className="text-[11px] font-mono text-[#606060] dark:text-zinc-400">
-                      {[activeVersion.aspectLabel, activeVersion.resolution].filter(Boolean).join(' • ')}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
-                  {playableVersions.map((ver) => {
-                    const isSelected = activeVersion?.id
-                      ? ver.id === activeVersion.id
-                      : ver.versionKey === activeVersion?.versionKey;
-                    const resBadge = ver.resolution ? formatResolutionBadge(ver.resolution) : '';
-                    return (
-                      <button
-                        key={ver.id ?? ver.versionKey}
-                        type="button"
-                        disabled={isSwitchingVersion}
-                        onClick={() => handleSelectVersion(ver)}
-                        className={`shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-left transition cursor-pointer active:scale-[0.98] disabled:opacity-60 ${
-                          isSelected
-                            ? 'bg-[#FF7A00]/12 dark:bg-[#FF7A00]/20 border-[#FF7A00] text-[#B84F00] dark:text-[#FFAE5C] shadow-xs'
-                            : 'bg-white dark:bg-[#1A1A1A] border-[#E5E0D8] dark:border-white/10 text-[#0F0F0F] dark:text-zinc-200 hover:border-[#FF7A00]/50 hover:bg-[#FF7A00]/5'
-                        }`}
-                      >
-                        <span className={`text-[12.5px] whitespace-nowrap ${isSelected ? 'font-bold' : 'font-semibold'}`}>
-                          {ver.label || 'เวอร์ชัน'}
-                        </span>
-                        {ver.badge && (
-                          <span className={`text-[9.5px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
-                            isSelected
-                              ? 'bg-[#FF7A00] text-white'
-                              : 'bg-black/10 dark:bg-white/10 text-[#404040] dark:text-zinc-300'
-                          }`}>
-                            {ver.badge}
-                          </span>
-                        )}
-                        {(ver.aspectLabel || resBadge) && (
-                          <span className="text-[10.5px] font-mono text-[#606060] dark:text-zinc-400 whitespace-nowrap">
-                            {[ver.aspectLabel, resBadge].filter(Boolean).join(' · ')}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {activeVersion?.description && (
-                  <p className="text-[11.5px] text-[#606060] dark:text-[#AAAAAA] leading-relaxed">
-                    {activeVersion.description}
-                  </p>
-                )}
-              </div>
-            )}
-
             {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) in Single Line on Desktop */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-1">
               {/* Channel Info & Subscribe Button */}
@@ -819,17 +744,6 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
                   <span className={isSaved ? 'text-[#FF7A00] font-bold' : ''}>{isSaved ? 'บันทึกแล้ว' : 'บันทึก'}</span>
                 </button>
-
-                {/* Studio Edit Video Pill (Desktop Owner / Admin only) */}
-                {canEdit && video?.id && (
-                  <Link
-                    href={`/videos/${video.id}/edit`}
-                    className="hidden md:flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#FF7A00]/12 hover:bg-[#FF7A00] text-[#FF7A00] hover:text-white border border-[#FF7A00]/30 text-xs font-semibold transition active:scale-95 shrink-0"
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                    <span>แก้ไขวิดีโอ</span>
-                  </Link>
-                )}
               </div>
             </div>
 

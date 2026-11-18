@@ -43,6 +43,8 @@ export default function PlayerBottomBar({
   setSettingsPlacement,
   setActiveMenuTab,
   activeLevelLabel,
+  versions = [],
+  activeVersion = null,
   togglePiP,
   aspectMode,
   cycleAspectMode,
@@ -81,6 +83,13 @@ export default function PlayerBottomBar({
   isScrubbingRef,
 }) {
   const gearBadge = getGearBadge(activeLevelLabel);
+  const playableVersions = Array.isArray(versions)
+    ? versions.filter((v) => !v?.status || ['READY', 'COMPLETED'].includes(String(v.status).toUpperCase()))
+    : [];
+  const hasMultipleVersions = playableVersions.length > 1;
+  const activeVersionBadge = hasMultipleVersions && activeVersion?.badge
+    ? String(activeVersion.badge).slice(0, 6).toUpperCase()
+    : '';
   const isVisible = showControls || isScrubbing;
 
   return (
@@ -325,7 +334,11 @@ export default function PlayerBottomBar({
             </PlayerTooltip>
 
             {/* Settings Gear */}
-            <PlayerTooltip text="การตั้งค่า" align="center" disabled={showSettingsMenu}>
+            <PlayerTooltip
+              text={hasMultipleVersions ? `การตั้งค่า • ${activeVersion?.label || 'หลายเวอร์ชัน'}` : 'การตั้งค่า'}
+              align="center"
+              disabled={showSettingsMenu}
+            >
               <button
                 type="button"
                 data-settings-btn="true"
@@ -339,10 +352,20 @@ export default function PlayerBottomBar({
                   }`}
               >
                 <Settings className="w-5.5 h-5.5" />
-                {gearBadge && (
+                {activeVersionBadge ? (
+                  <span className="absolute -top-0.5 -right-0.5 bg-[#FF7A00] text-white font-extrabold text-[8px] leading-tight px-1.5 py-0.5 rounded shadow pointer-events-none tracking-tight">
+                    {activeVersionBadge}
+                  </span>
+                ) : gearBadge ? (
                   <span className="absolute -top-0.5 -right-0.5 bg-red-600 text-white font-extrabold text-[8px] leading-tight px-1.5 py-0.5 rounded shadow pointer-events-none tracking-tight">
                     {gearBadge}
                   </span>
+                ) : null}
+                {hasMultipleVersions && !activeVersionBadge && (
+                  <span
+                    className="absolute bottom-1 left-1 w-1.5 h-1.5 rounded-full bg-[#FF7A00] ring-1 ring-black pointer-events-none"
+                    title="มีหลายเวอร์ชันให้เลือกในตั้งค่า"
+                  />
                 )}
               </button>
             </PlayerTooltip>

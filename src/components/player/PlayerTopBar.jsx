@@ -163,10 +163,17 @@ export default function PlayerTopBar({
             className="p-2 rounded-xl bg-black/40 hover:bg-white/15 border border-white/15 backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer text-zinc-300 hover:text-white relative shadow-xs"
           >
             <Settings className="w-4.5 h-4.5" />
-            {gearBadge && (
+            {hasMultipleVersions && activeVersion?.badge ? (
+              <span className="absolute -top-1 -right-1 bg-[#FF7A00] text-white font-extrabold text-[8px] leading-tight px-1.5 py-0.5 rounded shadow pointer-events-none tracking-tight border border-white/30">
+                {String(activeVersion.badge).slice(0, 6).toUpperCase()}
+              </span>
+            ) : gearBadge ? (
               <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[8px] leading-tight px-1.5 py-0.5 rounded shadow pointer-events-none tracking-tight border border-white/30">
                 {gearBadge}
               </span>
+            ) : null}
+            {hasMultipleVersions && !activeVersion?.badge && (
+              <span className="absolute bottom-1 left-1 w-1.5 h-1.5 rounded-full bg-[#FF7A00] ring-1 ring-black pointer-events-none" />
             )}
           </button>
         </div>
