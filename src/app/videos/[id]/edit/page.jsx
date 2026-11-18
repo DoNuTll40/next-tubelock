@@ -169,8 +169,8 @@ function StudioEditorInner() {
               (res.status === 401
                 ? 'กรุณาเข้าสู่ระบบเพื่อแก้ไขวิดีโอ'
                 : res.status === 403
-                ? 'คุณไม่มีสิทธิ์แก้ไขวิดีโอนี้ (เฉพาะเจ้าของวิดีโอหรือผู้ดูแลระบบ)'
-                : 'ไม่พบข้อมูลวิดีโอ'),
+                  ? 'คุณไม่มีสิทธิ์แก้ไขวิดีโอนี้ (เฉพาะเจ้าของวิดีโอหรือผู้ดูแลระบบ)'
+                  : 'ไม่พบข้อมูลวิดีโอ'),
           });
           setLoading(false);
           return;
@@ -273,23 +273,24 @@ function StudioEditorInner() {
   // Background polling while AI workflows or HLS transcoding are active
   const hasActiveWorker = Boolean(
     video &&
-      (video.thumbnailStatus === 'generating' ||
-        video.thumbnailStatus === 'extracting' ||
-        video.ratingCheckStatus === 'analyzing' ||
-        video.ratingCheckStatus === 'checking' ||
-        video.spriteStatus === 'generating' ||
-        video.subtitleStatus === 'processing' ||
-        video.subtitleStatus === 'extracting' ||
-        video.audioStatus === 'extracting' ||
-        video.status === 'TRANSCODING' ||
-        video.status === 'PROCESSING' ||
-        video.status === 'QUEUED')
+    (video.thumbnailStatus === 'generating' ||
+      video.thumbnailStatus === 'extracting' ||
+      video.ratingCheckStatus === 'analyzing' ||
+      video.ratingCheckStatus === 'checking' ||
+      video.spriteStatus === 'generating' ||
+      video.subtitleStatus === 'processing' ||
+      video.subtitleStatus === 'extracting' ||
+      video.audioStatus === 'extracting' ||
+      video.status === 'TRANSCODING' ||
+      video.status === 'PROCESSING' ||
+      video.status === 'QUEUED')
   );
 
   useEffect(() => {
     if (!video?.id || !hasActiveWorker) return;
     let cancelled = false;
     let pending = false;
+    let lastSubtitleSync = 0;
 
     const pollOnce = async () => {
       if (cancelled || pending || (typeof document !== 'undefined' && document.hidden)) return;
@@ -297,6 +298,10 @@ function StudioEditorInner() {
       try {
         const rev = statusRevisionsRef.current || {};
         const params = new URLSearchParams();
+        if (Date.now() - lastSubtitleSync >= 15000) {
+          params.set('syncSubtitles', '1');
+          lastSubtitleSync = Date.now();
+        }
         if (rev.subtitles) params.set('subtitlesRevision', rev.subtitles);
         if (rev.logs) params.set('logsRevision', rev.logs);
         if (rev.meta) params.set('metaRevision', rev.meta);
@@ -333,10 +338,10 @@ function StudioEditorInner() {
           typeof latest.subtitleVtt === 'string';
         const incomingTracks = hasSubtitlePayload
           ? normalizeSubtitleTracks(
-              latest.subtitleTracks,
-              latest.subtitleSrt || '',
-              latest.subtitleVtt || ''
-            )
+            latest.subtitleTracks,
+            latest.subtitleSrt || '',
+            latest.subtitleVtt || ''
+          )
           : null;
 
         setSavedSnapshot((prevSnap) => {
@@ -378,6 +383,7 @@ function StudioEditorInner() {
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     const timer = setInterval(pollOnce, 4500);
+    void pollOnce();
 
     return () => {
       cancelled = true;
@@ -548,7 +554,7 @@ function StudioEditorInner() {
         customPrompt,
       },
       null,
-      { audioStatus: 'extracting', subtitleStatus: 'extracting' }
+      { audioStatus: 'extracting', subtitleStatus: 'processing' }
     );
 
   const handleDispatchTranscode = () =>
@@ -642,18 +648,18 @@ function StudioEditorInner() {
       await navigator.clipboard.writeText(fullWatchUrl);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
-    } catch (_) {}
+    } catch (_) { }
   };
 
   const tabHeading =
     activeTab === 'subtitles'
       ? 'คำบรรยายของวิดีโอ'
       : activeTab === 'tech'
-      ? 'ข้อมูลเทคนิคและคิวงาน'
-      : 'รายละเอียดของวิดีโอ';
+        ? 'ข้อมูลเทคนิคและคิวงาน'
+        : 'รายละเอียดของวิดีโอ';
 
   return (
-    <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1] pb-20">
+    <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1]">
       <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col lg:flex-row gap-6 items-start">
         {/* Left YouTube Studio Navigation Column */}
         <aside className="w-full lg:w-64 shrink-0 lg:sticky lg:top-20 bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-4 shadow-xs space-y-4">
@@ -715,11 +721,10 @@ function StudioEditorInner() {
                   key={tab.id}
                   type="button"
                   onClick={() => handleSelectTab(tab.id)}
-                  className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
-                    isActive
+                  className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${isActive
                       ? 'bg-[#FF7A00]/12 text-[#FF7A00] border border-[#FF7A00]/30'
                       : 'text-[#6C655D] dark:text-[#CCCCCC] hover:bg-[#F4F0E8] dark:hover:bg-white/5 border border-transparent'
-                  }`}
+                    }`}
                 >
                   <span className="flex items-center gap-2.5">
                     <Icon className="w-4 h-4 shrink-0" />
@@ -727,11 +732,10 @@ function StudioEditorInner() {
                   </span>
                   {tab.badge && (
                     <span
-                      className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${
-                        isActive
+                      className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${isActive
                           ? 'bg-[#FF7A00] text-white'
                           : 'bg-[#F4F0E8] dark:bg-[#242424] text-[#6C655D] dark:text-[#AAAAAA]'
-                      }`}
+                        }`}
                     >
                       {tab.badge}
                     </span>
@@ -783,11 +787,10 @@ function StudioEditorInner() {
                 type="button"
                 disabled={!isDirty || isSaving || !title.trim()}
                 onClick={handleSave}
-                className={`px-4 sm:px-5 py-2 rounded-full text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
-                  isDirty
+                className={`px-4 sm:px-5 py-2 rounded-full text-xs font-bold inline-flex items-center gap-1.5 transition cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${isDirty
                     ? 'bg-[#FF7A00] hover:bg-[#E66E00] text-white shadow-sm'
                     : 'bg-zinc-200 dark:bg-white/15 text-zinc-600 dark:text-zinc-300'
-                }`}
+                  }`}
               >
                 {isSaving ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -858,13 +861,12 @@ function StudioEditorInner() {
           {/* Status / Save Feedback Banner */}
           {saveFeedback.text && (
             <div
-              className={`px-4 py-3 rounded-2xl border text-xs sm:text-sm font-medium flex items-center gap-2 ${
-                saveFeedback.type === 'error'
+              className={`px-4 py-3 rounded-2xl border text-xs sm:text-sm font-medium flex items-center gap-2 ${saveFeedback.type === 'error'
                   ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
                   : saveFeedback.type === 'info'
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400'
-                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
-              }`}
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400'
+                    : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                }`}
             >
               {saveFeedback.type === 'error' ? (
                 <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -907,6 +909,7 @@ function StudioEditorInner() {
 
               {activeTab === 'subtitles' && (
                 <StudioSubtitlesTab
+                  videoId={video.id}
                   videoTitle={title || video.title || 'video'}
                   tracks={subtitleTracks}
                   onChangeTracks={setSubtitleTracks}

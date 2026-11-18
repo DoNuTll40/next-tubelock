@@ -1,3 +1,5 @@
+import { isSubtitleWorkflowActive, markSubtitleDispatchFailed } from '@/lib/subtitleWorkflow';
+import { randomUUID } from 'node:crypto';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
@@ -55,6 +57,7 @@ export async function POST(request) {
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_model VARCHAR(100) DEFAULT '';`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_job_id TEXT;`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_status VARCHAR(50) DEFAULT 'waiting';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_preview_url TEXT DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS content_rating VARCHAR(50) DEFAULT 'all';`;
@@ -218,30 +221,39 @@ export async function POST(request) {
     const shouldDispatchAudioSub =
       subtitleMode === 'ai' &&
       currentVideo.subtitle_status !== 'ready' &&
-      currentVideo.subtitle_status !== 'processing';
+      !isSubtitleWorkflowActive(currentVideo);
 
     if (shouldDispatchAudioSub) {
+      const subtitleJobId = `${Date.now()}-${randomUUID()}`;
       try {
-        await sql`
+        const claimed = await sql`
           UPDATE videos
           SET audio_status = 'extracting',
               subtitle_status = 'processing',
-              subtitle_model = ${resolvedModel},
+              subtitle_job_id = ${subtitleJobId},
+              subtitle_model = 'gemini-3.5-transcribe',
               updated_at = NOW()
-          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
+            AND COALESCE(audio_status, '') <> 'extracting'
+            AND COALESCE(subtitle_status, '') NOT IN ('extracting', 'processing', 'ready')
+          RETURNING id;
         `;
-        await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
-          video_id: String(videoId),
-          raw_file_name: String(finalRawFileName),
-          model: String(resolvedModel),
-          custom_prompt: String(customPrompt || ''),
-        });
-        await appendWorkerLog(sql, videoId, {
-          source: 'subtitles',
-          label: 'Audio & Sub',
-          message: `🚀 ส่งคำสั่งถอดเสียงและซับอัตโนมัติ (${resolvedModel}) เข้าคิว GitHub Actions`,
-        });
+        if (claimed.length) {
+          await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
+            job_id: subtitleJobId,
+            video_id: String(videoId),
+            raw_file_name: String(finalRawFileName),
+            custom_prompt: String(customPrompt || ''),
+          });
+          await appendWorkerLog(sql, videoId, {
+            source: 'subtitles',
+            label: 'Audio & Sub',
+            message: `🚀 ส่งคำสั่งถอดเสียงและซับอัตโนมัติ (3.5 Transcribe + 3.8 Flash) เข้าคิว GitHub Actions`,
+          });
+        }
       } catch (subErr) {
+        await markSubtitleDispatchFailed(sql, videoId, subtitleJobId, currentVideo.audio_status)
+          .catch((error) => console.warn('[Subtitle dispatch status]', error.message));
         console.warn('[Auto-dispatch Audio Subtitle Warning]:', subErr.message);
         await appendWorkerLog(sql, videoId, {
           source: 'subtitles',

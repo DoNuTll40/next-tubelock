@@ -22,18 +22,36 @@ export default function SubtitleGenerationCard({
   customPrompt,
   setCustomPrompt,
   onRun,
+  cancelUrl,
 }) {
   const promptId = useId();
   const [activePrompt, setActivePrompt] = useState(PROMPTS[0]);
+  const [cancelState, setCancelState] = useState('idle');
+  const [cancelError, setCancelError] = useState('');
+  const isCancelled = subtitleStatus === 'cancelled' && !isRunningWorkflow;
   const isSubtitleReady = subtitleStatus === 'ready' && !isRunningWorkflow;
   const canStartAiGeneration = canGenerate && !isRunningWorkflow;
+
+  const cancelRun = async () => {
+    setCancelState('pending');
+    setCancelError('');
+    try {
+      const response = await fetch(cancelUrl, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'ยกเลิกงานซับไม่สำเร็จ');
+      setCancelState('requested');
+    } catch (error) {
+      setCancelError(error.message);
+      setCancelState('idle');
+    }
+  };
 
   return (
     <div className="p-4 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1]">
-            {isSubtitleReady
+            {isCancelled ? 'ยกเลิกการสร้างซับแล้ว' : isSubtitleReady
               ? 'ถอดเสียงและสร้างซับไตเติลสำเร็จแล้ว'
               : isRunningWorkflow
               ? 'กำลังสกัดเสียงและสร้างซับไตเติลด้วย AI...'
@@ -42,7 +60,7 @@ export default function SubtitleGenerationCard({
               : `กำลังอัปโหลดไฟล์วิดีโอ (${uploadPercent}%)`}
           </div>
           <div className="text-xs text-[#6C655D] dark:text-[#9A9A9A] mt-0.5 break-words">
-            {isSubtitleReady
+            {isCancelled ? 'เริ่มสร้างซับใหม่ได้เมื่อพร้อม' : isSubtitleReady
               ? 'บันทึกไฟล์คำบรรยาย .SRT / .VTT เรียบร้อย'
               : isRunningWorkflow
               ? workerDetail || `กำลังประมวลผลด้วย ${selectedModel || 'Gemini AI'} กรุณารอสักครู่`
@@ -61,7 +79,7 @@ export default function SubtitleGenerationCard({
               : 'bg-white dark:bg-[#181818] text-[#8C857B] dark:text-[#9A9A9A] border border-[#EFECE6] dark:border-white/10'
           }`}
         >
-          {isSubtitleReady
+          {isCancelled ? 'ยกเลิกแล้ว' : isSubtitleReady
             ? 'เสร็จแล้ว'
             : isRunningWorkflow
             ? 'กำลังทำ'
@@ -118,7 +136,11 @@ export default function SubtitleGenerationCard({
 
       <button
         type="button"
-        onClick={onRun}
+        onClick={() => {
+          setCancelState('idle');
+          setCancelError('');
+          onRun();
+        }}
         disabled={!canStartAiGeneration}
         className={`w-full py-2.5 px-4 rounded-xl font-semibold text-xs sm:text-sm transition flex items-center justify-center gap-2 ${
           canStartAiGeneration
@@ -135,6 +157,17 @@ export default function SubtitleGenerationCard({
             : 'เริ่มถอดเสียงและสร้างซับไตเติลด้วย AI'}
         </span>
       </button>
+      {isRunningWorkflow && cancelUrl && (
+        <button
+          type="button"
+          onClick={cancelRun}
+          disabled={cancelState !== 'idle'}
+          className="w-full rounded-xl border border-red-500/30 px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-500/10 disabled:opacity-60 dark:text-red-400"
+        >
+          {cancelState === 'idle' ? 'ยกเลิกการสร้างซับ' : 'กำลังยกเลิกผ่าน GitHub Actions…'}
+        </button>
+      )}
+      {isRunningWorkflow && cancelError && <p role="alert" className="text-xs text-red-500">{cancelError}</p>}
     </div>
   );
 }

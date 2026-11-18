@@ -181,6 +181,7 @@ function triggerTextDownload(filename, content, mimeType = 'text/plain;charset=u
 }
 
 export default function StudioSubtitlesTab({
+  videoId,
   videoTitle = 'video',
   tracks = [],
   onChangeTracks,
@@ -485,7 +486,7 @@ export default function StudioSubtitlesTab({
   };
 
   const isAiRunning =
-    isDispatchingAi || audioStatus === 'extracting' || subtitleStatus === 'processing';
+    isDispatchingAi || audioStatus === 'extracting' || ['extracting', 'processing'].includes(subtitleStatus);
   const safeBaseName = (videoTitle || 'subtitles').replace(/[^a-zA-Z0-9ก-๙_-]/g, '_').slice(0, 50);
 
   return (
@@ -980,6 +981,7 @@ export default function StudioSubtitlesTab({
       {/* AI Re-Transcribe Card */}
       {canGenerateSubtitles && onDispatchAudioSubtitles && (
         <SubtitleGenerationCard
+          cancelUrl={videoId && !isDispatchingAi ? `/api/videos/${videoId}/cancel-subtitles` : undefined}
           audioStatus={audioStatus}
           subtitleStatus={subtitleStatus}
           isRunningWorkflow={isAiRunning}

@@ -2,6 +2,7 @@ import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { reconcileSubtitleWorkflow } from '@/lib/subtitleWorkflow';
 import { decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
 
 /**
@@ -52,7 +53,7 @@ export async function GET(request, context) {
         FROM jsonb_each(d.row_data)
         WHERE key IN ('subtitle_srt', 'subtitle_vtt', 'subtitle_tracks', 'worker_logs',
           'thumbnail_status', 'thumbnail_options', 'runner_specs', 'audio_status',
-          'subtitle_status', 'subtitle_model', 'sprite_status', 'sprite_preview_url',
+          'subtitle_status', 'subtitle_model', 'subtitle_job_id', 'sprite_status', 'sprite_preview_url',
           'content_rating', 'user_selected_rating', 'ai_suggested_rating',
           'rating_check_status', 'vision_analysis')
       ) m
@@ -78,7 +79,14 @@ export async function GET(request, context) {
     }
 
     const row = rows[0];
-    const video = { ...row, ...row.metadata, ...row.subtitles, ...row.meta_heavy };
+    let video = { ...row, ...row.metadata, ...row.subtitles, ...row.meta_heavy };
+    if (query.get('syncSubtitles') === '1') {
+      try {
+        video = await reconcileSubtitleWorkflow(sql, video);
+      } catch (error) {
+        console.warn('[Subtitle status sync]', error.message);
+      }
+    }
 
     let rawUploaded;
     if (query.get('restore') === '1' &&

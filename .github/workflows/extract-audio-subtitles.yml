@@ -1,8 +1,13 @@
 name: "1. Extract Audio & AI Subtitles (Gemini Speech-to-Sub)"
+run-name: "TubeLock subtitles #${{ inputs.video_id }} / ${{ inputs.job_id }}"
 
 on:
   workflow_dispatch:
     inputs:
+      job_id:
+        description: 'TubeLock subtitle job ID'
+        type: string
+        default: ''
       video_id:
         description: 'Video record ID in Neon DB'
         required: true
@@ -13,7 +18,7 @@ on:
         type: string
         default: ''
       model:
-        description: 'Gemini Model Name (from GEMINI_MODEL_NAME in .env)'
+        description: 'Legacy input retained for compatibility. This workflow uses fixed subtitle models.'
         required: false
         type: string
         default: ''
@@ -29,7 +34,7 @@ concurrency:
 
 jobs:
   extract-and-subtitle:
-    name: "Audio & AI Subtitles #${{ inputs.video_id }} (${{ inputs.model || 'gemini-2.5-flash' }})"
+    name: "Audio & AI Subtitles #${{ inputs.video_id }} (3.5 Transcribe + 3.8 Flash)"
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -65,10 +70,8 @@ jobs:
           ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
-          GEMINI_MODEL_NAME: ${{ inputs.model || secrets.GEMINI_MODEL_NAME || vars.GEMINI_MODEL_NAME }}
           VIDEO_ID: ${{ inputs.video_id }}
           RAW_FILE_NAME: ${{ inputs.raw_file_name }}
-          AI_MODEL: ${{ inputs.model || secrets.GEMINI_MODEL_NAME || vars.GEMINI_MODEL_NAME }}
           CUSTOM_PROMPT: ${{ inputs.custom_prompt }}
         run: |
           node scripts/audio-subtitle-worker.js
