@@ -13,27 +13,32 @@ export function transcriptToCues(interaction, offsetMs = 0) {
 
   const cues = [];
   let cue;
+  let leadingText = '';
   for (const word of content.flatMap((item) => item.annotations ?? [])) {
     if (word.type !== 'word_info' || !word.text?.trim()) continue;
+    const wordText = word.text.trim();
+    const separator = /^[\p{P}]/u.test(wordText) && !/^\p{Ps}/u.test(wordText) ? '' : ' ';
     const start = Math.round(Number.parseFloat(word.start_offset) * 1000);
     const end = Math.round(Number.parseFloat(word.end_offset) * 1000);
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) {
-      throw new Error('Transcription returned a word without valid timestamps');
+      // Gemini can omit word offsets. Keep the text on a neighboring timed cue.
+      if (cue) cue.text += separator + wordText;
+      else leadingText += (leadingText ? separator : '') + wordText;
+      continue;
     }
     const startMs = start + offsetMs;
     const endMs = Math.max(startMs + 1, end + offsetMs);
-    const wordText = word.text.trim();
-    const separator = /^[\p{P}]/u.test(wordText) && !/^\p{Ps}/u.test(wordText) ? '' : ' ';
     if (!cue || startMs - cue.endMs >= 700 || endMs - cue.startMs > 5000 ||
         cue.text.length + wordText.length > 64) {
-      cue = { startMs, endMs, text: wordText };
+      cue = { startMs, endMs, text: leadingText ? leadingText + separator + wordText : wordText };
+      leadingText = '';
       cues.push(cue);
     } else {
       cue.text += separator + wordText;
       cue.endMs = Math.max(cue.endMs, endMs);
     }
   }
-  if (!cues.length && content.some((item) => item.text?.trim())) {
+  if (!cues.length && (leadingText || content.some((item) => item.text?.trim()))) {
     throw new Error('Transcription returned text without word timestamps');
   }
   return cues;
@@ -77,7 +82,7 @@ export async function transcribeAudio(audio, offsetMs, apiKey, request) {
           transcription_config: { mode: { type: 'verbatim', timestamp_granularities: ['word'] } },
         },
       }),
-    }, 3, 2500, 180000, { retryOnTimeout: false });
+    }, 3, 2500, 180000, { retryOnTimeout: false, rateLimitDelayMs: 62000 });
     if (!result.ok) {
       const error = await result.json().catch(() => null);
       throw new Error(`Gemini Transcribe HTTP ${result.status}: ${error?.error?.message || result.statusText}`);

@@ -76,7 +76,7 @@ async function ensureAudioSubtitleColumns() {
   }
 }
 
-async function fetchWithRetry(url, options = {}, retries = 4, delay = 2500, timeoutMs = 120000, { retryOnTimeout = true } = {}) {
+async function fetchWithRetry(url, options = {}, retries = 4, delay = 2500, timeoutMs = 120000, { retryOnTimeout = true, rateLimitDelayMs = 0 } = {}) {
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(url, {
@@ -85,7 +85,7 @@ async function fetchWithRetry(url, options = {}, retries = 4, delay = 2500, time
       });
       if ((res.status === 429 || res.status === 503 || res.status === 504) && i < retries - 1) {
         const retryAfter = parseInt(res.headers.get('Retry-After') || '0', 10);
-        const waitMs = Math.max(delay, retryAfter * 1000);
+        const waitMs = Math.max(delay, retryAfter * 1000, res.status === 429 ? rateLimitDelayMs : 0);
         console.warn(`⏳ [HTTP ${res.status}] รอ ${(waitMs / 1000).toFixed(1)}s แล้วลองใหม่รอบ ${i + 2}/${retries}...`);
         await new Promise((r) => setTimeout(r, waitMs));
         delay *= 1.5;
@@ -384,7 +384,9 @@ function parseJsonResponseSafe(rawText) {
 }
 
 const GEMINI_REQUEST_TIMEOUT_MS = 95000; // 95s per model attempt so slow fallback thinking never stalls 5–10m silently
-const AUDIO_CHUNK_SECONDS = 300;
+// Leave headroom under the project's 10,000 input tokens per minute.
+const AUDIO_CHUNK_SECONDS = 240;
+const TRANSCRIBE_REQUEST_INTERVAL_MS = 62000;
 
 function buildRequestBodyForModel(rawBodyStr, modelName, allowThinkingTune = true) {
   if (!allowThinkingTune) return rawBodyStr;
@@ -676,7 +678,7 @@ async function sliceAudioToMp3Chunk(sourceAudioPath, startSec, lenSec, outPath, 
 }
 
 async function buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger) {
-  if (!audioDurationSec || audioDurationSec <= AUDIO_CHUNK_SECONDS + 30) {
+  if (!audioDurationSec || audioDurationSec <= AUDIO_CHUNK_SECONDS) {
     return [
       {
         index: 1,
@@ -690,7 +692,7 @@ async function buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDur
 
   const totalChunks = Math.ceil(audioDurationSec / AUDIO_CHUNK_SECONDS);
   await logger.log(
-    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — แบ่งเสียงออกเป็น ${totalChunks} ช่วง (ช่วงละ ${Math.round(AUDIO_CHUNK_SECONDS / 60)} นาที) เพื่อไม่ให้ Gemini Timeout`,
+    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — แบ่งเสียงออกเป็น ${totalChunks} ช่วง (ช่วงละไม่เกิน ${AUDIO_CHUNK_SECONDS / 60} นาที) เพื่อคุมโควตา Gemini`,
     { toDb: true }
   );
 
@@ -777,13 +779,27 @@ async function generateSubtitlesWithGemini(
   const chunks = await buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger);
 
   const allOriginalCues = [];
+  let lastTranscribeFinishedAt = -Infinity;
+  const transcriptionRequest = async (url, ...args) => {
+    if (!url.endsWith('/v1beta/interactions')) return fetchWithRetry(url, ...args);
+    const waitMs = TRANSCRIBE_REQUEST_INTERVAL_MS - (performance.now() - lastTranscribeFinishedAt);
+    if (waitMs > 0) {
+      await logger.log(`⏳ เว้น ${Math.ceil(waitMs / 1000)} วินาทีตามโควตาถอดเสียง`);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    try {
+      return await fetchWithRetry(url, ...args);
+    } finally {
+      lastTranscribeFinishedAt = performance.now();
+    }
+  };
   for (const chunk of chunks) {
     const range = `${chunk.index}/${chunk.total} (${formatDurationShort(chunk.startSec)}–${formatDurationShort(chunk.endSec)})`;
     await logger.log(`[1/2] ${TRANSCRIBE_MODEL} (verbatim): ${range}`, { toDb: true });
     try {
       const audio = await fs.promises.readFile(chunk.path);
       allOriginalCues.push(...await transcribeAudio(
-        audio, Math.round(chunk.startSec * 1000), GEMINI_API_KEY, fetchWithRetry
+        audio, Math.round(chunk.startSec * 1000), GEMINI_API_KEY, transcriptionRequest
       ));
     } catch (error) {
       throw new Error(`Transcription failed for audio chunk ${range}: ${error.message}`, { cause: error });
