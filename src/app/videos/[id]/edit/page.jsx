@@ -22,11 +22,13 @@ import {
   Film,
   ShieldAlert,
   ListOrdered,
+  Layers,
 } from 'lucide-react';
 import StudioMiniPlayer from '@/components/studio/StudioMiniPlayer';
 import StudioDetailsTab from '@/components/studio/StudioDetailsTab';
 import StudioSubtitlesTab from '@/components/studio/StudioSubtitlesTab';
 import StudioTechTab from '@/components/studio/StudioTechTab';
+import StudioVersionsTab from '@/components/studio/StudioVersionsTab';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
 import { invalidateClientVideoCache } from '@/lib/playbackResolver';
 import { isRatingEvaluated } from '@/lib/ratingStatus';
@@ -94,7 +96,7 @@ function areSnapshotsEqual(a, b) {
   return true;
 }
 
-const VALID_TABS = new Set(['details', 'subtitles', 'tech']);
+const VALID_TABS = new Set(['details', 'subtitles', 'versions', 'tech']);
 
 function StudioEditorInner() {
   const params = useParams();
@@ -115,6 +117,7 @@ function StudioEditorInner() {
       : tabState.value;
 
   const [video, setVideo] = useState(null);
+  const [versions, setVersions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState({ status: 0, message: '' });
 
@@ -180,6 +183,13 @@ function StudioEditorInner() {
         const v = data.video;
         const snap = buildFormSnapshot(v);
         setVideo(v);
+        setVersions(
+          Array.isArray(data.versions)
+            ? data.versions
+            : Array.isArray(v?.versions)
+              ? v.versions
+              : []
+        );
         setTitle(snap.title);
         setDescription(snap.description);
         setCategory(snap.category);
@@ -644,9 +654,11 @@ function StudioEditorInner() {
   const tabHeading =
     activeTab === 'subtitles'
       ? 'คำบรรยายของวิดีโอ'
-      : activeTab === 'tech'
-        ? 'ข้อมูลเทคนิคและคิวงาน'
-        : 'รายละเอียดของวิดีโอ';
+      : activeTab === 'versions'
+        ? 'จัดการเวอร์ชันวิดีโอ (Multi-Version)'
+        : activeTab === 'tech'
+          ? 'ข้อมูลเทคนิคและคิวงาน'
+          : 'รายละเอียดของวิดีโอ';
 
   return (
     <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1]">
@@ -701,6 +713,12 @@ function StudioEditorInner() {
                 label: 'คำบรรยาย',
                 icon: Captions,
                 badge: subtitleTracks.length > 0 ? String(subtitleTracks.length) : null,
+              },
+              {
+                id: 'versions',
+                label: 'เวอร์ชัน',
+                icon: Layers,
+                badge: versions.length > 0 ? String(versions.length) : null,
               },
               { id: 'tech', label: 'ข้อมูลเทคนิค & คิวงาน', icon: Cpu },
             ].map((tab) => {
@@ -906,6 +924,20 @@ function StudioEditorInner() {
                   subtitleStatus={video.subtitleStatus || 'waiting'}
                   audioStatus={video.audioStatus || 'waiting'}
                   workerDetail={video.stageDetail || ''}
+                />
+              )}
+
+              {activeTab === 'versions' && (
+                <StudioVersionsTab
+                  videoId={video.id}
+                  video={video}
+                  versions={versions}
+                  onVersionsUpdated={(nextVersions) => {
+                    const list = Array.isArray(nextVersions) ? nextVersions : [];
+                    setVersions(list);
+                    setVideo((prev) => (prev ? { ...prev, versions: list } : prev));
+                    if (video?.id) invalidateClientVideoCache(video.id);
+                  }}
                 />
               )}
 

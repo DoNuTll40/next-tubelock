@@ -245,10 +245,11 @@ export async function resolveClientPlaybackSource(sourceData) {
       const masterText = await masterTextPromise;
 
       let detectedAspect = null;
-      const resMatch = masterText.match(/RESOLUTION=(\d+)x(\d+)/i);
-      if (resMatch) {
-        const mw = parseInt(resMatch[1], 10);
-        const mh = parseInt(resMatch[2], 10);
+      const resMatches = [...masterText.matchAll(/RESOLUTION=(\d+)x(\d+)/gi)];
+      const bestResMatch = resMatches.length > 0 ? resMatches[resMatches.length - 1] : null;
+      if (bestResMatch) {
+        const mw = parseInt(bestResMatch[1], 10);
+        const mh = parseInt(bestResMatch[2], 10);
         if (mw > 0 && mh > 0) {
           detectedAspect = mw / mh;
         }
@@ -343,8 +344,12 @@ export async function resolveClientPlaybackSource(sourceData) {
 const clientSourceCache = new Map();
 const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 นาที
 
-export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriority = false, showAdultPreviews = false } = {}) {
-  const key = showAdultPreviews ? `${videoId}:previews` : String(videoId);
+export function fetchVideoSourceClient(
+  videoId,
+  { forceFresh = false, lowPriority = false, showAdultPreviews = false, version = null } = {}
+) {
+  const verKey = version != null && String(version).trim() !== '' ? String(version).trim() : 'default';
+  const key = `${videoId}:v:${verKey}${showAdultPreviews ? ':previews' : ''}`;
   const now = Date.now();
 
   if (forceFresh) {
@@ -359,6 +364,7 @@ export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriorit
   const query = new URLSearchParams();
   if (forceFresh) query.set('fresh', '1');
   if (showAdultPreviews) query.set('previews', '1');
+  if (verKey !== 'default') query.set('v', verKey);
   const url = `/api/videos/${videoId}/source${query.size ? `?${query}` : ''}`;
   const promise = fetch(url, {
     method: 'GET',
@@ -390,11 +396,17 @@ export function fetchVideoSourceClient(videoId, { forceFresh = false, lowPriorit
 
 export function invalidateClientVideoCache(videoId) {
   if (!videoId) return;
-  clientSourceCache.delete(String(videoId));
-  clientSourceCache.delete(`${videoId}:previews`);
+  const idStr = String(videoId);
+  clientSourceCache.delete(idStr);
+  clientSourceCache.delete(`${idStr}:previews`);
+  for (const key of clientSourceCache.keys()) {
+    if (key.startsWith(`${idStr}:`)) {
+      clientSourceCache.delete(key);
+    }
+  }
 }
 
-export function prewarmVideoSourceClient(videoId, { immediate = false } = {}) {
+export function prewarmVideoSourceClient(videoId, { immediate = false, version = null } = {}) {
   if (!videoId) return;
-  fetchVideoSourceClient(videoId, { lowPriority: !immediate }).catch(() => {});
+  fetchVideoSourceClient(videoId, { lowPriority: !immediate, version }).catch(() => {});
 }

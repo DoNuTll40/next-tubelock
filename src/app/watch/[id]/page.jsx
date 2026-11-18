@@ -6,6 +6,11 @@ import { cache } from 'react';
 import { getDb } from '@/lib/db';
 import { parseTimestamp, isMusicVideo, decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
 import { prewarmVideoSourceServer } from '@/lib/videoSourceService';
+import {
+  getVideoVersions,
+  formatVersionSummary,
+  resolveRequestedVersion,
+} from '@/lib/videoVersions';
 import WatchClient from './WatchClient';
 
 export const dynamic = 'force-dynamic';
@@ -152,12 +157,14 @@ export default async function WatchPage({ params, searchParams }) {
     notFound();
   }
 
+  const resolvedSearchParams = searchParams ? await searchParams : {};
+  const requestedVersion = resolvedSearchParams?.v ? String(resolvedSearchParams.v).trim() : null;
+  const initialTime = parseTimestamp(resolvedSearchParams?.t);
+
   // ⚡ Kick off server-side source resolution immediately during SSR (non-blocking)
   // Shares inFlightRequests & sourceCache with /api/videos/[id]/source
-  prewarmVideoSourceServer(numericId);
+  prewarmVideoSourceServer(numericId, { version: requestedVersion });
 
-  const resolvedSearchParams = searchParams ? await searchParams : {};
-  const initialTime = parseTimestamp(resolvedSearchParams?.t);
   const sql = getDb();
 
   // Resolve user_id from session cookie
@@ -185,10 +192,34 @@ export default async function WatchPage({ params, searchParams }) {
     // 1. getVideoById is deduplicated via React cache() (0 extra DB hit)
     // 2. relatedRows does NOT select huge v.description or unused fields
     // 3. LIMIT 12 reduces initial SSR payload to < 100 KB
-    const rawVideo = await getVideoById(numericId);
+    const [rawVideo, readyVersions] = await Promise.all([
+      getVideoById(numericId),
+      getVideoVersions(sql, numericId, { readyOnly: true }),
+    ]);
 
     if (!rawVideo) {
       notFound();
+    }
+
+    let lastWatchedVersionId = null;
+    if (userId && !requestedVersion && readyVersions.length > 1) {
+      try {
+        const histRows = await sql`
+          SELECT last_version_id
+          FROM watch_history
+          WHERE user_id = ${userId} AND video_id = ${numericId}
+          LIMIT 1;
+        `;
+        lastWatchedVersionId = histRows?.[0]?.last_version_id || null;
+      } catch (_) {}
+    }
+
+    const activeVersion = resolveRequestedVersion(
+      readyVersions,
+      requestedVersion || lastWatchedVersionId
+    );
+    if (activeVersion && !requestedVersion) {
+      prewarmVideoSourceServer(numericId, { version: activeVersion.id });
     }
 
     let relatedRows = [];
@@ -241,8 +272,29 @@ export default async function WatchPage({ params, searchParams }) {
       ? `/api/og/${canonicalSlug}.jpg`
       : videoRows[0].thumbnail_url;
 
+    const baseMerged = activeVersion
+      ? {
+          ...videoRows[0],
+          duration: Number(activeVersion.duration) || videoRows[0].duration,
+          file_size_bytes: Number(activeVersion.file_size_bytes) || videoRows[0].file_size_bytes,
+          resolution: activeVersion.resolution || videoRows[0].resolution,
+          fps: activeVersion.fps ?? videoRows[0].fps,
+          codec: activeVersion.codec || videoRows[0].codec,
+          ...(Array.isArray(activeVersion.subtitle_tracks_override) &&
+          activeVersion.subtitle_tracks_override.length > 0
+            ? { subtitle_tracks: activeVersion.subtitle_tracks_override }
+            : {}),
+          versions: readyVersions.map(formatVersionSummary),
+          active_version: formatVersionSummary(activeVersion),
+        }
+      : {
+          ...videoRows[0],
+          versions: [],
+          active_version: null,
+        };
+
     video = {
-      ...videoRows[0],
+      ...baseMerged,
       thumbnail_url: safeThumbnail,
       slug: canonicalSlug,
       created_at: videoRows[0].created_at ? new Date(videoRows[0].created_at).toISOString() : null,
@@ -252,8 +304,11 @@ export default async function WatchPage({ params, searchParams }) {
     // Canonical URL redirection: if accessed with numeric ID or dirty slug (e.g. /watch/851 or /watch/...undefined)
     if (/^\d+$/.test(rawSlug) || rawSlug.includes('undefined') || (canonicalSlug && canonicalSlug !== rawSlug)) {
       if (canonicalSlug && canonicalSlug !== rawSlug) {
-        const urlT = resolvedSearchParams?.t;
-        redirect(`/watch/${canonicalSlug}${urlT ? `?t=${urlT}` : ''}`);
+        const redirectQuery = new URLSearchParams();
+        if (resolvedSearchParams?.t) redirectQuery.set('t', resolvedSearchParams.t);
+        if (requestedVersion) redirectQuery.set('v', requestedVersion);
+        const qs = redirectQuery.toString();
+        redirect(`/watch/${canonicalSlug}${qs ? `?${qs}` : ''}`);
       }
     }
 

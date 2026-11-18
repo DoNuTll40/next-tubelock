@@ -6,7 +6,7 @@ import {
   animate, AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform,
 } from 'framer-motion';
 import {
-  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, RotateCcw
+  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, RotateCcw, Layers
 } from 'lucide-react';
 import AmbientModeIcon from '../icons/AmbientModeIcon';
 import CcSubtitleIcon from '../icons/CcSubtitleIcon';
@@ -88,6 +88,10 @@ export default function PlayerSettingsModal({
   selectedSubTrackId = 'th',
   setSelectedSubTrackId,
   activeSubTrack = null,
+  versions = [],
+  activeVersion = null,
+  onSelectVersion = null,
+  isSwitchingVersion = false,
 }) {
   const [mounted, setMounted] = useState(false);
   const [isClientSmall, setIsClientSmall] = useState(false);
@@ -220,6 +224,12 @@ export default function PlayerSettingsModal({
     }
   };
 
+  const playableVersions = Array.isArray(versions)
+    ? versions.filter((v) => !v?.status || ['READY', 'COMPLETED'].includes(String(v.status).toUpperCase()))
+    : [];
+  const hasMultipleVersions = playableVersions.length > 1;
+  const activeVersionBadgeOrLabel = activeVersion?.badge || activeVersion?.label || 'ปกติ';
+
   const getHeaderTitle = () => {
     if (activeSubOpt) return activeSubOpt.title;
     if (activeMenuTab === 'subtitle_options') return 'ตัวเลือก';
@@ -227,6 +237,7 @@ export default function PlayerSettingsModal({
     if (activeMenuTab === 'quality') return 'คุณภาพของวิดีโอ';
     if (activeMenuTab === 'speed') return 'ความเร็วในการเล่น';
     if (activeMenuTab === 'aspect') return 'สัดส่วนภาพ';
+    if (activeMenuTab === 'version') return 'เวอร์ชันวิดีโอ';
     return 'การตั้งค่า';
   };
 
@@ -426,6 +437,26 @@ export default function PlayerSettingsModal({
                         <ChevronRight className="w-4 h-4 text-zinc-400" />
                       </div>
                     </button>
+
+                    {/* Version Switcher (Multi-Version) */}
+                    {hasMultipleVersions && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveMenuTab?.('version')}
+                        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <Layers className="w-5 h-5 text-[#FF7A00] shrink-0" />
+                          <span className="text-[14px] text-zinc-200 font-medium">เวอร์ชันวิดีโอ</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-zinc-400 max-w-[48%]">
+                          <span className="text-[13px] text-[#FF7A00] font-semibold truncate">
+                            {isSwitchingVersion ? 'กำลังสลับ...' : activeVersionBadgeOrLabel}
+                          </span>
+                          <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
+                        </div>
+                      </button>
+                    )}
 
                     {/* Ambient Mode Toggle */}
                     <button
@@ -746,6 +777,64 @@ export default function PlayerSettingsModal({
                     ))}
                   </motion.div>
                 )}
+
+                {/* Tab: Version Submenu (Mobile) */}
+                {activeMenuTab === 'version' && hasMultipleVersions && (
+                  <motion.div
+                    key="version"
+                    initial={{ opacity: 0, x: 8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -8 }}
+                    transition={{ duration: 0.12 }}
+                    className="flex flex-col py-1"
+                  >
+                    {playableVersions.map((ver) => {
+                      const isSelected = activeVersion?.id
+                        ? ver.id === activeVersion.id
+                        : ver.versionKey === activeVersion?.versionKey;
+                      const metaParts = [ver.aspectLabel, ver.resolution].filter(Boolean);
+                      return (
+                        <button
+                          key={ver.id ?? ver.versionKey}
+                          type="button"
+                          disabled={isSwitchingVersion}
+                          onClick={() => {
+                            if (!isSelected) {
+                              onSelectVersion?.(ver);
+                              showToast?.(`สลับเป็นเวอร์ชัน: ${ver.label || ver.badge || 'ปกติ'}`);
+                            }
+                            setShowSettingsMenu?.(false);
+                            resetControlsTimer?.();
+                          }}
+                          className="w-full flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer border-t border-white/5 first:border-t-0 disabled:opacity-60"
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`text-[14px] ${isSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                                {ver.label || 'เวอร์ชัน'}
+                              </span>
+                              {ver.badge && (
+                                <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                                  isSelected
+                                    ? 'bg-[#FF7A00]/20 text-[#FF7A00] border border-[#FF7A00]/40'
+                                    : 'bg-white/10 text-zinc-300 border border-white/10'
+                                }`}>
+                                  {ver.badge}
+                                </span>
+                              )}
+                            </div>
+                            {(metaParts.length > 0 || ver.description) && (
+                              <span className="text-[11.5px] text-zinc-400 mt-0.5 line-clamp-2">
+                                {[metaParts.join(' • '), ver.description].filter(Boolean).join(' — ')}
+                              </span>
+                            )}
+                          </div>
+                          {isSelected && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+                )}
               </MobileSettingsContent>
             </motion.div>
           </div>
@@ -857,6 +946,26 @@ export default function PlayerSettingsModal({
                   <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
                 </div>
               </button>
+
+              {/* Version Switcher Item (Desktop Multi-Version) */}
+              {hasMultipleVersions && (
+                <button
+                  type="button"
+                  onClick={() => setActiveMenuTab?.('version')}
+                  className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3.5 shrink-0">
+                    <Layers className="w-4.5 h-4.5 text-[#FF7A00] transition shrink-0" />
+                    <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">เวอร์ชันวิดีโอ</span>
+                  </div>
+                  <div className="flex items-center gap-2 max-w-[140px]">
+                    <span className="text-[13px] text-[#FF7A00] font-semibold truncate">
+                      {isSwitchingVersion ? 'กำลังสลับ...' : activeVersionBadgeOrLabel}
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
+                  </div>
+                </button>
+              )}
 
               {/* Ambient Mode Toggle */}
               <button
@@ -1225,6 +1334,71 @@ export default function PlayerSettingsModal({
                     {aspectMode === item.key && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Tab: Version Submenu (Desktop) */}
+          {activeMenuTab === 'version' && hasMultipleVersions && (
+            <div className="flex flex-col">
+              <div className="px-2 py-1.5 border-b border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setActiveMenuTab?.('main')}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-zinc-300 hover:text-white hover:bg-white/10 transition cursor-pointer group text-left"
+                >
+                  <ArrowLeft className="w-4 h-4 text-zinc-400 group-hover:text-white transition shrink-0" />
+                  <span className="text-[13px] font-semibold text-zinc-200 group-hover:text-white">
+                    เลือกเวอร์ชันวิดีโอ
+                  </span>
+                </button>
+              </div>
+              <div className="py-1 max-h-[280px] overflow-y-auto">
+                {playableVersions.map((ver) => {
+                  const isSelected = activeVersion?.id
+                    ? ver.id === activeVersion.id
+                    : ver.versionKey === activeVersion?.versionKey;
+                  const metaParts = [ver.aspectLabel, ver.resolution].filter(Boolean);
+                  return (
+                    <button
+                      key={ver.id ?? ver.versionKey}
+                      type="button"
+                      disabled={isSwitchingVersion}
+                      onClick={() => {
+                        if (!isSelected) {
+                          onSelectVersion?.(ver);
+                          showToast?.(`สลับเป็นเวอร์ชัน: ${ver.label || ver.badge || 'ปกติ'}`);
+                        }
+                        setShowSettingsMenu?.(false);
+                        resetControlsTimer?.();
+                      }}
+                      className="w-full flex items-center justify-between gap-3 px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5 first:border-t-0 disabled:opacity-60"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-[13.5px] ${isSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                            {ver.label || 'เวอร์ชัน'}
+                          </span>
+                          {ver.badge && (
+                            <span className={`text-[9.5px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                              isSelected
+                                ? 'bg-[#FF7A00]/20 text-[#FF7A00] border border-[#FF7A00]/40'
+                                : 'bg-white/10 text-zinc-300 border border-white/10'
+                            }`}>
+                              {ver.badge}
+                            </span>
+                          )}
+                        </div>
+                        {(metaParts.length > 0 || ver.description) && (
+                          <span className="text-[11px] text-zinc-400 mt-0.5 line-clamp-2">
+                            {[metaParts.join(' • '), ver.description].filter(Boolean).join(' — ')}
+                          </span>
+                        )}
+                      </div>
+                      {isSelected && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

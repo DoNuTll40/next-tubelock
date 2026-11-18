@@ -223,42 +223,15 @@ function uploadChunkXHR(uploadUrl, chunkBlob, rangeHeader, onProgress, xhrRef) {
 }
 
 /**
- * Main Direct Resumable Chunked Uploader
+ * Upload a File object directly to a Microsoft Graph Upload Session URL in 10MB chunks.
  */
-export async function uploadVideoFile(file, options = {}) {
+export async function uploadFileDirectToSession(file, uploadUrl, options = {}) {
   const {
-    targetFolder = '/Videos',
     onProgress = () => {},
     onLog = () => {},
     xhrRef = { current: null },
   } = options;
 
-  onLog(`เริ่มกระบวนการ: ตรวจสอบและดึงข้อมูลไฟล์ "${file.name}"...`);
-
-  // Step 1: Client Metadata
-  const meta = await extractVideoMetadata(file);
-  onLog(`ขนาดภาพ: ${meta.width}x${meta.height} [${meta.resolution}] • ความยาว: ${Math.round(meta.duration)} วินาที`);
-
-  // Step 2: Open Upload Session with server
-  onLog(`ขอเปิด Upload Session กับ Microsoft Graph (โฟลเดอร์: ${targetFolder})...`);
-  const sessionRes = await fetch('/api/upload/session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fileName: file.name,
-      targetFolder,
-    }),
-  });
-
-  const sessionData = await sessionRes.json();
-  if (!sessionRes.ok || !sessionData.success) {
-    throw new Error(sessionData.error || 'สร้าง Upload Session ไม่สำเร็จ');
-  }
-
-  const { uploadUrl } = sessionData;
-  onLog(`เชื่อมต่อ Microsoft Cloud สำเร็จ! เริ่มส่งข้อมูลแบบแบ่งส่วน (Chunk Size: 10MB)...`);
-
-  // Step 3: Chunk Loop
   const fileSize = file.size;
   const effectiveChunkSize = Math.min(CHUNK_SIZE, fileSize);
   let start = 0;
@@ -336,6 +309,52 @@ export async function uploadVideoFile(file, options = {}) {
     etaSec: 0,
     chunkIndex: totalChunks,
     totalChunks,
+  });
+
+  return { driveItem: lastDriveItem };
+}
+
+/**
+ * Main Direct Resumable Chunked Uploader
+ */
+export async function uploadVideoFile(file, options = {}) {
+  const {
+    targetFolder = '/Videos',
+    onProgress = () => {},
+    onLog = () => {},
+    xhrRef = { current: null },
+  } = options;
+
+  onLog(`เริ่มกระบวนการ: ตรวจสอบและดึงข้อมูลไฟล์ "${file.name}"...`);
+
+  // Step 1: Client Metadata
+  const meta = await extractVideoMetadata(file);
+  onLog(`ขนาดภาพ: ${meta.width}x${meta.height} [${meta.resolution}] • ความยาว: ${Math.round(meta.duration)} วินาที`);
+
+  // Step 2: Open Upload Session with server
+  onLog(`ขอเปิด Upload Session กับ Microsoft Graph (โฟลเดอร์: ${targetFolder})...`);
+  const sessionRes = await fetch('/api/upload/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      fileName: file.name,
+      targetFolder,
+    }),
+  });
+
+  const sessionData = await sessionRes.json();
+  if (!sessionRes.ok || !sessionData.success) {
+    throw new Error(sessionData.error || 'สร้าง Upload Session ไม่สำเร็จ');
+  }
+
+  const { uploadUrl } = sessionData;
+  onLog(`เชื่อมต่อ Microsoft Cloud สำเร็จ! เริ่มส่งข้อมูลแบบแบ่งส่วน (Chunk Size: 10MB)...`);
+
+  // Step 3: Chunk Loop
+  const { driveItem: lastDriveItem } = await uploadFileDirectToSession(file, uploadUrl, {
+    onProgress,
+    onLog,
+    xhrRef,
   });
 
   onLog(`🎉 ส่งข้อมูลเข้า OneDrive 100% เรียบร้อยแล้ว! กำลังบันทึกลงคลังข้อมูล TubeLock...`);

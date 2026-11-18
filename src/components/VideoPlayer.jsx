@@ -64,6 +64,10 @@ export default function VideoPlayer({
   relatedVideos = [],
   onSelectVideo = null,
   isSwitchingVideo = false,
+  versions = [],
+  activeVersion = null,
+  onSelectVersion = null,
+  isSwitchingVersion = false,
 }) {
   const video = useRef(null);
   useEffect(() => {
@@ -128,9 +132,11 @@ export default function VideoPlayer({
     setShowPoster(true);
     const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
     setCurrentTime(startSec);
-    if (progressBarRef.current) progressBarRef.current.style.width = '0%';
-    if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = '0%';
-    if (timeDisplayRef.current) timeDisplayRef.current.textContent = '0:00 / 0:00';
+    if (startSec === 0) {
+      if (progressBarRef.current) progressBarRef.current.style.width = '0%';
+      if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = '0%';
+      if (timeDisplayRef.current) timeDisplayRef.current.textContent = '0:00 / 0:00';
+    }
     if (fadeBlackOverlayRef.current) {
       fadeBlackOverlayRef.current.style.transition = 'none';
       fadeBlackOverlayRef.current.style.opacity = '0';
@@ -771,7 +777,11 @@ export default function VideoPlayer({
     // Auto-save Watch History to database every 5 seconds
     if (videoId && cur > 1 && now - lastSavedHistoryTimeRef.current > 5000) {
       lastSavedHistoryTimeRef.current = now;
-      const historyPayload = JSON.stringify({ videoId, position: isMusic ? 0 : Math.floor(cur) });
+      const historyPayload = JSON.stringify({
+        videoId,
+        versionId: activeVersion?.id || null,
+        position: isMusic ? 0 : Math.floor(cur),
+      });
       if (isMusic) {
         try {
           localStorage.setItem(`tubelock_watched_${videoId}`, '1');
@@ -2493,6 +2503,8 @@ export default function VideoPlayer({
         setSettingsPlacement={setSettingsPlacement}
         setActiveMenuTab={setActiveMenuTab}
         activeLevelLabel={activeLevelLabel}
+        activeVersion={activeVersion}
+        versions={versions}
         showToast={showToast}
         resetControlsTimer={resetControlsTimer}
       />
@@ -2506,7 +2518,7 @@ export default function VideoPlayer({
         showControls={controlsVisible}
         isPlaying={isPlaying}
         isEnded={isEnded}
-        isBuffering={isBuffering || isSwitchingVideo}
+        isBuffering={isBuffering || isSwitchingVideo || isSwitchingVersion}
         hlsError={hlsError}
         isMobileView={isMobileView}
         seekStep={seekStep}
@@ -2591,6 +2603,10 @@ export default function VideoPlayer({
         activeSubTrack={activeSubTrack}
         subtitleStyle={subtitleStyle}
         setSubtitleStyle={setSubtitleStyle}
+        versions={versions}
+        activeVersion={activeVersion}
+        onSelectVersion={onSelectVersion}
+        isSwitchingVersion={isSwitchingVersion}
       />
 
       {/* 💬 YouTube-Style Subtitle (CC) Overlay */}

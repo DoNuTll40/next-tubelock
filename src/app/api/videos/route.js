@@ -1,4 +1,5 @@
 import { protectVideoPoster } from '@/lib/videoUtils';
+import { ensureVideoVersionsSchema } from '@/lib/videoVersions';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
@@ -52,6 +53,7 @@ async function ensureTable(sql) {
     try {
       await sql`ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);`;
     } catch (_) {}
+    await ensureVideoVersionsSchema(sql);
 
     tableEnsured = true;
   } catch (err) {
@@ -116,27 +118,51 @@ export async function GET(request) {
             SELECT COALESCE(jsonb_agg(jsonb_build_object('id', t->>'id', 'label', t->>'label', 'lang', t->>'lang')), '[]'::jsonb)
             FROM jsonb_array_elements(COALESCE(to_jsonb(v)->'subtitle_tracks', '[]'::jsonb)) AS t
           ) AS subtitle_tracks_meta,
+          COALESCE(vv_meta.version_count, 0) AS version_count,
+          COALESCE(vv_meta.version_badges, '[]'::jsonb) AS version_badges,
           u.name AS author_name,
           u.picture AS author_picture
         FROM videos v
         LEFT JOIN users u ON v.user_id = u.id
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::int AS version_count,
+            COALESCE(
+              jsonb_agg(
+                jsonb_build_object(
+                  'id', vv.id,
+                  'version_key', vv.version_key,
+                  'label', vv.label,
+                  'badge', vv.badge,
+                  'status', vv.status,
+                  'is_default', vv.is_default
+                ) ORDER BY vv.sort_order ASC, vv.id ASC
+              ),
+              '[]'::jsonb
+            ) AS version_badges
+          FROM video_versions vv
+          WHERE vv.video_id = v.id
+        ) vv_meta ON TRUE
         WHERE (${admin} OR v.user_id = ${userId})
         ORDER BY v.created_at DESC;
       `;
 
       const studioData = (studioRows || []).map((row) => {
         const tracksMeta = Array.isArray(row.subtitle_tracks_meta) ? row.subtitle_tracks_meta : [];
+        const versionBadges = Array.isArray(row.version_badges) ? row.version_badges : [];
         return {
           ...protectVideoPoster(row),
           subtitle_tracks_meta: tracksMeta,
           subtitle_count: tracksMeta.length,
+          version_count: Number(row.version_count) || 0,
+          version_badges: versionBadges,
         };
       });
 
       return NextResponse.json({ success: true, data: studioData }, { headers: noCacheHeaders });
     }
 
-    // ⚡ Ultra-fast Slim Projection with personalized watch_history
+    // ⚡ Ultra-fast Slim Projection with personalized watch_history + slim version badges
     let rows;
     const fetchVideos = async () => {
       if (userId) {
@@ -146,12 +172,33 @@ export async function GET(request) {
             v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
             v.user_id,
             h.last_position_seconds,
+            h.last_version_id,
             (h.id IS NOT NULL) AS has_watched,
+            COALESCE(vv_meta.version_count, 0) AS version_count,
+            COALESCE(vv_meta.version_badges, '[]'::jsonb) AS version_badges,
             u.name AS author_name,
             u.picture AS author_picture
           FROM videos v
           LEFT JOIN users u ON v.user_id = u.id
           LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::int AS version_count,
+              COALESCE(
+                jsonb_agg(
+                  jsonb_build_object(
+                    'id', vv.id,
+                    'version_key', vv.version_key,
+                    'label', vv.label,
+                    'badge', vv.badge,
+                    'aspect_label', vv.aspect_label
+                  ) ORDER BY vv.sort_order ASC, vv.id ASC
+                ),
+                '[]'::jsonb
+              ) AS version_badges
+            FROM video_versions vv
+            WHERE vv.video_id = v.id AND (vv.status = 'READY' OR vv.status IS NULL)
+          ) vv_meta ON TRUE
           WHERE v.status = 'READY' OR v.status IS NULL 
           ORDER BY v.created_at DESC;
         `;
@@ -162,11 +209,32 @@ export async function GET(request) {
           v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
           v.user_id,
           NULL AS last_position_seconds,
+          NULL AS last_version_id,
           FALSE AS has_watched,
+          COALESCE(vv_meta.version_count, 0) AS version_count,
+          COALESCE(vv_meta.version_badges, '[]'::jsonb) AS version_badges,
           u.name AS author_name,
           u.picture AS author_picture
         FROM videos v
         LEFT JOIN users u ON v.user_id = u.id
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::int AS version_count,
+            COALESCE(
+              jsonb_agg(
+                jsonb_build_object(
+                  'id', vv.id,
+                  'version_key', vv.version_key,
+                  'label', vv.label,
+                  'badge', vv.badge,
+                  'aspect_label', vv.aspect_label
+                ) ORDER BY vv.sort_order ASC, vv.id ASC
+              ),
+              '[]'::jsonb
+            ) AS version_badges
+          FROM video_versions vv
+          WHERE vv.video_id = v.id AND (vv.status = 'READY' OR vv.status IS NULL)
+        ) vv_meta ON TRUE
         WHERE v.status = 'READY' OR v.status IS NULL 
         ORDER BY v.created_at DESC;
       `;

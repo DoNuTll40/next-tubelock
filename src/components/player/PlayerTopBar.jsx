@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  ChevronRight, ArrowLeft, Play, Pause, Cast, Settings
+  ChevronRight, ArrowLeft, Play, Pause, Cast, Settings, Layers
 } from 'lucide-react';
 import CcSubtitleIcon from '../icons/CcSubtitleIcon';
 import { getGearBadge } from '@/lib/videoUtils';
@@ -25,11 +25,17 @@ export default function PlayerTopBar({
   activeLevelLabel,
   showToast,
   resetControlsTimer,
+  versions = [],
+  activeVersion = null,
 }) {
   if (!showControls) return null;
   if (!isFullscreen && !isMobileView) return null;
 
   const gearBadge = getGearBadge(activeLevelLabel);
+  const playableVersions = Array.isArray(versions)
+    ? versions.filter((v) => !v?.status || ['READY', 'COMPLETED'].includes(String(v.status).toUpperCase()))
+    : [];
+  const hasMultipleVersions = playableVersions.length > 1;
 
   return (
     <div
@@ -40,10 +46,29 @@ export default function PlayerTopBar({
       {isFullscreen ? (
         <div className="flex items-center gap-2 max-w-[75%] min-w-0">
           <div className="flex flex-col min-w-0 text-left">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 min-w-0">
               <span className="text-white text-xs sm:text-base font-medium truncate drop-shadow-sm select-none">
                 {title || 'วิดีโอ TubeLock'}
               </span>
+              {hasMultipleVersions && activeVersion && (
+                <button
+                  type="button"
+                  data-settings-btn="true"
+                  onClick={() => {
+                    setSettingsPlacement?.(isMobileView ? 'top' : 'bottom');
+                    setActiveMenuTab?.('version');
+                    setShowSettingsMenu?.(true);
+                    resetControlsTimer?.();
+                  }}
+                  className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF7A00]/20 hover:bg-[#FF7A00]/35 border border-[#FF7A00]/45 text-[#FFB36B] text-[10px] sm:text-[11px] font-bold tracking-wide transition cursor-pointer"
+                  title="สลับเวอร์ชันวิดีโอ"
+                >
+                  <Layers className="w-3 h-3 shrink-0" />
+                  <span className="truncate max-w-[110px]">
+                    {activeVersion.badge || activeVersion.label}
+                  </span>
+                </button>
+              )}
               {isMobileView && <ChevronRight className="w-3.5 h-3.5 text-zinc-400 shrink-0" />}
             </div>
             {isMobileView && (

@@ -12,7 +12,8 @@ import DescriptionBox from '@/components/watch/DescriptionBox';
 import {
   Share2, ThumbsUp, ThumbsDown,
   Film, Bookmark, UploadCloud,
-  AlertCircle, ArrowLeft, Pencil
+  AlertCircle, ArrowLeft, Pencil,
+  Layers, Loader2
 } from 'lucide-react';
 import { useSession } from '@/context/SessionContext';
 import { resolveClientPlaybackSource, fetchVideoSourceClient, resolveStoryboard } from '@/lib/playbackResolver';
@@ -51,6 +52,39 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
   // SSR Initialized State — Zero Waiting, Zero Mock Skeletons!
   const [video, setVideo] = useState(initialVideo);
+  const [activeVersionKey, setActiveVersionKey] = useState(() => (
+    initialVideo?.active_version?.versionKey ||
+    (initialVideo?.active_version?.id ? String(initialVideo.active_version.id) : null)
+  ));
+  const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
+
+  const rawVersions = video?.versions;
+  const fallbackActiveVersion = video?.active_version;
+
+  const playableVersions = useMemo(() => {
+    const raw = Array.isArray(rawVersions) ? rawVersions : [];
+    return raw.filter((v) => !v?.status || ['READY', 'COMPLETED'].includes(String(v.status).toUpperCase()));
+  }, [rawVersions]);
+
+  const activeVersion = useMemo(() => {
+    if (playableVersions.length > 0) {
+      if (activeVersionKey) {
+        const matched = playableVersions.find(
+          (v) => v.versionKey === activeVersionKey || String(v.id) === String(activeVersionKey)
+        );
+        if (matched) return matched;
+      }
+      if (fallbackActiveVersion) {
+        const matched = playableVersions.find(
+          (v) => v.id === fallbackActiveVersion.id || v.versionKey === fallbackActiveVersion.versionKey
+        );
+        if (matched) return matched;
+      }
+      return playableVersions.find((v) => v.isDefault) || playableVersions[0];
+    }
+    return fallbackActiveVersion || null;
+  }, [playableVersions, activeVersionKey, fallbackActiveVersion]);
+
   const session = useSession();
   const canEdit = Boolean(
     session?.isAdmin || (session?.id && video?.user_id === session.id)
@@ -60,8 +94,10 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   const showAdultPoster = usePosterPreference(matureVideo, initialShowAdultPosters);
   const { poster: revealedPoster } = usePosterReveal(matureVideo ? video?.id : null, !showAdultPoster);
   const watchPoster = matureVideo
-    ? (showAdultPoster ? `/api/videos/${video.id}/poster` : revealedPoster?.url || RESTRICTED_POSTER)
-    : video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
+    ? (showAdultPoster
+        ? `/api/videos/${video.id}/poster${activeVersionKey ? `?v=${encodeURIComponent(activeVersionKey)}` : ''}`
+        : revealedPoster?.url || RESTRICTED_POSTER)
+    : activeVersion?.thumbnailUrl || video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
   const [relatedVideos, setRelatedVideos] = useState(initialRelated);
 
   const [playerConfig, setPlayerConfig] = useState(() => {
@@ -111,7 +147,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   const loadedDetailIdRef = useRef(initialVideo?.id ?? null);
 
   // Compute effective video aspect ratio
-  const videoResolution = video?.resolution;
+  const videoResolution = activeVersion?.resolution || video?.resolution;
   const videoWidth = video?.width;
   const videoHeight = video?.height;
 
@@ -150,17 +186,38 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   }, [streamUrl, videoRatio]);
 
   // Update initial props if server props change (during soft navigation)
-  useEffect(() => {
+  const [prevInitialProps, setPrevInitialProps] = useState(() => ({
+    initialVideo,
+    initialRelated,
+    initialTime,
+  }));
+
+  if (
+    prevInitialProps.initialVideo !== initialVideo ||
+    prevInitialProps.initialRelated !== initialRelated ||
+    prevInitialProps.initialTime !== initialTime
+  ) {
+    setPrevInitialProps({ initialVideo, initialRelated, initialTime });
     if (initialVideo) {
-      loadedDetailIdRef.current = initialVideo.id;
       setSelection({ id: initialVideo.id, startTime: initialTime });
       setVideo(initialVideo);
+      setActiveVersionKey(
+        initialVideo.active_version?.versionKey ||
+        (initialVideo.active_version?.id ? String(initialVideo.active_version.id) : null)
+      );
+      setDetectedRatio(null);
       setAvatarError(false);
     }
     if (initialRelated && initialRelated.length > 0) {
       setRelatedVideos(initialRelated);
     }
-  }, [initialVideo, initialRelated, initialTime]);
+  }
+
+  useEffect(() => {
+    if (initialVideo?.id) {
+      loadedDetailIdRef.current = initialVideo.id;
+    }
+  }, [initialVideo?.id]);
 
   // ⚡ YouTube In-Place Instant Video Switcher (Keeps DOM intact -> Fullscreen stays 100% active!)
   const handleSelectVideo = (newVideo, resumeTime = 0) => {
@@ -173,10 +230,51 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
       window.history.pushState(null, '', newUrl);
     }
 
+    setDetectedRatio(null);
+    setActiveVersionKey(null);
     setIsSwitchingVideo(true);
     setSelection({ id: newVideo.id, startTime: resumeTime });
     setVideo(newVideo);
     setRelatedVideos((prev) => prev.filter((item) => item.id !== newVideo.id));
+  };
+
+  // ⚡ Disney+ "IMAX Enhanced" Style Version Switcher (Keeps DOM & Fullscreen intact + preserves timestamp!)
+  const handleSelectVersion = (targetVersion) => {
+    if (!targetVersion) return;
+    const targetKey = targetVersion.versionKey || String(targetVersion.id);
+    const currentKey = activeVersion?.versionKey || (activeVersion?.id ? String(activeVersion.id) : null);
+    if (targetKey === currentKey || (targetVersion.id && targetVersion.id === activeVersion?.id)) return;
+
+    const currentPos = Number.isFinite(videoRef.current?.currentTime)
+      ? videoRef.current.currentTime
+      : 0;
+
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (targetVersion.isDefault) {
+        url.searchParams.delete('v');
+      } else {
+        url.searchParams.set('v', targetKey);
+      }
+      window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
+    }
+
+    setDetectedRatio(null);
+    setIsSwitchingVersion(true);
+    setSelection({ id, startTime: currentPos });
+    setActiveVersionKey(targetKey);
+
+    if (id && targetVersion.id) {
+      fetch('/api/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoId: id,
+          versionId: targetVersion.id,
+          position: Math.floor(currentPos),
+        }),
+      }).catch(() => {});
+    }
   };
 
   // Fetch Stream Source from OneDrive
@@ -189,6 +287,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
       try {
         setError(null);
         setStoryboard(null);
+        setDetectedRatio(null);
         // เก็บ blob URLs เดิมไว้ revoke หลัง stream ใหม่พร้อม
         // ไม่เรียก setStreamUrl('') ทันที เพื่อป้องกัน VideoPlayer ถูก unmount จนทำให้หลุด Fullscreen
         const prevBlobUrls = [...activeBlobUrlsRef.current];
@@ -196,15 +295,16 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
         // If switched video in-place (not initial SSR video), also fetch subtitles & description once
         const needsMetadataDetail = loadedDetailIdRef.current !== id;
+        const versionQuery = activeVersionKey ? `?v=${encodeURIComponent(activeVersionKey)}` : '';
         const metadataPromise = needsMetadataDetail
-          ? fetch(`/api/videos/${id}`, { cache: 'no-store' })
+          ? fetch(`/api/videos/${id}${versionQuery}`, { cache: 'no-store' })
               .then((r) => (r.ok ? r.json() : null))
               .catch(() => null)
           : Promise.resolve(null);
 
         // ⚡ Step: Fetch Stream Source from OneDrive (uses client in-memory/in-flight cache if pre-warmed!)
         let [sourceData, detailRes] = await Promise.all([
-          fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster }),
+          fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster, version: activeVersionKey }),
           metadataPromise,
         ]);
         if (cancelled) return;
@@ -216,7 +316,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
         const needsRestrictedStoryboard = !showAdultPoster && sourceData.type === 'hls' && isMatureVideo(sourceData.video);
         if (needsRestrictedStoryboard) {
-          fetch(`/api/videos/${id}/storyboard`, { method: 'POST', signal: storyboardRequest.signal })
+          fetch(`/api/videos/${id}/storyboard${versionQuery}`, { method: 'POST', signal: storyboardRequest.signal })
             .then((response) => response.ok ? response.json() : null)
             .then((data) => resolveStoryboard(data?.items?.map((item) => ({
               ...item,
@@ -229,17 +329,32 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         }
 
         if (sourceData.video || detailRes?.video) {
-          setVideo((prev) => ({
-            ...prev,
-            ...(sourceData.video || {}),
-            ...detailVideo,
-            subtitle_srt: detailVideo.subtitle_srt ?? sourceData.video?.subtitle_srt ?? prev?.subtitle_srt ?? '',
-            subtitle_vtt: detailVideo.subtitle_vtt ?? sourceData.video?.subtitle_vtt ?? prev?.subtitle_vtt ?? '',
-            subtitle_tracks: detailVideo.subtitle_tracks ?? sourceData.video?.subtitle_tracks ?? prev?.subtitle_tracks ?? [],
-            subtitle_status: detailVideo.subtitle_status || sourceData.video?.subtitle_status || prev?.subtitle_status || 'waiting',
-            author_name: detailVideo.author_name || sourceData.video?.author_name || prev?.author_name,
-            author_picture: detailVideo.author_picture || sourceData.video?.author_picture || prev?.author_picture,
-          }));
+          setVideo((prev) => {
+            const nextVersions =
+              detailVideo.versions ??
+              (Array.isArray(sourceData.video?.versions) && sourceData.video.versions.length > 0
+                ? sourceData.video.versions
+                : prev?.versions) ??
+              [];
+            const nextActiveVersion =
+              detailVideo.active_version ??
+              sourceData.video?.active_version ??
+              prev?.active_version ??
+              null;
+            return {
+              ...prev,
+              ...(sourceData.video || {}),
+              ...detailVideo,
+              versions: nextVersions,
+              active_version: nextActiveVersion,
+              subtitle_srt: detailVideo.subtitle_srt ?? sourceData.video?.subtitle_srt ?? prev?.subtitle_srt ?? '',
+              subtitle_vtt: detailVideo.subtitle_vtt ?? sourceData.video?.subtitle_vtt ?? prev?.subtitle_vtt ?? '',
+              subtitle_tracks: detailVideo.subtitle_tracks ?? sourceData.video?.subtitle_tracks ?? prev?.subtitle_tracks ?? [],
+              subtitle_status: detailVideo.subtitle_status || sourceData.video?.subtitle_status || prev?.subtitle_status || 'waiting',
+              author_name: detailVideo.author_name || sourceData.video?.author_name || prev?.author_name,
+              author_picture: detailVideo.author_picture || sourceData.video?.author_picture || prev?.author_picture,
+            };
+          });
         }
 
         // ⚡ Step: Resolve Playback URL & Storyboard
@@ -248,7 +363,11 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           resolved = await resolveClientPlaybackSource(sourceData);
         } catch (resolveErr) {
           console.warn('[WatchPage] Token expired or fetch failed, auto-recovering with fresh tokens...', resolveErr);
-          sourceData = await fetchVideoSourceClient(id, { forceFresh: true, showAdultPreviews: showAdultPoster });
+          sourceData = await fetchVideoSourceClient(id, {
+            forceFresh: true,
+            showAdultPreviews: showAdultPoster,
+            version: activeVersionKey,
+          });
           resolved = await resolveClientPlaybackSource(sourceData);
         }
 
@@ -260,6 +379,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
         setStreamUrl(resolved.url);
         setIsSwitchingVideo(false);
+        setIsSwitchingVersion(false);
         // Revoke blob URLs เก่าหลังจาก stream ใหม่พร้อมแล้ว
         for (const u of prevBlobUrls) {
           try { URL.revokeObjectURL(u); } catch (_) { }
@@ -283,6 +403,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         console.error('[WatchPage Error]:', err);
         if (!cancelled) {
           setIsSwitchingVideo(false);
+          setIsSwitchingVersion(false);
           setStreamUrl('');
           setError(err.message || 'เกิดข้อผิดพลาดในการโหลดวิดีโอ');
         }
@@ -299,7 +420,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
       }
       activeBlobUrlsRef.current = [];
     };
-  }, [id, showAdultPoster]);
+  }, [id, activeVersionKey, showAdultPoster]);
 
   const handleCopyLink = () => {
     if (typeof window !== 'undefined') {
@@ -364,6 +485,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   const viewsDisplay = `${viewsCount.toLocaleString()} ครั้ง`;
 
   // Filter recommendations
+  const currentVideoCategory = video?.category;
   const filteredRelated = useMemo(() => {
     if (!relatedVideos) return [];
     if (activeFilter === 'cloud') {
@@ -377,12 +499,12 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
     }
     if (activeFilter === 'related') {
       return relatedVideos.filter((v) => {
-        if (!video?.category || !v.category) return true;
-        return v.category === video.category;
+        if (!currentVideoCategory || !v.category) return true;
+        return v.category === currentVideoCategory;
       });
     }
     return relatedVideos;
-  }, [relatedVideos, activeFilter, video?.category]);
+  }, [relatedVideos, activeFilter, currentVideoCategory]);
 
   if (error && !video) {
     return (
@@ -464,14 +586,14 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   channelName={video?.author_name || 'DONUŤ'}
                   title={video?.title}
                   onBack={() => router.push('/')}
-                  resolution={video?.resolution}
+                  resolution={activeVersion?.resolution || video?.resolution}
                   width={video?.width}
                   height={video?.height}
                   aspectRatio={videoRatio}
-                  fps={video?.fps}
-                  codec={video?.codec}
+                  fps={activeVersion?.fps || video?.fps}
+                  codec={activeVersion?.codec || video?.codec}
                   videoId={video?.id}
-                  videoSlug={video?.slug || encodeVideoSlug(video?.id, video?.category) || (video?.id && video?.id !== 'undefined' ? String(video.id) : '')}
+                  videoSlug={video?.slug || encodeVideoSlug(video?.id, video?.category) || (video?.id && video?.id !== 'undefined' ? String(video?.id) : '')}
                   videoCategory={video?.category}
                   videoRef={videoRef}
                   desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}
@@ -490,6 +612,10 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                   relatedVideos={relatedVideos}
                   onSelectVideo={handleSelectVideo}
                   isSwitchingVideo={isSwitchingVideo}
+                  versions={playableVersions}
+                  activeVersion={activeVersion}
+                  onSelectVersion={handleSelectVersion}
+                  isSwitchingVersion={isSwitchingVersion}
                 />
               ) : (
                 /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
@@ -542,6 +668,75 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
             <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-snug tracking-tight">
               {video?.title || ''}
             </h1>
+
+            {/* 1.5 Multi-Version Switcher (Disney+ IMAX Enhanced Style) */}
+            {playableVersions.length > 1 && (
+              <div className="flex flex-col gap-1.5 rounded-2xl bg-black/[0.03] dark:bg-white/[0.04] border border-[#E5E0D8] dark:border-white/10 p-2.5 sm:px-3.5 sm:py-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-wider text-[#606060] dark:text-zinc-400">
+                    <Layers className="w-3.5 h-3.5 text-[#FF7A00]" />
+                    <span>เวอร์ชัน</span>
+                    {isSwitchingVersion && (
+                      <span className="inline-flex items-center gap-1 text-[#FF7A00] normal-case font-semibold ml-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        กำลังสลับเวอร์ชัน...
+                      </span>
+                    )}
+                  </div>
+                  {activeVersion?.aspectLabel && (
+                    <span className="text-[11px] font-mono text-[#606060] dark:text-zinc-400">
+                      {[activeVersion.aspectLabel, activeVersion.resolution].filter(Boolean).join(' • ')}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-0.5">
+                  {playableVersions.map((ver) => {
+                    const isSelected = activeVersion?.id
+                      ? ver.id === activeVersion.id
+                      : ver.versionKey === activeVersion?.versionKey;
+                    const resBadge = ver.resolution ? formatResolutionBadge(ver.resolution) : '';
+                    return (
+                      <button
+                        key={ver.id ?? ver.versionKey}
+                        type="button"
+                        disabled={isSwitchingVersion}
+                        onClick={() => handleSelectVersion(ver)}
+                        className={`shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-left transition cursor-pointer active:scale-[0.98] disabled:opacity-60 ${
+                          isSelected
+                            ? 'bg-[#FF7A00]/12 dark:bg-[#FF7A00]/20 border-[#FF7A00] text-[#B84F00] dark:text-[#FFAE5C] shadow-xs'
+                            : 'bg-white dark:bg-[#1A1A1A] border-[#E5E0D8] dark:border-white/10 text-[#0F0F0F] dark:text-zinc-200 hover:border-[#FF7A00]/50 hover:bg-[#FF7A00]/5'
+                        }`}
+                      >
+                        <span className={`text-[12.5px] whitespace-nowrap ${isSelected ? 'font-bold' : 'font-semibold'}`}>
+                          {ver.label || 'เวอร์ชัน'}
+                        </span>
+                        {ver.badge && (
+                          <span className={`text-[9.5px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                            isSelected
+                              ? 'bg-[#FF7A00] text-white'
+                              : 'bg-black/10 dark:bg-white/10 text-[#404040] dark:text-zinc-300'
+                          }`}>
+                            {ver.badge}
+                          </span>
+                        )}
+                        {(ver.aspectLabel || resBadge) && (
+                          <span className="text-[10.5px] font-mono text-[#606060] dark:text-zinc-400 whitespace-nowrap">
+                            {[ver.aspectLabel, resBadge].filter(Boolean).join(' · ')}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {activeVersion?.description && (
+                  <p className="text-[11.5px] text-[#606060] dark:text-[#AAAAAA] leading-relaxed">
+                    {activeVersion.description}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) in Single Line on Desktop */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-1">

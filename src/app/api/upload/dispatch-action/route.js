@@ -72,11 +72,13 @@ export async function POST(request) {
     const body = await request.json();
     const {
       videoId,
+      versionId = null,
       workflowType,
       model = '',
       userRating = 'auto',
       autoApply = true,
     } = body;
+    const parsedVersionId = versionId != null ? parseInt(versionId, 10) : null;
 
     const envModelName = (process.env.GEMINI_MODEL_NAME || 'gemini-3.5-flash-lite')
       .replace(/['"]/g, '')
@@ -174,6 +176,50 @@ export async function POST(request) {
     }
 
     if (workflowType === 'transcode') {
+      if (parsedVersionId) {
+        const verRows = await sql`
+          SELECT id, label, raw_file_name, status, updated_at
+          FROM video_versions
+          WHERE id = ${parsedVersionId} AND video_id = ${videoId}
+          LIMIT 1;
+        `;
+        if (!verRows.length) {
+          return NextResponse.json({ success: false, error: `ไม่พบเวอร์ชัน ID #${parsedVersionId}` }, { status: 404 });
+        }
+        const ver = verRows[0];
+        const verRecent = (Date.now() - (ver.updated_at ? new Date(ver.updated_at).getTime() : 0)) < 45000;
+        if (verRecent && ['PROCESSING', 'TRANSCODING', 'QUEUED'].includes(ver.status)) {
+          return NextResponse.json({
+            success: true,
+            videoId,
+            versionId: parsedVersionId,
+            workflowType,
+            status: ver.status,
+            alreadyRunning: true,
+            message: 'GitHub Action กำลังแปลงเวอร์ชันนี้อยู่แล้ว ไม่ต้องส่งซ้ำ',
+          });
+        }
+        await triggerGitHubWorkflow('transcode.yml', {
+          video_id: String(videoId),
+          version_id: String(parsedVersionId),
+          raw_file_name: String(ver.raw_file_name || ''),
+          title: String(video.title || ''),
+        });
+        await appendWorkerLog(sql, videoId, {
+          versionId: parsedVersionId,
+          source: 'hls',
+          label: 'HLS Engine',
+          message: `🚀 ส่งคำสั่ง GitHub Actions (transcode.yml) สำหรับเวอร์ชัน "${ver.label}"`,
+        });
+        return NextResponse.json({
+          success: true,
+          videoId,
+          versionId: parsedVersionId,
+          workflowType,
+          message: 'ส่งคำสั่งรัน HLS Transcoder สำหรับเวอร์ชันนี้เรียบร้อยแล้ว',
+        });
+      }
+
       if (isRecent && (video.status === 'PROCESSING' || video.status === 'TRANSCODING' || video.status === 'QUEUED')) {
         return NextResponse.json({
           success: true,

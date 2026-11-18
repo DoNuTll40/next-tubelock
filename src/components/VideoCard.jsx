@@ -114,6 +114,13 @@ export default function VideoCard({
     />
   );
 
+  const versionCount = Number(video.version_count || 0);
+  const versionBadges = Array.isArray(video.version_badges) ? video.version_badges.filter(Boolean) : [];
+  const hasMultiVersion = versionCount > 1 || versionBadges.length > 1;
+  const multiVersionLabel = versionBadges.length > 0
+    ? (versionCount > 1 && !String(versionBadges[0]).includes('เวอร์ชัน') ? `${versionBadges[0]} · ${versionCount}v` : versionBadges[0])
+    : `${versionCount} เวอร์ชัน`;
+
   // Pre-warm: ดึง source URL ล่วงหน้าเฉพาะตอนตั้งใจ hover หรือกดคลิกบนเดสก์ท็อป (ไม่ยิงตอนแตะเลื่อนฟีดบนมือถือ)
   const handlePreWarm = () => {
     if (!enablePrewarm || !video?.id || preWarmedIds.has(video.id)) return;
@@ -291,6 +298,15 @@ export default function VideoCard({
             <span>{`${Number(video.views_count || 0).toLocaleString()} ครั้ง`}</span>
             <span>•</span>
             <span>HLS</span>
+            {hasMultiVersion && (
+              <>
+                <span>•</span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#FF7A00]/15 text-[#E06800] dark:text-[#FF9E40] font-bold text-[10px] shrink-0">
+                  <Layers className="w-2.5 h-2.5" />
+                  {multiVersionLabel}
+                </span>
+              </>
+            )}
           </div>
 
           {/* 4. เฉพาะปุ่ม 3 จุด เมนู: ตรึงไว้ที่มุมล่างขวาสุด และแสดงเฉพาะตอน Hover ตัวการ์ด */}
@@ -393,6 +409,15 @@ export default function VideoCard({
             <span>{`${Number(video.views_count || 0).toLocaleString()} ครั้ง`}</span>
             <span>•</span>
             <span>HLS Direct</span>
+            {hasMultiVersion && (
+              <>
+                <span>•</span>
+                <span className="inline-flex items-center gap-0.5 text-[#E06800] dark:text-[#FF9E40] font-bold">
+                  <Layers className="w-2.5 h-2.5" />
+                  {multiVersionLabel}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
@@ -480,6 +505,13 @@ export default function VideoCard({
             </span>
           )}
         </div> */}
+
+        {hasMultiVersion && (
+          <div className="absolute bottom-2.5 left-2.5 z-10 pointer-events-none bg-black/65 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 border border-white/15">
+            <Layers className="w-3 h-3 text-[#FF9E40]" />
+            <span>{multiVersionLabel}</span>
+          </div>
+        )}
 
         {video.duration > 0 && (
           <div className="absolute bottom-2.5 right-2.5 z-10 bg-black/35 text-white text-[11px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 font-mono">

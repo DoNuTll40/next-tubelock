@@ -48,13 +48,43 @@ async function loadPoster(request, params, asImage) {
 
   try {
     const sql = getDb();
-    const [video] = await sql`
-      SELECT id, thumbnail_url, onedrive_folder_id, category, content_rating,
-        to_jsonb(v)->>'source_cache_expires_at' AS cached_until,
-        jsonb_path_query_first(to_jsonb(v)->'source_cache', '$.items[*] ? (@.name == "poster.jpg").downloadUrl') #>> '{}' AS cached_poster
-      FROM videos v
-      WHERE id = ${Number(id)} AND (status = 'READY' OR status IS NULL)
-    `;
+    const searchParams = new URL(request.url).searchParams;
+    const requestedVersion = searchParams.get('v') || searchParams.get('versionId') || null;
+    const reqVerNumeric = requestedVersion && /^\d+$/.test(requestedVersion) ? Number(requestedVersion) : null;
+    const reqVerLower = requestedVersion ? requestedVersion.toLowerCase() : null;
+
+    let video = null;
+    if (requestedVersion) {
+      try {
+        const rows = await sql`
+          SELECT
+            v.id,
+            COALESCE(NULLIF(vv.thumbnail_url, ''), v.thumbnail_url) AS thumbnail_url,
+            COALESCE(vv.onedrive_folder_id, v.onedrive_folder_id) AS onedrive_folder_id,
+            v.category, v.content_rating,
+            vv.id AS version_id,
+            to_jsonb(v)->>'source_cache_expires_at' AS cached_until,
+            jsonb_path_query_first(to_jsonb(v)->'source_cache', '$.items[*] ? (@.name == "poster.jpg").downloadUrl') #>> '{}' AS cached_poster
+          FROM videos v
+          LEFT JOIN video_versions vv
+            ON vv.video_id = v.id
+            AND ((${reqVerNumeric != null} AND vv.id = ${reqVerNumeric || 0}) OR LOWER(vv.version_key) = ${reqVerLower || ''})
+          WHERE v.id = ${Number(id)} AND (v.status = 'READY' OR v.status IS NULL)
+          LIMIT 1;
+        `;
+        video = rows[0] || null;
+      } catch (_) {}
+    }
+    if (!video) {
+      const [row] = await sql`
+        SELECT id, thumbnail_url, onedrive_folder_id, category, content_rating,
+          to_jsonb(v)->>'source_cache_expires_at' AS cached_until,
+          jsonb_path_query_first(to_jsonb(v)->'source_cache', '$.items[*] ? (@.name == "poster.jpg").downloadUrl') #>> '{}' AS cached_poster
+        FROM videos v
+        WHERE id = ${Number(id)} AND (status = 'READY' OR status IS NULL)
+      `;
+      video = row || null;
+    }
     if (!isMatureVideo(video)) {
       return Response.json({ error: 'Poster not found' }, { status: 404, headers });
     }
@@ -65,15 +95,19 @@ async function loadPoster(request, params, asImage) {
       return respondWithPoster(thumbnail, asImage);
     }
 
-    if (new URL(request.url).searchParams.get('fresh') !== '1') {
+    const streamFolderName = video.version_id ? `stream_vid_${video.id}_v${video.version_id}` : `stream_vid_${video.id}`;
+
+    if (searchParams.get('fresh') !== '1') {
       const minimumExpiry = Date.now() + 5 * 60 * 1000;
-      const assetCached = assetCache.get(`stream_vid_${video.id}/poster.jpg`);
+      const assetCached = assetCache.get(`${streamFolderName}/poster.jpg`);
       const assetUrl = assetCached && assetCached.expiresAt > Date.now() ? assetCached.url : null;
-      const memory = sourceCache.get(String(video.id));
+      const memory = video.version_id
+        ? sourceCache.get(`${video.id}:vid:${video.version_id}`)
+        : sourceCache.get(String(video.id));
       const memoryUrl = memory?.expiresAt > minimumExpiry
         ? memory.data?.items?.find((item) => item.name?.toLowerCase() === 'poster.jpg')?.downloadUrl
         : null;
-      const databaseUrl = Number(video.cached_until) > minimumExpiry ? video.cached_poster : null;
+      const databaseUrl = !video.version_id && Number(video.cached_until) > minimumExpiry ? video.cached_poster : null;
       const url = [assetUrl, memoryUrl, databaseUrl].find((candidate) => /^https:\/\//i.test(candidate || '') && isTempauthValid(candidate));
       if (url) return respondWithPoster(url, asImage);
     }
@@ -82,7 +116,7 @@ async function loadPoster(request, params, asImage) {
     const driveId = encodeURIComponent(await getUserDriveId(token));
     const folder = video.onedrive_folder_id
       ? `items/${encodeURIComponent(video.onedrive_folder_id)}:/poster.jpg:`
-      : `root:/streams/stream_vid_${video.id}/poster.jpg`;
+      : `root:/streams/${streamFolderName}/poster.jpg`;
     const response = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/${folder}`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
@@ -91,7 +125,7 @@ async function loadPoster(request, params, asImage) {
       const metadata = await response.json();
       const url = metadata['@microsoft.graph.downloadUrl'];
       if (url) {
-        assetCache.set(`stream_vid_${video.id}/poster.jpg`, {
+        assetCache.set(`${streamFolderName}/poster.jpg`, {
           url,
           isMature: true,
           expiresAt: Date.now() + 15 * 60 * 1000,

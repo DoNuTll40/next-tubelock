@@ -47,10 +47,26 @@ export async function GET(request, context) {
 
     const sql = getDb();
 
-    // ⚡ 2. Locate video metadata in Neon DB (slim projection — never fetch source_cache!)
-    const matchId = folderName.match(/^stream_vid_(\d+)$/i);
+    // ⚡ 2. Locate video (or specific version) metadata in Neon DB (slim projection — never fetch source_cache!)
+    const matchVersioned = folderName.match(/^stream_vid_(\d+)_v(\d+)$/i);
+    const matchId = !matchVersioned ? folderName.match(/^stream_vid_(\d+)$/i) : null;
     let rows = [];
-    if (matchId) {
+    let resolvedVersionId = null;
+
+    if (matchVersioned) {
+      const vidId = parseInt(matchVersioned[1], 10);
+      const verId = parseInt(matchVersioned[2], 10);
+      resolvedVersionId = verId;
+      rows = await sql`
+        SELECT v.id, vv.onedrive_folder_id, v.category, v.content_rating
+        FROM video_versions vv
+        JOIN videos v ON v.id = vv.video_id
+        WHERE vv.id = ${verId}
+          AND vv.video_id = ${vidId}
+          AND (vv.status = 'READY' OR vv.status IS NULL)
+        LIMIT 1;
+      `;
+    } else if (matchId) {
       const vidId = parseInt(matchId[1], 10);
       rows = await sql`
         SELECT id, onedrive_folder_id, category, content_rating
@@ -92,7 +108,10 @@ export async function GET(request, context) {
     }
 
     // ⚡ 3. Check in-memory sourceCache from videoSourceService (0 Neon egress, 0 Graph calls!)
-    const memSource = sourceCache.get(String(video.id));
+    const sourceCacheKey = resolvedVersionId
+      ? `${video.id}:v:${resolvedVersionId}`
+      : String(video.id);
+    const memSource = sourceCache.get(sourceCacheKey) || sourceCache.get(`${video.id}:v:legacy`);
     if (memSource && memSource.expiresAt > Date.now() && Array.isArray(memSource.data?.items)) {
       const foundItem = memSource.data.items.find(
         (i) => i.name?.toLowerCase() === fileName.toLowerCase()

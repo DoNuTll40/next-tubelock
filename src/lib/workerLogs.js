@@ -21,14 +21,20 @@ export async function ensureWorkerLogsColumn(sql) {
   } catch (err) {
     console.warn('[worker_logs schema warning]:', err.message);
   }
+  try {
+    await sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS worker_logs JSONB DEFAULT '[]'::jsonb;`;
+  } catch (_) {}
 }
 
 export async function appendWorkerLog(
   sql,
   videoId,
-  { source = 'api', label = 'Studio API', level = 'info', message = '' } = {}
+  { source = 'api', label = 'Studio API', level = 'info', message = '', versionId = null } = {}
 ) {
   const vidNum = Number(videoId);
+  const verNum = versionId != null && Number.isFinite(Number(versionId)) && Number(versionId) > 0
+    ? Number(versionId)
+    : null;
   if (!sql || !Number.isFinite(vidNum) || !message) return;
 
   const entry = {
@@ -44,23 +50,43 @@ export async function appendWorkerLog(
   try {
     await ensureWorkerLogsColumn(sql);
     const entryJson = JSON.stringify([entry]);
-    await sql`
-      UPDATE videos
-      SET worker_logs = COALESCE(
-        (
-          SELECT jsonb_agg(elem ORDER BY ord ASC)
-          FROM (
-            SELECT elem, ord
-            FROM jsonb_array_elements(COALESCE(videos.worker_logs, '[]'::jsonb) || ${entryJson}::jsonb)
-            WITH ORDINALITY AS t(elem, ord)
-            ORDER BY ord DESC
-            LIMIT 120
-          ) sub
-        ),
-        '[]'::jsonb
-      )
-      WHERE id = ${vidNum};
-    `;
+    if (verNum) {
+      await sql`
+        UPDATE video_versions
+        SET worker_logs = COALESCE(
+          (
+            SELECT jsonb_agg(elem ORDER BY ord ASC)
+            FROM (
+              SELECT elem, ord
+              FROM jsonb_array_elements(COALESCE(video_versions.worker_logs, '[]'::jsonb) || ${entryJson}::jsonb)
+              WITH ORDINALITY AS t(elem, ord)
+              ORDER BY ord DESC
+              LIMIT 120
+            ) sub
+          ),
+          '[]'::jsonb
+        )
+        WHERE id = ${verNum} AND video_id = ${vidNum};
+      `;
+    } else {
+      await sql`
+        UPDATE videos
+        SET worker_logs = COALESCE(
+          (
+            SELECT jsonb_agg(elem ORDER BY ord ASC)
+            FROM (
+              SELECT elem, ord
+              FROM jsonb_array_elements(COALESCE(videos.worker_logs, '[]'::jsonb) || ${entryJson}::jsonb)
+              WITH ORDINALITY AS t(elem, ord)
+              ORDER BY ord DESC
+              LIMIT 120
+            ) sub
+          ),
+          '[]'::jsonb
+        )
+        WHERE id = ${vidNum};
+      `;
+    }
   } catch (err) {
     console.warn('[appendWorkerLog warning]:', err.message);
   }

@@ -17,6 +17,7 @@ export async function POST(request) {
     const body = await request.json();
     const {
       videoId,
+      versionId = null,
       title,
       description,
       category,
@@ -30,6 +31,14 @@ export async function POST(request) {
       runAiRatingVerify = true,
       clientMeta = {},
     } = body;
+
+    const parsedVersionId = versionId != null ? parseInt(versionId, 10) : null;
+    if (versionId != null && (!parsedVersionId || Number.isNaN(parsedVersionId))) {
+      return NextResponse.json(
+        { success: false, error: 'versionId ไม่ถูกต้อง' },
+        { status: 400 }
+      );
+    }
 
     const envModelName = (process.env.GEMINI_MODEL_NAME || 'gemini-3.5-flash-lite')
       .replace(/['"]/g, '')
@@ -85,6 +94,140 @@ export async function POST(request) {
     }
 
     const currentVideo = existing[0];
+
+    // Branch: Completing upload for a specific video_versions record
+    if (parsedVersionId) {
+      const verRows = await sql`
+        SELECT id, video_id, label, raw_file_name, status, updated_at
+        FROM video_versions
+        WHERE id = ${parsedVersionId} AND video_id = ${videoId}
+        LIMIT 1;
+      `;
+      if (!verRows.length) {
+        return NextResponse.json(
+          { success: false, error: `ไม่พบเวอร์ชัน ID: ${parsedVersionId}` },
+          { status: 404 }
+        );
+      }
+
+      const curVer = verRows[0];
+      const verUpdatedMs = curVer.updated_at ? new Date(curVer.updated_at).getTime() : 0;
+      if ((Date.now() - verUpdatedMs) < 60000 && ['PROCESSING', 'TRANSCODING', 'QUEUED'].includes(curVer.status)) {
+        return NextResponse.json({
+          success: true,
+          videoId,
+          versionId: parsedVersionId,
+          status: curVer.status,
+          alreadyRunning: true,
+          message: 'เวอร์ชันนี้อยู่ในคิวหรือกำลังแปลงไฟล์ HLS อยู่แล้ว',
+        });
+      }
+
+      const rawDurNum = Number(clientMeta?.duration || 0);
+      const safeDuration = Number.isFinite(rawDurNum) && rawDurNum > 0 ? Math.floor(rawDurNum) : 0;
+      const rawFpsNum = Number(clientMeta?.fps || 0);
+      const safeFps = Number.isFinite(rawFpsNum) && rawFpsNum > 0 ? Math.round(rawFpsNum * 1000) / 1000 : 0;
+
+      const claimedVer = await sql`
+        UPDATE video_versions
+        SET
+          status = 'QUEUED',
+          transcode_progress = 5,
+          stage_detail = 'อัปโหลดเข้า OneDrive สำเร็จ กำลังส่งคำสั่งเข้าคิว GitHub Actions',
+          duration = CASE WHEN CAST(${safeDuration} AS INTEGER) > 0 THEN CAST(${safeDuration} AS INTEGER) ELSE duration END,
+          resolution = CASE WHEN ${clientMeta.resolution || ''} <> '' THEN ${clientMeta.resolution} ELSE resolution END,
+          fps = CASE WHEN CAST(${safeFps} AS NUMERIC) > 0 THEN CAST(${safeFps} AS NUMERIC) ELSE fps END,
+          codec = CASE WHEN ${clientMeta.codec || ''} <> '' THEN ${clientMeta.codec} ELSE codec END,
+          thumbnail_url = CASE
+            WHEN ${clientMeta.thumbnailDataUrl || ''} <> '' THEN ${clientMeta.thumbnailDataUrl}
+            WHEN thumbnail_url IS NOT NULL AND thumbnail_url <> '' THEN thumbnail_url
+            ELSE ${`/streams/stream_vid_${videoId}_v${parsedVersionId}/poster.jpg`}
+          END,
+          updated_at = NOW()
+        WHERE id = ${parsedVersionId} AND video_id = ${videoId}
+          AND status IS NOT DISTINCT FROM ${curVer.status}
+          AND (status IS NULL OR status NOT IN ('QUEUED', 'PROCESSING', 'TRANSCODING')
+            OR updated_at <= NOW() - INTERVAL '60 seconds')
+        RETURNING id;
+      `;
+
+      if (!claimedVer.length) {
+        return NextResponse.json({ success: false, error: 'Version status changed' }, { status: 409 });
+      }
+
+      const githubToken = process.env.GITHUB_TOKEN || process.env.GH_PAT || process.env.GITHUB_PAT || '';
+      if (!githubToken) {
+        const warnMsg = 'ไม่ได้ตั้งค่า GITHUB_TOKEN ในระบบ กรุณาเพิ่ม GITHUB_TOKEN ในไฟล์ .env.local หรือ Vercel Environment Variables';
+        await sql`
+          UPDATE video_versions
+          SET status = 'FAILED',
+              stage_detail = 'รอ Trigger GitHub Actions (ยังไม่ได้ตั้งค่า GITHUB_TOKEN)',
+              error_message = ${warnMsg},
+              updated_at = NOW()
+          WHERE id = ${parsedVersionId} AND video_id = ${videoId};
+        `;
+        return NextResponse.json({
+          success: false,
+          videoId,
+          versionId: parsedVersionId,
+          status: 'FAILED',
+          warning: warnMsg,
+        }, { status: 503 });
+      }
+
+      try {
+        await appendWorkerLog(sql, videoId, {
+          versionId: parsedVersionId,
+          source: 'hls',
+          label: 'HLS Engine',
+          message: `🚀 กำลังส่งคำสั่งหั่น HLS Multi-bitrate (transcode.yml) สำหรับเวอร์ชัน "${curVer.label}" (${curVer.raw_file_name})`,
+        });
+        await triggerGitHubWorkflow('transcode.yml', {
+          video_id: String(videoId),
+          version_id: String(parsedVersionId),
+          raw_file_name: String(curVer.raw_file_name),
+          title: String(currentVideo.title || ''),
+        });
+        await appendWorkerLog(sql, videoId, {
+          versionId: parsedVersionId,
+          source: 'hls',
+          label: 'HLS Engine',
+          level: 'success',
+          message: '✅ ส่งคิวเข้า GitHub Actions (transcode.yml) สำเร็จ รอ Ubuntu Runner รับงาน (~10-20 วิ)',
+        });
+      } catch (dispatchErr) {
+        await sql`
+          UPDATE video_versions
+          SET status = 'FAILED',
+              stage_detail = 'ส่งคำสั่งเข้า GitHub Actions ไม่สำเร็จ',
+              error_message = ${dispatchErr.message},
+              updated_at = NOW()
+          WHERE id = ${parsedVersionId} AND video_id = ${videoId};
+        `;
+        return NextResponse.json(
+          { success: false, videoId, versionId: parsedVersionId, status: 'FAILED', error: dispatchErr.message },
+          { status: 502 }
+        );
+      }
+
+      await sql`
+        UPDATE video_versions
+        SET status = 'PROCESSING',
+            transcode_progress = 10,
+            stage_detail = 'GitHub Actions ได้รับคิวงานเวอร์ชันนี้แล้ว กำลังเตรียม Ubuntu Runner',
+            error_message = '',
+            updated_at = NOW()
+        WHERE id = ${parsedVersionId} AND video_id = ${videoId} AND status = 'QUEUED';
+      `;
+
+      return NextResponse.json({
+        success: true,
+        videoId,
+        versionId: parsedVersionId,
+        status: 'PROCESSING',
+        message: 'ส่งคำสั่งรัน Transcode สำหรับเวอร์ชันใหม่ไปยัง GitHub Actions เรียบร้อยแล้ว',
+      });
+    }
 
     // Anti-Spam / Concurrent Execution Protection
     const nowMs = Date.now();

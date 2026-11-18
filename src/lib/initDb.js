@@ -1,4 +1,5 @@
 import { getDb } from './db';
+import { ensureVideoVersionsSchema } from './videoVersions';
 
 /**
  * Initialize all required tables in Neon DB if they don't exist yet.
@@ -61,4 +62,6 @@ export async function initTables() {
     ON user_sessions(session_token)
     WHERE is_active = TRUE
   `;
+
+  await ensureVideoVersionsSchema(sql);
 }

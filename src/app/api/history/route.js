@@ -46,6 +46,7 @@ export async function GET(request) {
           h.id AS history_id,
           h.video_id,
           h.last_position_seconds,
+          h.last_version_id,
           h.updated_at,
           v.id,
           v.title,
@@ -78,6 +79,7 @@ export async function GET(request) {
           h.id AS history_id,
           h.video_id,
           h.last_position_seconds,
+          h.last_version_id,
           h.updated_at,
           v.id,
           v.title,
@@ -148,6 +150,8 @@ export async function POST(request) {
 
     const videoId = parseInt(body?.videoId, 10);
     const position = Math.max(0, Math.floor(Number(body?.position || 0)));
+    const rawVersionId = body?.versionId != null ? parseInt(body.versionId, 10) : null;
+    const versionId = rawVersionId && !isNaN(rawVersionId) && rawVersionId > 0 ? rawVersionId : null;
 
     if (!videoId || isNaN(videoId)) {
       return NextResponse.json({ success: false, error: 'Invalid videoId' }, { status: 400 });
@@ -159,11 +163,12 @@ export async function POST(request) {
     const finalPosition = isMusic ? 0 : position;
 
     await sql`
-      INSERT INTO watch_history (user_id, video_id, last_position_seconds, updated_at)
-      VALUES (${user.user_id}, ${videoId}, ${finalPosition}, NOW())
+      INSERT INTO watch_history (user_id, video_id, last_position_seconds, last_version_id, updated_at)
+      VALUES (${user.user_id}, ${videoId}, ${finalPosition}, ${versionId}, NOW())
       ON CONFLICT (user_id, video_id)
       DO UPDATE SET
         last_position_seconds = ${finalPosition},
+        last_version_id = COALESCE(${versionId}, watch_history.last_version_id),
         updated_at = NOW();
     `;
 

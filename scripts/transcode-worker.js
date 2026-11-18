@@ -118,6 +118,7 @@ async function runWithConcurrency(items, concurrency, taskFn) {
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
 const RAW_FILE_NAME = process.env.RAW_FILE_NAME || process.argv[3];
 const VIDEO_TITLE = process.env.VIDEO_TITLE || process.argv[4] || 'Untitled Video';
+const VERSION_ID = (process.env.VERSION_ID || '').trim();
 
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const AZURE_TENANT_ID = (process.env.AZURE_TENANT_ID || '').replace(/['"]/g, '').trim();
@@ -137,6 +138,15 @@ if (!Number.isFinite(vidNum) || vidNum <= 0) {
     process.exit(1);
 }
 
+let versionNum = null;
+if (VERSION_ID) {
+    versionNum = Number(VERSION_ID);
+    if (!Number.isFinite(versionNum) || versionNum <= 0) {
+        console.error(`❌ Invalid VERSION_ID: "${VERSION_ID}". Expected a positive integer.`);
+        process.exit(1);
+    }
+}
+
 if (!DATABASE_URL || !AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRET || !ONEDRIVE_USER_ID) {
     console.error('❌ Missing required environment secrets. Check GitHub Actions secrets configuration.');
     process.exit(1);
@@ -145,7 +155,7 @@ if (!DATABASE_URL || !AZURE_TENANT_ID || !AZURE_CLIENT_ID || !AZURE_CLIENT_SECRE
 // 2. Initialize Database Client
 const dbUrl = (DATABASE_URL || '').trim();
 const sql = neon(dbUrl);
-const logger = createWorkerLogger(sql, vidNum, 'hls', 'HLS Engine');
+const logger = createWorkerLogger(sql, vidNum, 'hls', 'HLS Engine', { versionId: versionNum });
 let schemaChecked = false;
 
 async function ensureDbSchemaOnce() {
@@ -210,43 +220,95 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
 
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
-            console.log(`[DB UPDATE] Video #${vidNum} Status: ${status} | Progress: ${safeProgress}% | ${stageDetail}`);
-            await sql`
-                UPDATE videos 
-                SET 
-                  status = ${status},
-                  transcode_progress = ${safeProgress},
-                  stage_detail = ${stageDetail},
-                  error_message = ${errorMsg},
-                  source_cache = NULL,
-                  source_cache_expires_at = 0,
-                  thumbnail_url = COALESCE(${extra.thumbnail_url ?? null}, thumbnail_url),
-                  onedrive_folder_id = COALESCE(${extra.onedrive_folder_id ?? null}, onedrive_folder_id),
-                  master_playlist_path = COALESCE(${extra.master_playlist_path ?? null}, master_playlist_path),
-                  storyboard_vtt_path = COALESCE(${extra.storyboard_vtt_path ?? null}, storyboard_vtt_path),
-                  duration = COALESCE(CAST(${safeDuration} AS INTEGER), duration),
-                  resolution = COALESCE(${extra.resolution ?? null}, resolution),
-                  fps = COALESCE(CAST(${safeFps} AS NUMERIC), fps),
-                  codec = COALESCE(${extra.codec ?? null}, codec),
-                  bitrate = COALESCE(CAST(${safeBitrate} AS INTEGER), bitrate),
-                  file_size_bytes = COALESCE(CAST(${safeFileSize} AS BIGINT), file_size_bytes),
-                  updated_at = NOW()
-                WHERE id = ${vidNum};
-            `;
+            const targetTag = versionNum ? `Video #${vidNum} (v${versionNum})` : `Video #${vidNum}`;
+            console.log(`[DB UPDATE] ${targetTag} Status: ${status} | Progress: ${safeProgress}% | ${stageDetail}`);
+            if (versionNum) {
+                const updatedRows = await sql`
+                    UPDATE video_versions
+                    SET
+                      status = ${status},
+                      transcode_progress = ${safeProgress},
+                      stage_detail = ${stageDetail},
+                      error_message = ${errorMsg},
+                      source_cache_br = NULL,
+                      source_cache_items_count = 0,
+                      source_cache_expires_at = 0,
+                      thumbnail_url = COALESCE(${extra.thumbnail_url ?? null}, thumbnail_url),
+                      onedrive_folder_id = COALESCE(${extra.onedrive_folder_id ?? null}, onedrive_folder_id),
+                      hls_folder_path = COALESCE(${extra.hls_folder_path ?? null}, hls_folder_path),
+                      master_playlist_path = COALESCE(${extra.master_playlist_path ?? null}, master_playlist_path),
+                      storyboard_vtt_path = COALESCE(${extra.storyboard_vtt_path ?? null}, storyboard_vtt_path),
+                      duration = COALESCE(CAST(${safeDuration} AS INTEGER), duration),
+                      resolution = COALESCE(${extra.resolution ?? null}, resolution),
+                      fps = COALESCE(CAST(${safeFps} AS NUMERIC), fps),
+                      codec = COALESCE(${extra.codec ?? null}, codec),
+                      bitrate = COALESCE(CAST(${safeBitrate} AS INTEGER), bitrate),
+                      file_size_bytes = COALESCE(CAST(${safeFileSize} AS BIGINT), file_size_bytes),
+                      updated_at = NOW()
+                    WHERE id = ${versionNum} AND video_id = ${vidNum}
+                    RETURNING is_default, duration, resolution, fps, codec, bitrate, file_size_bytes;
+                `;
 
-            if (extra.runner_specs) {
-                try {
-                    await sql`UPDATE videos SET runner_specs = ${JSON.stringify(extra.runner_specs)}::jsonb WHERE id = ${vidNum};`;
-                } catch (_) {
+                if (extra.runner_specs) {
                     try {
-                        await sql`UPDATE videos SET runner_specs = ${JSON.stringify(extra.runner_specs)} WHERE id = ${vidNum};`;
+                        await sql`UPDATE video_versions SET runner_specs = ${JSON.stringify(extra.runner_specs)}::jsonb WHERE id = ${versionNum} AND video_id = ${vidNum};`;
                     } catch (_) { }
+                }
+
+                if (status === 'READY' && safeProgress === 100 && updatedRows?.[0]?.is_default) {
+                    const dv = updatedRows[0];
+                    await sql`
+                        UPDATE videos
+                        SET duration = COALESCE(${dv.duration}, duration),
+                            resolution = COALESCE(${dv.resolution}, resolution),
+                            fps = COALESCE(${dv.fps}, fps),
+                            codec = COALESCE(${dv.codec}, codec),
+                            bitrate = COALESCE(${dv.bitrate}, bitrate),
+                            file_size_bytes = COALESCE(${dv.file_size_bytes}, file_size_bytes),
+                            updated_at = NOW()
+                        WHERE id = ${vidNum};
+                    `.catch(() => { });
+                }
+            } else {
+                await sql`
+                    UPDATE videos 
+                    SET 
+                      status = ${status},
+                      transcode_progress = ${safeProgress},
+                      stage_detail = ${stageDetail},
+                      error_message = ${errorMsg},
+                      source_cache = NULL,
+                      source_cache_br = NULL,
+                      source_cache_items_count = 0,
+                      source_cache_expires_at = 0,
+                      thumbnail_url = COALESCE(${extra.thumbnail_url ?? null}, thumbnail_url),
+                      onedrive_folder_id = COALESCE(${extra.onedrive_folder_id ?? null}, onedrive_folder_id),
+                      master_playlist_path = COALESCE(${extra.master_playlist_path ?? null}, master_playlist_path),
+                      storyboard_vtt_path = COALESCE(${extra.storyboard_vtt_path ?? null}, storyboard_vtt_path),
+                      duration = COALESCE(CAST(${safeDuration} AS INTEGER), duration),
+                      resolution = COALESCE(${extra.resolution ?? null}, resolution),
+                      fps = COALESCE(CAST(${safeFps} AS NUMERIC), fps),
+                      codec = COALESCE(${extra.codec ?? null}, codec),
+                      bitrate = COALESCE(CAST(${safeBitrate} AS INTEGER), bitrate),
+                      file_size_bytes = COALESCE(CAST(${safeFileSize} AS BIGINT), file_size_bytes),
+                      updated_at = NOW()
+                    WHERE id = ${vidNum};
+                `;
+
+                if (extra.runner_specs) {
+                    try {
+                        await sql`UPDATE videos SET runner_specs = ${JSON.stringify(extra.runner_specs)}::jsonb WHERE id = ${vidNum};`;
+                    } catch (_) {
+                        try {
+                            await sql`UPDATE videos SET runner_specs = ${JSON.stringify(extra.runner_specs)} WHERE id = ${vidNum};`;
+                        } catch (_) { }
+                    }
                 }
             }
             break;
         } catch (err) {
             if (attempt === 2) {
-                console.error(`[DB UPDATE ERROR for #${vidNum}]:`, err.message);
+                console.error(`[DB UPDATE ERROR for #${vidNum}${versionNum ? ` v${versionNum}` : ''}]:`, err.message);
             }
             await new Promise((r) => setTimeout(r, 1500));
         }
@@ -575,14 +637,15 @@ function generateWebVTT({ duration, interval = 5, cols = 10, rows = 10, width = 
 
 // 4. Main Progressive Worker
 async function main() {
-    let tempDir = path.resolve('./temp_transcode', String(VIDEO_ID));
+    const streamWorkKey = versionNum ? `${vidNum}_v${versionNum}` : String(VIDEO_ID);
+    let tempDir = path.resolve('./temp_transcode', streamWorkKey);
 
     try {
         // Step 0: Collect & Report Runner Machine Specs
         const runnerSpecs = getRunnerSpecs();
         console.log('🖥️ Runner Machine Specs:', JSON.stringify(runnerSpecs, null, 2));
         await ensureDbSchemaOnce();
-        await logger.log(`🎬 เริ่ม HLS Progressive Worker #${VIDEO_ID} บน ${runnerSpecs.cpuModel} (${runnerSpecs.cpuCores} Cores, RAM ${runnerSpecs.totalRamGb})`);
+        await logger.log(`🎬 เริ่ม HLS Progressive Worker #${vidNum}${versionNum ? ` (Version #${versionNum})` : ''} บน ${runnerSpecs.cpuModel} (${runnerSpecs.cpuCores} Cores, RAM ${runnerSpecs.totalRamGb})`);
 
         await updateDbStatus({
             status: 'PROCESSING',
@@ -624,7 +687,7 @@ async function main() {
         const downloadUrl = itemData['@microsoft.graph.downloadUrl'];
 
         // เลือกใช้ /dev/shm (RAM Disk) ถ้ารองรับและพื้นที่พอ
-        tempDir = selectOptimalWorkDir(VIDEO_ID, rawFileSize);
+        tempDir = selectOptimalWorkDir(streamWorkKey, rawFileSize);
         const rawFilePath = path.join(tempDir, 'raw_' + RAW_FILE_NAME);
         const hlsOutputDir = path.join(tempDir, 'hls');
         fs.mkdirSync(tempDir, { recursive: true });
@@ -645,7 +708,7 @@ async function main() {
             stageDetail: 'ดาวน์โหลดไฟล์สำเร็จ กำลังวิเคราะห์ข้อมูลวิดีโอ (ffprobe)',
         });
 
-        const streamFolderName = `stream_vid_${vidNum}`;
+        const streamFolderName = versionNum ? `stream_vid_${vidNum}_v${versionNum}` : `stream_vid_${vidNum}`;
         const streamsParentFolder = '/streams';
 
         const [probeData, parentFolderId] = await Promise.all([
@@ -704,7 +767,9 @@ async function main() {
 
         const [streamFolderId, existingThumbRows] = await Promise.all([
             ensureFolderExists(driveId, `streams/${streamFolderName}`),
-            sql`SELECT thumbnail_url FROM videos WHERE id = ${vidNum} LIMIT 1;`.catch(() => []),
+            versionNum
+                ? sql`SELECT thumbnail_url FROM video_versions WHERE id = ${versionNum} AND video_id = ${vidNum} LIMIT 1;`.catch(() => [])
+                : sql`SELECT thumbnail_url FROM videos WHERE id = ${vidNum} LIMIT 1;`.catch(() => []),
         ]);
 
         const existingThumbnailUrl = (existingThumbRows?.[0]?.thumbnail_url || '').trim();
@@ -882,8 +947,9 @@ async function main() {
             stageDetail: '⚡ พร้อมรับชมทันทีที่ 144p! (กำลังแปลง 360p, 480p, 720p, 1080p, 4K เพิ่มเติมในพื้นหลัง...)',
             extra: {
                 onedrive_folder_id: streamFolderId,
+                hls_folder_path: `/streams/${streamFolderName}`,
                 master_playlist_path: masterPlaylistPath,
-                storyboard_vtt_path: hasStoryboard ? `/streams/stream_vid_${vidNum}/thumbnails.vtt` : null,
+                storyboard_vtt_path: hasStoryboard ? `/streams/${streamFolderName}/thumbnails.vtt` : null,
                 duration,
                 resolution: resolutionLabel,
                 fps,
@@ -1123,12 +1189,19 @@ async function main() {
         // FINAL PASS: Cleanup raw file (only if other AI workers are not extracting) & Mark 100% complete
         // =========================================================================
         try {
-            const checkRows = await sql`
-                SELECT audio_status, sprite_status, rating_check_status
-                FROM videos
-                WHERE id = ${vidNum}
-                LIMIT 1;
-            `.catch(() => []);
+            const checkRows = versionNum
+                ? await sql`
+                    SELECT audio_status, sprite_status, rating_check_status
+                    FROM videos
+                    WHERE id = ${vidNum} AND raw_file_name = ${RAW_FILE_NAME}
+                    LIMIT 1;
+                `.catch(() => [])
+                : await sql`
+                    SELECT audio_status, sprite_status, rating_check_status
+                    FROM videos
+                    WHERE id = ${vidNum}
+                    LIMIT 1;
+                `.catch(() => []);
             const st = checkRows?.[0] || {};
             const otherWorkersBusy =
                 st.audio_status === 'extracting' ||

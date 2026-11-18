@@ -36,6 +36,7 @@ export async function GET(request, context) {
 
     const { searchParams } = new URL(request.url);
     const forceFresh = searchParams.get('fresh') === '1' || searchParams.get('refresh') === '1';
+    const requestedVersion = searchParams.get('v') || searchParams.get('versionId') || null;
     const sql = getDb();
     const wantsAdultPreviews = searchParams.get('previews') === '1' &&
       request.cookies.get(POSTER_PREFERENCE)?.value === '1';
@@ -44,6 +45,7 @@ export async function GET(request, context) {
     const { data, path, notReady } = await resolveVideoSourceServer(id, {
       forceFresh,
       showAdultPreviews,
+      version: requestedVersion,
     });
 
     const rating = data?.video;

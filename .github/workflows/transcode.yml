@@ -16,15 +16,20 @@ on:
         required: false
         type: string
         default: ''
+      version_id:
+        description: 'Optional video_versions record ID in Neon DB'
+        required: false
+        type: string
+        default: ''
 
-# ถ้ายิง video_id เดิมซ้ำ ให้ยกเลิกอันเก่าทันที แต่ถ้าคนละ video_id ให้รันขนานกันได้เลย
+# ถ้ายิง video_id (+ version_id) เดิมซ้ำ ให้ยกเลิกอันเก่าทันที แต่ถ้าคนละเวอร์ชัน/คนละเรื่อง ให้รันขนานกันได้เลย
 concurrency:
-  group: transcode-vid-${{ inputs.video_id }}
+  group: transcode-vid-${{ inputs.video_id }}${{ inputs.version_id != '' && format('-v{0}', inputs.version_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   transcode:
-    name: "Transcode Video #${{ inputs.video_id }} (4-Core / 12GB RAM Disk)"
+    name: "Transcode Video #${{ inputs.video_id }}${{ inputs.version_id != '' && format(' (v{0})', inputs.version_id) || '' }} (4-Core / 12GB RAM Disk)"
     runs-on: ubuntu-latest
     timeout-minutes: 300
 
@@ -64,6 +69,7 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
           VIDEO_ID: ${{ inputs.video_id }}
+          VERSION_ID: ${{ inputs.version_id }}
           RAW_FILE_NAME: ${{ inputs.raw_file_name }}
           VIDEO_TITLE: ${{ inputs.title }}
         run: |

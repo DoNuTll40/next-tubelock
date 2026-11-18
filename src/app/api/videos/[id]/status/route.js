@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { reconcileSubtitleWorkflow } from '@/lib/subtitleWorkflow';
 import { decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
+import { getVideoVersions, formatVersionSummary } from '@/lib/videoVersions';
 
 /**
  * GET /api/videos/[id]/status
@@ -24,6 +25,50 @@ export async function GET(request, context) {
     const userId = await getSessionUserId(sql);
     if (userId == null) return accessError(401);
     const query = new URL(request.url).searchParams;
+    const rawVersionId = query.get('versionId');
+    const requestedVersionId = rawVersionId && /^\d+$/.test(rawVersionId) ? Number(rawVersionId) : null;
+
+    if (requestedVersionId) {
+      const verRows = await sql`
+        SELECT
+          vv.id AS version_id, vv.video_id, vv.version_key, vv.label, vv.badge,
+          vv.aspect_label, vv.description, vv.is_default, vv.status, vv.transcode_progress,
+          vv.stage_detail, vv.error_message, vv.raw_file_name, vv.master_playlist_path,
+          vv.onedrive_folder_id, vv.duration, vv.resolution, vv.fps, vv.codec, vv.bitrate,
+          vv.thumbnail_url, vv.file_size_bytes, vv.runner_specs, vv.worker_logs,
+          vv.created_at, vv.updated_at,
+          md5(COALESCE(vv.worker_logs, '[]'::jsonb)::text) AS logs_revision,
+          v.title, v.category, v.user_id
+        FROM video_versions vv
+        JOIN videos v ON v.id = vv.video_id
+        WHERE vv.id = ${requestedVersionId}
+          AND vv.video_id = ${id}
+          AND (${isAdmin(userId)} OR v.user_id = ${userId})
+        LIMIT 1;
+      `;
+
+      if (!verRows.length) {
+        return NextResponse.json({ success: false, error: 'Version not found' }, { status: 404 });
+      }
+
+      const ver = verRows[0];
+      return NextResponse.json({
+        success: true,
+        revisions: {
+          logs: ver.logs_revision,
+        },
+        version: {
+          ...formatVersionSummary({ ...ver, id: ver.version_id }),
+          runnerSpecs: ver.runner_specs || null,
+          workerLogs: query.get('logsRevision') === ver.logs_revision
+            ? undefined
+            : (Array.isArray(ver.worker_logs) ? ver.worker_logs : []),
+          title: ver.title || '',
+          slug: encodeVideoSlug(ver.video_id, ver.category) || String(ver.video_id),
+        },
+      });
+    }
+
     const rows = await sql`
       SELECT
         id, title, description, tags, category, status, transcode_progress, stage_detail,
@@ -112,6 +157,8 @@ export async function GET(request, context) {
       }
     };
 
+    const rawVersions = await getVideoVersions(sql, id, { readyOnly: false });
+
     return NextResponse.json({
       success: true,
       revisions: {
@@ -119,6 +166,7 @@ export async function GET(request, context) {
         logs: row.logs_revision,
         meta: row.meta_revision,
       },
+      versions: rawVersions.map(formatVersionSummary),
       video: {
         id: video.id,
         title: video.title,

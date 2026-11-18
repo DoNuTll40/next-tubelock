@@ -6,6 +6,11 @@ import { getGraphToken, getUserDriveId, ensureFolderExists } from '@/lib/onedriv
 import { ensureSourceCacheColumns, invalidateVideoCaches } from '@/lib/videoSourceService';
 import { normalizeSubtitleTracks } from '@/lib/videoEditorUtils';
 import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
+import {
+  getVideoVersions,
+  formatVersionSummary,
+  resolveRequestedVersion,
+} from '@/lib/videoVersions';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -23,28 +28,79 @@ export async function GET(request, context) {
       return NextResponse.json({ success: false, error: 'Video ID is required' }, { status: 400 });
     }
 
+    const searchParams = new URL(request.url).searchParams;
+    const requestedVersion = searchParams.get('v') || searchParams.get('versionId') || null;
+    const includeAllVersions = searchParams.get('includeVersions') === 'all';
+
     const sql = getDb();
-    const rows = await sql`
-      SELECT 
-        v.id, v.title, v.description, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec,
-        v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, 
-        v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
-        v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
-        v.subtitle_status, v.subtitle_srt, v.subtitle_vtt, v.subtitle_tracks, v.content_rating,
-        v.user_id,
-        u.name AS author_name,
-        u.picture AS author_picture
-      FROM videos v
-      LEFT JOIN users u ON v.user_id = u.id
-      WHERE v.id = ${id} AND (v.status = 'READY' OR v.status IS NULL)
-      LIMIT 1;
-    `;
+    let allowAllVersions = false;
+    if (includeAllVersions) {
+      const uid = await getSessionUserId(sql);
+      allowAllVersions = Boolean(uid);
+    }
+
+    const [rows, rawVersions] = await Promise.all([
+      sql`
+        SELECT 
+          v.id, v.title, v.description, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec,
+          v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, 
+          v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
+          v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
+          v.subtitle_status, v.subtitle_srt, v.subtitle_vtt, v.subtitle_tracks, v.content_rating,
+          v.user_id,
+          u.name AS author_name,
+          u.picture AS author_picture
+        FROM videos v
+        LEFT JOIN users u ON v.user_id = u.id
+        WHERE v.id = ${id} AND (v.status = 'READY' OR v.status IS NULL)
+        LIMIT 1;
+      `,
+      getVideoVersions(sql, id, { readyOnly: !allowAllVersions }),
+    ]);
     if (!rows || rows.length === 0) {
       return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404 });
     }
 
+    const baseVideo = rows[0];
+    const isOwnerOrAdmin = allowAllVersions
+      ? Boolean(
+          await getSessionUserId(sql).then((uid) => uid != null && (isAdmin(uid) || baseVideo.user_id === uid))
+        )
+      : false;
+    const visibleVersions = isOwnerOrAdmin
+      ? rawVersions
+      : rawVersions.filter((v) => !v.status || v.status === 'READY');
+    const versions = visibleVersions.map(formatVersionSummary);
+    const activeVersion = resolveRequestedVersion(visibleVersions, requestedVersion);
+    const activeVersionSummary = activeVersion ? formatVersionSummary(activeVersion) : null;
+
+    const mergedVideo = activeVersion
+      ? {
+          ...baseVideo,
+          duration: Number(activeVersion.duration) || baseVideo.duration,
+          file_size_bytes: Number(activeVersion.file_size_bytes) || baseVideo.file_size_bytes,
+          resolution: activeVersion.resolution || baseVideo.resolution,
+          fps: activeVersion.fps ?? baseVideo.fps,
+          codec: activeVersion.codec || baseVideo.codec,
+          source_type: activeVersion.source_type || baseVideo.source_type,
+          onedrive_item_id: activeVersion.onedrive_item_id || baseVideo.onedrive_item_id,
+          onedrive_folder_id: activeVersion.onedrive_folder_id || baseVideo.onedrive_folder_id,
+          master_playlist_path: activeVersion.master_playlist_path || baseVideo.master_playlist_path,
+          ...(Array.isArray(activeVersion.subtitle_tracks_override) &&
+          activeVersion.subtitle_tracks_override.length > 0
+            ? { subtitle_tracks: activeVersion.subtitle_tracks_override }
+            : {}),
+          versions,
+          active_version: activeVersionSummary,
+        }
+      : {
+          ...baseVideo,
+          versions: [],
+          active_version: null,
+        };
+
     return NextResponse.json(
-      { success: true, video: protectVideoPoster(rows[0]) },
+      { success: true, video: protectVideoPoster(mergedVideo) },
       {
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -74,68 +130,83 @@ export async function DELETE(request, context) {
     if (userId == null) return accessError(401);
     const admin = isAdmin(userId);
 
-    // 1. Fetch video details first to clean up OneDrive assets
-    const rows = await sql`
-      SELECT id, raw_file_name, onedrive_folder_id, onedrive_item_id, title 
-      FROM videos 
-      WHERE id = ${id} AND (${admin} OR user_id = ${userId})
-      LIMIT 1;
-    `;
+    // 1. Fetch video & version details first to clean up OneDrive assets
+    const [rows, versionRows] = await Promise.all([
+      sql`
+        SELECT id, raw_file_name, onedrive_folder_id, onedrive_item_id, title 
+        FROM videos 
+        WHERE id = ${id} AND (${admin} OR user_id = ${userId})
+        LIMIT 1;
+      `,
+      getVideoVersions(sql, id),
+    ]);
 
     if (!rows.length) return accessError(404);
 
     {
       const vid = rows[0];
 
-      // 2. Best-effort cleanup of OneDrive files/folders
+      // 2. Best-effort cleanup of OneDrive files/folders (parent + all versions)
       try {
         const token = await getGraphToken();
         const driveId = await getUserDriveId(token);
 
-        // 1. Delete HLS stream folder by path: /streams/stream_vid_{id}
-        try {
-          await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/streams/stream_vid_${id}`,
-            {
-              method: 'DELETE',
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
-        } catch (_) {}
-
-        // 2. Delete HLS folder by ID if present
-        const folderId = vid.onedrive_folder_id;
-        if (folderId) {
-          try {
-            await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}`, {
-              method: 'DELETE',
-              headers: { Authorization: `Bearer ${token}` },
-            });
-          } catch (_) {}
-        }
-
-        // 3. Delete direct video file if present
-        if (vid.onedrive_item_id && vid.onedrive_item_id !== folderId) {
-          try {
-            await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${vid.onedrive_item_id}`, {
-              method: 'DELETE',
-              headers: { Authorization: `Bearer ${token}` },
-            });
-          } catch (_) {}
-        }
-
-        // 4. Delete raw file from /raw/ if present
-        if (vid.raw_file_name) {
+        const deleteFolderByPath = async (folderName) => {
           try {
             await fetch(
-              `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(vid.raw_file_name)}`,
+              `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/streams/${encodeURIComponent(folderName)}`,
               {
                 method: 'DELETE',
                 headers: { Authorization: `Bearer ${token}` },
               }
             );
           } catch (_) {}
+        };
+
+        const deleteItemById = async (itemId) => {
+          if (!itemId) return;
+          try {
+            await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${token}` },
+            });
+          } catch (_) {}
+        };
+
+        const deleteRawFile = async (rawName) => {
+          if (!rawName) return;
+          try {
+            await fetch(
+              `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/raw/${encodeURIComponent(rawName)}`,
+              {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` },
+              }
+            );
+          } catch (_) {}
+        };
+
+        const cleanupTasks = [
+          deleteFolderByPath(`stream_vid_${id}`),
+          deleteItemById(vid.onedrive_folder_id),
+          vid.onedrive_item_id !== vid.onedrive_folder_id ? deleteItemById(vid.onedrive_item_id) : null,
+          deleteRawFile(vid.raw_file_name),
+        ];
+
+        for (const vv of versionRows || []) {
+          cleanupTasks.push(deleteFolderByPath(`stream_vid_${id}_v${vv.id}`));
+          if (vv.onedrive_folder_id && vv.onedrive_folder_id !== vid.onedrive_folder_id) {
+            cleanupTasks.push(deleteItemById(vv.onedrive_folder_id));
+          }
+          if (vv.onedrive_item_id && vv.onedrive_item_id !== vv.onedrive_folder_id && vv.onedrive_item_id !== vid.onedrive_item_id) {
+            cleanupTasks.push(deleteItemById(vv.onedrive_item_id));
+          }
+          if (vv.raw_file_name && vv.raw_file_name !== vid.raw_file_name) {
+            cleanupTasks.push(deleteRawFile(vv.raw_file_name));
+          }
         }
+
+        await Promise.all(cleanupTasks.filter(Boolean));
       } catch (graphErr) {
         console.warn('[Cleanup OneDrive Warning]:', graphErr.message);
       }

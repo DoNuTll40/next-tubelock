@@ -23,15 +23,41 @@ export const assetCache =
   globalThis.__tubelock_asset_cache || (globalThis.__tubelock_asset_cache = new Map());
 
 /**
- * Invalidate in-memory playback and asset caches for a video ID
+ * Invalidate in-memory playback and asset caches for a video ID (or specific version ID)
  */
-export function invalidateVideoCaches(videoId) {
+export function invalidateVideoCaches(videoId, versionId = null) {
   if (!videoId) return;
   const idStr = String(videoId);
+  if (versionId != null) {
+    const verStr = String(versionId);
+    for (const key of sourceCache.keys()) {
+      if (key === idStr || key === `${idStr}:v:default` || key === `${idStr}:vid:${verStr}` || key.startsWith(`${idStr}:v:${verStr}`)) {
+        sourceCache.delete(key);
+      }
+      const cached = sourceCache.get(key);
+      if (cached?.data?.video?.active_version?.id === Number(versionId)) {
+        sourceCache.delete(key);
+      }
+    }
+    const verPrefix = `stream_vid_${idStr}_v${verStr}/`;
+    for (const key of assetCache.keys()) {
+      if (key.startsWith(verPrefix)) {
+        assetCache.delete(key);
+      }
+    }
+    return;
+  }
+
   sourceCache.delete(idStr);
+  for (const key of sourceCache.keys()) {
+    if (key.startsWith(`${idStr}:`)) {
+      sourceCache.delete(key);
+    }
+  }
   const prefix = `stream_vid_${idStr}/`;
+  const verPrefixBase = `stream_vid_${idStr}_v`;
   for (const key of assetCache.keys()) {
-    if (key.startsWith(prefix)) {
+    if (key.startsWith(prefix) || key.startsWith(verPrefixBase)) {
       assetCache.delete(key);
     }
   }
@@ -177,12 +203,28 @@ export async function ensureSourceCacheColumns(sql) {
   } catch (_) {}
 }
 
-async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null) {
+async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versionId = null) {
   const compressed = compressSourceCache(payloadObj);
   const itemsCount = Array.isArray(payloadObj?.items) ? payloadObj.items.length : 0;
 
-  const runUpdate = () =>
-    expiresAt == null
+  const runUpdate = () => {
+    if (versionId) {
+      return expiresAt == null
+        ? sql`
+            UPDATE video_versions
+            SET source_cache_br = ${compressed},
+                source_cache_items_count = ${itemsCount}
+            WHERE id = ${versionId} AND video_id = ${id};
+          `
+        : sql`
+            UPDATE video_versions
+            SET source_cache_br = ${compressed},
+                source_cache_items_count = ${itemsCount},
+                source_cache_expires_at = ${expiresAt}
+            WHERE id = ${versionId} AND video_id = ${id};
+          `;
+    }
+    return expiresAt == null
       ? sql`
           UPDATE videos
           SET source_cache_br = ${compressed},
@@ -198,6 +240,7 @@ async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null) {
               source_cache_expires_at = ${expiresAt}
           WHERE id = ${id};
         `;
+  };
 
   try {
     await runUpdate();
@@ -251,16 +294,21 @@ export function formatSourceForClient(data, showAdultPreviews = false) {
  * 2. In-Flight Request Coalescing (shares active promise across SSR & API calls)
  * 3. Compressed Persistent Neon DB Cache (< 50ms) with OneDrive Graph fallback
  */
-export async function resolveVideoSourceServer(numericId, { forceFresh = false, showAdultPreviews = false } = {}) {
+export async function resolveVideoSourceServer(
+  numericId,
+  { forceFresh = false, showAdultPreviews = false, version = null } = {}
+) {
   const id = Number(numericId);
   if (!id || isNaN(id)) {
     throw new Error('Video ID is required');
   }
 
-  const cacheKey = String(id);
+  const reqVer = version != null && String(version).trim() !== '' ? String(version).trim() : null;
+  const cacheKey = reqVer ? `${id}:v:${reqVer.toLowerCase()}` : `${id}:v:default`;
 
   if (forceFresh) {
     sourceCache.delete(cacheKey);
+    if (!reqVer) sourceCache.delete(String(id));
   } else {
     // ⚡ 1. Ultra-fast Cache Hit (<1ms) with Token Expiry Validation
     const cached = sourceCache.get(cacheKey);
@@ -298,7 +346,77 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
       .then((tk) => getUserDriveId(tk))
       .catch(() => {});
 
-    const queryVideoRow = () => sql`
+    const reqVerNumeric = reqVer && /^\d+$/.test(reqVer) ? Number(reqVer) : null;
+    const reqVerLower = reqVer ? reqVer.toLowerCase() : null;
+
+    const queryWithVersions = () => sql`
+      SELECT
+        v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, v.bitrate,
+        v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status,
+        v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
+        v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
+        v.content_rating, v.user_id, v.source_cache_expires_at,
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0
+          THEN v.source_cache_br ELSE NULL END AS source_cache_br,
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0 AND v.source_cache_br IS NULL
+          THEN v.source_cache ELSE NULL END AS source_cache,
+        u.name AS author_name,
+        u.picture AS author_picture,
+        vv.id AS vv_id,
+        vv.version_key AS vv_key,
+        vv.label AS vv_label,
+        vv.badge AS vv_badge,
+        vv.aspect_label AS vv_aspect_label,
+        vv.description AS vv_description,
+        vv.is_default AS vv_is_default,
+        vv.source_type AS vv_source_type,
+        vv.onedrive_item_id AS vv_onedrive_item_id,
+        vv.onedrive_folder_id AS vv_onedrive_folder_id,
+        vv.raw_file_name AS vv_raw_file_name,
+        vv.master_playlist_path AS vv_master_playlist_path,
+        vv.duration AS vv_duration,
+        vv.file_size_bytes AS vv_file_size_bytes,
+        vv.resolution AS vv_resolution,
+        vv.fps AS vv_fps,
+        vv.codec AS vv_codec,
+        vv.bitrate AS vv_bitrate,
+        vv.thumbnail_url AS vv_thumbnail_url,
+        vv.status AS vv_status,
+        vv.transcode_progress AS vv_transcode_progress,
+        vv.stage_detail AS vv_stage_detail,
+        vv.error_message AS vv_error_message,
+        vv.subtitle_tracks_override AS vv_subtitle_tracks_override,
+        vv.source_cache_expires_at AS vv_source_cache_expires_at,
+        CASE WHEN vv.id IS NOT NULL AND (vv.status = 'READY' OR vv.status IS NULL) AND COALESCE(vv.source_cache_expires_at, 0) > 0
+          THEN vv.source_cache_br ELSE NULL END AS vv_source_cache_br
+      FROM videos v
+      LEFT JOIN users u ON v.user_id = u.id
+      LEFT JOIN LATERAL (
+        SELECT *
+        FROM video_versions ver
+        WHERE ver.video_id = v.id
+          AND (
+            ${reqVer == null}
+            OR (${reqVerNumeric != null} AND ver.id = ${reqVerNumeric || 0})
+            OR LOWER(ver.version_key) = ${reqVerLower || ''}
+          )
+        ORDER BY
+          CASE
+            WHEN ${reqVer != null} AND (${reqVerNumeric != null} AND ver.id = ${reqVerNumeric || 0}) THEN 0
+            WHEN ${reqVer != null} AND LOWER(ver.version_key) = ${reqVerLower || ''} THEN 1
+            ELSE 2
+          END ASC,
+          (ver.status = 'READY' OR ver.status IS NULL) DESC,
+          ver.is_default DESC,
+          ver.sort_order ASC,
+          ver.id ASC
+        LIMIT 1
+      ) vv ON TRUE
+      WHERE v.id = ${id}
+      LIMIT 1;
+    `;
+
+    const queryLegacyRow = () => sql`
       SELECT
         v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, v.bitrate,
         v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status,
@@ -319,11 +437,21 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
 
     let rows;
     try {
-      rows = await queryVideoRow();
+      rows = await queryWithVersions();
     } catch (err) {
-      if (err?.code === '42703' || /source_cache_br/i.test(err?.message || '')) {
+      if (err?.code === '42P01') {
+        rows = await queryLegacyRow();
+      } else if (err?.code === '42703' || /source_cache_br/i.test(err?.message || '')) {
         await ensureSourceCacheColumns(sql);
-        rows = await queryVideoRow();
+        try {
+          rows = await queryWithVersions();
+        } catch (retryErr) {
+          if (retryErr?.code === '42P01') {
+            rows = await queryLegacyRow();
+          } else {
+            throw retryErr;
+          }
+        }
       } else {
         throw err;
       }
@@ -333,38 +461,105 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
       throw new Error('Video not found');
     }
 
-    const rawVideo = rows[0];
-    const video = stripHeavyVideoFields(rawVideo);
+    const rawRow = rows[0];
+    const hasVersion = Boolean(rawRow.vv_id);
+    const activeVersionId = hasVersion ? rawRow.vv_id : null;
 
-    // Check if video is still being processed
-    if (rawVideo.status && rawVideo.status !== 'READY') {
+    // Effective stream fields (use selected video_version when present, else parent videos row)
+    const activeStatus = hasVersion ? rawRow.vv_status : rawRow.status;
+    const activeProgress = hasVersion ? rawRow.vv_transcode_progress : rawRow.transcode_progress;
+    const activeStageDetail = hasVersion ? rawRow.vv_stage_detail : rawRow.stage_detail;
+    const activeErrorMessage = hasVersion ? rawRow.vv_error_message : rawRow.error_message;
+    const activeSourceType = hasVersion ? rawRow.vv_source_type : rawRow.source_type;
+    const activeItemId = hasVersion ? rawRow.vv_onedrive_item_id : rawRow.onedrive_item_id;
+    const activeFolderId = hasVersion ? rawRow.vv_onedrive_folder_id : rawRow.onedrive_folder_id;
+    const activeCacheBr = hasVersion ? rawRow.vv_source_cache_br : rawRow.source_cache_br;
+    const activeCacheLegacy = hasVersion ? null : rawRow.source_cache;
+    const activeCacheExp = Number((hasVersion ? rawRow.vv_source_cache_expires_at : rawRow.source_cache_expires_at) || 0);
+
+    const {
+      vv_id, vv_key, vv_label, vv_badge, vv_aspect_label, vv_description, vv_is_default,
+      vv_source_type, vv_onedrive_item_id, vv_onedrive_folder_id, vv_raw_file_name,
+      vv_master_playlist_path, vv_duration, vv_file_size_bytes, vv_resolution,
+      vv_fps, vv_codec, vv_bitrate, vv_thumbnail_url, vv_status,
+      vv_transcode_progress, vv_stage_detail, vv_error_message,
+      vv_subtitle_tracks_override, vv_source_cache_expires_at, vv_source_cache_br,
+      ...parentRawVideo
+    } = rawRow;
+
+    const cleanBaseVideo = stripHeavyVideoFields(parentRawVideo);
+    const video = hasVersion
+      ? {
+          ...cleanBaseVideo,
+          source_type: vv_source_type || cleanBaseVideo.source_type,
+          onedrive_item_id: vv_onedrive_item_id || cleanBaseVideo.onedrive_item_id,
+          onedrive_folder_id: vv_onedrive_folder_id || cleanBaseVideo.onedrive_folder_id,
+          raw_file_name: vv_raw_file_name || cleanBaseVideo.raw_file_name,
+          master_playlist_path: vv_master_playlist_path || cleanBaseVideo.master_playlist_path,
+          duration: Number(vv_duration) || cleanBaseVideo.duration,
+          file_size_bytes: Number(vv_file_size_bytes) || cleanBaseVideo.file_size_bytes,
+          resolution: vv_resolution || cleanBaseVideo.resolution,
+          fps: vv_fps ?? cleanBaseVideo.fps,
+          codec: vv_codec || cleanBaseVideo.codec,
+          bitrate: Number(vv_bitrate) || cleanBaseVideo.bitrate,
+          status: vv_status || cleanBaseVideo.status,
+          transcode_progress: Number(vv_transcode_progress) || 0,
+          stage_detail: vv_stage_detail || '',
+          error_message: vv_error_message || '',
+          ...(Array.isArray(vv_subtitle_tracks_override) && vv_subtitle_tracks_override.length > 0
+            ? { subtitle_tracks: vv_subtitle_tracks_override }
+            : {}),
+          active_version: {
+            id: vv_id,
+            version_key: vv_key,
+            label: vv_label,
+            badge: vv_badge || '',
+            aspect_label: vv_aspect_label || '',
+            description: vv_description || '',
+            is_default: Boolean(vv_is_default),
+            thumbnail_url: vv_thumbnail_url || '',
+          },
+        }
+      : cleanBaseVideo;
+
+    const storeInMemoryCache = (payloadData, expiresAt) => {
+      sourceCache.set(cacheKey, { data: payloadData, expiresAt });
+      if (activeVersionId) {
+        sourceCache.set(`${id}:vid:${activeVersionId}`, { data: payloadData, expiresAt });
+      } else {
+        sourceCache.set(String(id), { data: payloadData, expiresAt });
+      }
+    };
+
+    // Check if video/version is still being processed
+    if (activeStatus && activeStatus !== 'READY') {
       return {
         success: false,
-        status: rawVideo.status,
-        progress: rawVideo.transcode_progress || 0,
-        stageDetail: rawVideo.stage_detail || '',
-        errorMessage: rawVideo.error_message || '',
+        status: activeStatus,
+        progress: activeProgress || 0,
+        stageDetail: activeStageDetail || '',
+        errorMessage: activeErrorMessage || '',
         video,
         error:
-          rawVideo.status === 'FAILED'
-            ? `การแปลงวิดีโอล้มเหลว: ${rawVideo.error_message || 'ไม่ทราบสาเหตุ'}`
-            : `วิดีโอนี้อยู่ในสถานะ "${rawVideo.status}" (${rawVideo.stage_detail || 'กำลังประมวลผล'}) กรุณารอสักครู่`,
+          activeStatus === 'FAILED'
+            ? `การแปลงวิดีโอล้มเหลว: ${activeErrorMessage || 'ไม่ทราบสาเหตุ'}`
+            : `วิดีโอนี้อยู่ในสถานะ "${activeStatus}" (${activeStageDetail || 'กำลังประมวลผล'}) กรุณารอสักครู่`,
       };
     }
 
     // เก็บเนื้อหา .m3u8 เดิมจาก DB cache (ถ้ามี) เพื่อไม่ต้องเสียเวลาโหลด .m3u8 ใหม่แม้ tempauth หมดอายุ
     const existingM3u8Map = {};
     let parsedCache = null;
-    const isMigratingFromLegacy = Boolean(!rawVideo.source_cache_br && rawVideo.source_cache);
-    if (Number(rawVideo.source_cache_expires_at || 0) > 0) {
-      if (rawVideo.source_cache_br) {
-        parsedCache = decompressSourceCache(rawVideo.source_cache_br);
-      } else if (rawVideo.source_cache) {
+    const isMigratingFromLegacy = Boolean(!activeCacheBr && activeCacheLegacy);
+    if (activeCacheExp > 0) {
+      if (activeCacheBr) {
+        parsedCache = decompressSourceCache(activeCacheBr);
+      } else if (activeCacheLegacy) {
         try {
           parsedCache =
-            typeof rawVideo.source_cache === 'string'
-              ? JSON.parse(rawVideo.source_cache)
-              : rawVideo.source_cache;
+            typeof activeCacheLegacy === 'string'
+              ? JSON.parse(activeCacheLegacy)
+              : activeCacheLegacy;
         } catch (_) {}
       }
       if (Array.isArray(parsedCache?.items)) {
@@ -385,7 +580,7 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
       const cachedM3u8Count =
         parsedCache?.items?.filter((i) => i.name?.endsWith('.m3u8')).length || 0;
       const isStaleEarlySnapshot =
-        (rawVideo.transcode_progress === 100 || rawVideo.status === 'READY') &&
+        (activeProgress === 100 || activeStatus === 'READY') &&
         cachedM3u8Count <= 2 &&
         (parsedCache?.items?.length || 0) < 150;
 
@@ -403,11 +598,8 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
           ...parsedCache,
           video,
         };
-        const expTime = Number(rawVideo.source_cache_expires_at || 0);
-        sourceCache.set(cacheKey, {
-          data: resultData,
-          expiresAt: expTime > now ? expTime : now + 5 * 60 * 1000,
-        });
+        const expTime = activeCacheExp;
+        storeInMemoryCache(resultData, expTime > now ? expTime : now + 5 * 60 * 1000);
 
         const needsSwrRefresh = expTime <= now + 10 * 60 * 1000;
 
@@ -415,16 +607,22 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
           scheduleAfterOrBackground(async () => {
             try {
               await hydrateM3u8Contents(parsedCache.items, existingM3u8Map);
-              await saveSourceCacheToDb(sql, id, {
-                success: true,
-                type: 'hls',
-                items: parsedCache.items,
-              });
+              await saveSourceCacheToDb(
+                sql,
+                id,
+                {
+                  success: true,
+                  type: 'hls',
+                  items: parsedCache.items,
+                },
+                null,
+                activeVersionId
+              );
             } catch (_) {}
           });
         } else if (isMigratingFromLegacy && !needsSwrRefresh) {
           scheduleAfterOrBackground(async () => {
-            await saveSourceCacheToDb(sql, id, parsedCache, expTime);
+            await saveSourceCacheToDb(sql, id, parsedCache, expTime, activeVersionId);
           });
         }
 
@@ -437,8 +635,8 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
               try {
                 const token = await getGraphToken();
                 const driveId = await getUserDriveId(token);
-                if (rawVideo.source_type === 'hls' || rawVideo.onedrive_folder_id) {
-                  const folderId = rawVideo.onedrive_folder_id || rawVideo.onedrive_item_id;
+                if (activeSourceType === 'hls' || activeFolderId) {
+                  const folderId = activeFolderId || activeItemId;
                   const allItems = await listHlsFolderItems(
                     token,
                     driveId,
@@ -457,15 +655,13 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
                     });
                   if (freshValid.length > 0) {
                     const newExp = Date.now() + 45 * 60 * 1000;
-                    sourceCache.set(cacheKey, {
-                      data: { success: true, type: 'hls', video, items: freshValid },
-                      expiresAt: newExp,
-                    });
+                    storeInMemoryCache({ success: true, type: 'hls', video, items: freshValid }, newExp);
                     await saveSourceCacheToDb(
                       sql,
                       id,
                       { success: true, type: 'hls', items: freshValid },
-                      newExp
+                      newExp,
+                      activeVersionId
                     );
                   }
                 }
@@ -486,8 +682,8 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
     const driveId = await getUserDriveId(token);
 
     // Case 1: HLS Stream Folder
-    if (rawVideo.source_type === 'hls' || rawVideo.onedrive_folder_id) {
-      const folderId = rawVideo.onedrive_folder_id || rawVideo.onedrive_item_id;
+    if (activeSourceType === 'hls' || activeFolderId) {
+      const folderId = activeFolderId || activeItemId;
       const allItems = await listHlsFolderItems(token, driveId, folderId, existingM3u8Map);
 
       const validItems = allItems
@@ -514,20 +710,18 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
         items: validItems,
       };
 
-      const isCompleted = Number(rawVideo.transcode_progress || 0) >= 100;
+      const isCompleted = Number(activeProgress || 0) >= 100;
       const expiresAt = Date.now() + (isCompleted ? 45 * 60 * 1000 : 15 * 1000);
 
-      sourceCache.set(cacheKey, {
-        data: resultData,
-        expiresAt,
-      });
+      storeInMemoryCache(resultData, expiresAt);
 
       scheduleAfterOrBackground(async () => {
         await saveSourceCacheToDb(
           sql,
           id,
           { success: true, type: 'hls', items: validItems },
-          expiresAt
+          expiresAt,
+          activeVersionId
         );
       });
 
@@ -535,7 +729,7 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
     }
 
     // Case 2: Standalone Video File (MP4, MKV, etc.)
-    const itemId = rawVideo.onedrive_item_id;
+    const itemId = activeItemId;
     const res = await fetch(
       `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}?select=id,@microsoft.graph.downloadUrl`,
       { headers: { Authorization: `Bearer ${token}` } }
@@ -557,17 +751,15 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
 
     const expiresAt = Date.now() + 90 * 60 * 1000;
 
-    sourceCache.set(cacheKey, {
-      data: resultData,
-      expiresAt,
-    });
+    storeInMemoryCache(resultData, expiresAt);
 
     scheduleAfterOrBackground(async () => {
       await saveSourceCacheToDb(
         sql,
         id,
         { success: true, type: 'mp4', url: downloadUrl },
-        expiresAt
+        expiresAt,
+        activeVersionId
       );
     });
 
@@ -590,10 +782,11 @@ export async function resolveVideoSourceServer(numericId, { forceFresh = false, 
 /**
  * Non-blocking server-side pre-warm for a video ID (used during SSR in /watch/[id] and feed load)
  */
-export function prewarmVideoSourceServer(numericId) {
+export function prewarmVideoSourceServer(numericId, { version = null } = {}) {
   const id = Number(numericId);
   if (!id || isNaN(id)) return;
-  const cacheKey = String(id);
+  const reqVer = version != null && String(version).trim() !== '' ? String(version).trim() : null;
+  const cacheKey = reqVer ? `${id}:v:${reqVer.toLowerCase()}` : `${id}:v:default`;
   const cached = sourceCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 10 * 60 * 1000) {
     const sampleUrl = cached.data?.items?.[0]?.downloadUrl || cached.data?.url;
@@ -601,5 +794,5 @@ export function prewarmVideoSourceServer(numericId) {
   }
   if (inFlightRequests.has(cacheKey)) return;
 
-  resolveVideoSourceServer(id).catch(() => {});
+  resolveVideoSourceServer(id, { version: reqVer }).catch(() => {});
 }
