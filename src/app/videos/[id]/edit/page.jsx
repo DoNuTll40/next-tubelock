@@ -547,16 +547,6 @@ function StudioEditorInner() {
       { ratingCheckStatus: 'checking' }
     );
 
-  const handleDispatchAudioSubtitles = (customPrompt = '') =>
-    dispatchStudioWorkflow(
-      {
-        workflowType: 'audio_subtitles',
-        customPrompt,
-      },
-      null,
-      { audioStatus: 'extracting', subtitleStatus: 'processing' }
-    );
-
   const handleDispatchTranscode = () =>
     dispatchStudioWorkflow({ workflowType: 'transcode' }, setIsRetranscoding, {
       status: 'TRANSCODING',
@@ -915,10 +905,6 @@ function StudioEditorInner() {
                   onChangeTracks={setSubtitleTracks}
                   subtitleStatus={video.subtitleStatus || 'waiting'}
                   audioStatus={video.audioStatus || 'waiting'}
-                  canGenerateSubtitles={Boolean(
-                    video.rawFileName || video.audioStatus === 'ready' || video.onedriveFolderId || video.masterPlaylistPath
-                  )}
-                  onDispatchAudioSubtitles={handleDispatchAudioSubtitles}
                   workerDetail={video.stageDetail || ''}
                 />
               )}

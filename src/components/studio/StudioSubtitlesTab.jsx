@@ -187,8 +187,6 @@ export default function StudioSubtitlesTab({
   onChangeTracks,
   subtitleStatus = 'waiting',
   audioStatus = 'waiting',
-  canGenerateSubtitles = false,
-  onDispatchAudioSubtitles,
   workerDetail = '',
 }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -200,8 +198,6 @@ export default function StudioSubtitlesTab({
   const [editingCue, setEditingCue] = useState(null); // { trackKey, srtSnapshot, cueIdx, start, end, text, error }
   const [newCueComposer, setNewCueComposer] = useState(null); // { trackKey, srtSnapshot, insertAfterIdx, start, end, text, error }
   const [undoSnapshot, setUndoSnapshot] = useState(null); // { trackKey, previousSrt, label }
-  const [customPrompt, setCustomPrompt] = useState('');
-  const [isDispatchingAi, setIsDispatchingAi] = useState(false);
   const [statusNotice, setStatusNotice] = useState('');
   const replaceInputRef = useRef(null);
   const newTrackInputRef = useRef(null);
@@ -474,19 +470,8 @@ export default function StudioSubtitlesTab({
     setStatusNotice('ลบแทร็กออกจากรายการแล้ว — กด "บันทึก" เพื่อยืนยันลงระบบ');
   };
 
-  const handleTriggerAi = async () => {
-    if (!onDispatchAudioSubtitles || isDispatchingAi) return;
-    setIsDispatchingAi(true);
-    setStatusNotice('');
-    try {
-      await onDispatchAudioSubtitles(customPrompt);
-    } finally {
-      setIsDispatchingAi(false);
-    }
-  };
-
   const isAiRunning =
-    isDispatchingAi || audioStatus === 'extracting' || ['extracting', 'processing'].includes(subtitleStatus);
+    audioStatus === 'extracting' || ['extracting', 'processing'].includes(subtitleStatus);
   const safeBaseName = (videoTitle || 'subtitles').replace(/[^a-zA-Z0-9ก-๙_-]/g, '_').slice(0, 50);
 
   return (
@@ -579,7 +564,7 @@ export default function StudioSubtitlesTab({
               วิดีโอนี้ยังไม่มีแทร็กคำบรรยาย
             </div>
             <p className="text-xs text-[#6C655D] dark:text-[#9A9A9A] max-w-md mx-auto">
-              กด &ldquo;นำเข้าเป็นแทร็กใหม่&rdquo; เพื่ออัปโหลดไฟล์ .SRT / .VTT หรือให้ AI ช่วยถอดเสียงด้านล่าง
+              กด &ldquo;นำเข้าเป็นแทร็กใหม่&rdquo; เพื่ออัปโหลดไฟล์ .SRT / .VTT
             </p>
           </div>
         )}
@@ -978,18 +963,11 @@ export default function StudioSubtitlesTab({
         )}
       </section>
 
-      {/* AI Re-Transcribe Card */}
-      {canGenerateSubtitles && onDispatchAudioSubtitles && (
+      {/* Upload subtitle job status */}
+      {isAiRunning && (
         <SubtitleGenerationCard
-          cancelUrl={videoId && !isDispatchingAi ? `/api/videos/${videoId}/cancel-subtitles` : undefined}
-          audioStatus={audioStatus}
-          subtitleStatus={subtitleStatus}
-          isRunningWorkflow={isAiRunning}
-          canGenerate={canGenerateSubtitles}
+          cancelUrl={videoId ? `/api/videos/${videoId}/cancel-subtitles` : undefined}
           workerDetail={workerDetail}
-          customPrompt={customPrompt}
-          setCustomPrompt={setCustomPrompt}
-          onRun={handleTriggerAi}
         />
       )}
     </div>

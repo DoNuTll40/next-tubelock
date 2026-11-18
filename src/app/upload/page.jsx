@@ -99,9 +99,8 @@ export default function UploadPage() {
   const runnerSpecsLoggedRef = useRef(false);
 
   // Step 2: Subtitles & AI State (AI Key & Model come from .env)
-  const [subtitleMode, setSubtitleMode] = useState('ai'); // 'manual' | 'ai'
+  const [subtitleMode, setSubtitleMode] = useState('auto');
   const [manualSubtitleFile, setManualSubtitleFile] = useState(null);
-  const [selectedModel, setSelectedModel] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [subtitleStatus, setSubtitleStatus] = useState('waiting'); // 'waiting' | 'processing' | 'ready' | 'failed'
   const [generatedSubtitleSrt, setGeneratedSubtitleSrt] = useState('');
@@ -181,7 +180,6 @@ export default function UploadPage() {
   const [completedVideo, setCompletedVideo] = useState(null);
   const [isStartingPipeline, setIsStartingPipeline] = useState(false);
   const isStartingPipelineRef = useRef(false);
-  const isDispatchingAudioRef = useRef(false);
   const isDispatchingSpriteRef = useRef(false);
 
   // System Activity Logs & Live GitHub Worker Telemetry
@@ -455,9 +453,8 @@ export default function UploadPage() {
         setTags(tagsRef.current = draft?.tags ?? job.tags);
         setContentRating(draft?.contentRating ?? job.userSelectedRating ?? job.contentRating);
         setActiveStep(job.status === 'UPLOADING' ? draft?.activeStep ?? 1 : 4);
-        setSubtitleMode(draft?.subtitleMode ?? 'ai');
+        setSubtitleMode(draft?.subtitleMode === 'requested-ai' || draft?.subtitleMode === 'manual' ? draft.subtitleMode : 'auto');
         setManualSubtitleFile(draft?.manualSubtitleFile ?? null);
-        setSelectedModel(draft?.selectedModel ?? '');
         setCustomPrompt(draft?.customPrompt ?? '');
         const restoredThumbOptions =
           Array.isArray(job.thumbnailOptions) && job.thumbnailOptions.length > 0
@@ -533,12 +530,12 @@ export default function UploadPage() {
     try {
       localStorage.setItem(`tubelock_upload_${activeVideoId}`, JSON.stringify({
         title, description, category, tags, contentRating, activeStep,
-        subtitleMode, manualSubtitleFile, selectedModel, customPrompt,
+        subtitleMode, manualSubtitleFile, customPrompt,
         thumbnailUrl, thumbnailOptions,
       }));
     } catch {}
   }, [activeVideoId, isRestoring, title, description, category, tags, contentRating, activeStep,
-    subtitleMode, manualSubtitleFile, selectedModel, customPrompt, thumbnailUrl, thumbnailOptions]);
+    subtitleMode, manualSubtitleFile, customPrompt, thumbnailUrl, thumbnailOptions]);
 
   // Immediate Upload to OneDrive as soon as a video file is selected
   const startImmediateOneDriveUpload = async (selectedFile, initialTitle, initialDesc) => {
@@ -935,48 +932,6 @@ export default function UploadPage() {
     if (dropped) handleFile(dropped);
   };
 
-  // Dispatch Workflow #1: Extract Audio & AI Subtitles
-  const handleDispatchAudioSubtitles = async () => {
-    const vidId = activeVideoIdRef.current || activeVideoId;
-    if (!vidId || !isRawUploaded || isDispatchingAudioRef.current) return;
-    if (audioStatus === 'extracting' || subtitleStatus === 'processing') return;
-
-    isDispatchingAudioRef.current = true;
-    setAudioStatus('extracting');
-    setSubtitleStatus('processing');
-    addLog(`🚀 สั่งรัน GitHub Action #1 (extract-audio-subtitles.yml) สำหรับ Video ID #${vidId}...`);
-
-    try {
-      const res = await fetch('/api/upload/dispatch-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoId: vidId,
-          workflowType: 'audio_subtitles',
-          rawFileName,
-          model: selectedModel,
-          customPrompt,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'ไม่สามารถส่งคำสั่งรัน GitHub Action #1 ได้');
-      }
-      if (data.alreadyRunning) {
-        addLog(`ℹ️ GitHub Action #1 กำลังทำงานอยู่แล้ว ไม่ต้องส่งซ้ำ`);
-      } else {
-        addLog(`✅ ส่งคำสั่ง GitHub Action #1 สำเร็จ: กำลังดึงวิดีโอจาก OneDrive มาสกัดเสียงและสร้างซับด้วย AI`);
-      }
-      startPollingStatus(vidId);
-    } catch (err) {
-      setAudioStatus('failed');
-      setSubtitleStatus('failed');
-      addLog(`❌ สั่งรัน GitHub Action #1 ล้มเหลว: ${err.message}`);
-    } finally {
-      isDispatchingAudioRef.current = false;
-    }
-  };
-
   // Dispatch Workflow #2: Detailed Sprite Sheet Grid & Content Rating AI Verification
   const handleDispatchSpriteRating = async ({ userRating = contentRating, autoApply = false } = {}) => {
     const vidId = activeVideoIdRef.current || activeVideoId;
@@ -1082,7 +1037,7 @@ export default function UploadPage() {
             subtitleMode === 'manual' && manualSubtitleFile?.ext === 'vtt'
               ? manualSubtitleFile.textContent
               : '',
-          selectedModel,
+
           customPrompt,
           runAiRatingVerify: true,
           clientMeta: {
@@ -1488,20 +1443,11 @@ export default function UploadPage() {
                     setSubtitleMode={setSubtitleMode}
                     manualSubtitleFile={manualSubtitleFile}
                     setManualSubtitleFile={setManualSubtitleFile}
-                    selectedModel={selectedModel}
-                    setSelectedModel={setSelectedModel}
                     customPrompt={customPrompt}
                     setCustomPrompt={setCustomPrompt}
-                    isRawUploaded={isRawUploaded}
-                    isUploading={isUploading}
-                    uploadPercent={uploadStats.percent}
-                    audioStatus={audioStatus}
-                    subtitleStatus={subtitleStatus}
                     generatedSubtitleSrt={generatedSubtitleSrt}
                     subtitleTracks={subtitleTracks}
-                    onDispatchAudioSubtitles={handleDispatchAudioSubtitles}
                     onAddLog={addLog}
-                    workerDetail={latestWorkerBySource.subtitles?.message || ''}
                   />
                 )}
 

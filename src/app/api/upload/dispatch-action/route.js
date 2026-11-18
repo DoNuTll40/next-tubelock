@@ -1,5 +1,3 @@
-import { isSubtitleWorkflowActive, markSubtitleDispatchFailed } from '@/lib/subtitleWorkflow';
-import { randomUUID } from 'node:crypto';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
@@ -13,7 +11,6 @@ async function ensureAiColumns(sql) {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_model VARCHAR(100) DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_job_id TEXT;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_status VARCHAR(50) DEFAULT 'waiting';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_preview_url TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS content_rating VARCHAR(50) DEFAULT 'all';`;
@@ -67,7 +64,6 @@ export async function triggerGitHubWorkflow(workflowFile, inputs) {
 /**
  * POST /api/upload/dispatch-action
  * Dispatches one of the 3 specialized GitHub Actions workflows:
- * - 'audio_subtitles' -> extract-audio-subtitles.yml
  * - 'sprite_rating'   -> sprite-content-rating.yml
  * - 'transcode'       -> transcode.yml
  */
@@ -76,9 +72,8 @@ export async function POST(request) {
     const body = await request.json();
     const {
       videoId,
-      workflowType, // 'audio_subtitles' | 'sprite_rating' | 'transcode'
+      workflowType,
       model = '',
-      customPrompt = '',
       userRating = 'auto',
       autoApply = true,
     } = body;
@@ -94,6 +89,10 @@ export async function POST(request) {
         { success: false, error: 'กรุณาระบุ videoId และ workflowType' },
         { status: 400 }
       );
+    }
+
+    if (workflowType === 'audio_subtitles') {
+      return NextResponse.json({ success: false, error: 'สร้างซับได้เฉพาะตอนอัปโหลดวิดีโอ' }, { status: 403 });
     }
 
     const sql = getDb();
@@ -121,62 +120,6 @@ export async function POST(request) {
     const nowMs = Date.now();
     const updatedMs = video.updated_at ? new Date(video.updated_at).getTime() : 0;
     const isRecent = (nowMs - updatedMs) < 45000;
-
-    if (workflowType === 'audio_subtitles') {
-      if (isSubtitleWorkflowActive(video)) {
-        return NextResponse.json({
-          success: true,
-          videoId,
-          workflowType,
-          audioStatus: video.audio_status,
-          subtitleStatus: video.subtitle_status,
-          alreadyRunning: true,
-          message: 'GitHub Action #1 กำลังทำงานอยู่แล้ว ไม่ต้องส่งซ้ำ',
-        });
-      }
-
-      const subtitleJobId = `${Date.now()}-${randomUUID()}`;
-      const claimed = await sql`
-        UPDATE videos
-        SET audio_status = 'extracting',
-            subtitle_status = 'processing',
-            subtitle_job_id = ${subtitleJobId},
-            subtitle_model = 'gemini-3.5-transcribe',
-            updated_at = NOW()
-        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
-          AND COALESCE(audio_status, '') <> 'extracting'
-          AND COALESCE(subtitle_status, '') NOT IN ('extracting', 'processing')
-        RETURNING id;
-      `;
-
-      if (!claimed.length) return NextResponse.json({ error: 'มีงานสร้างซับกำลังทำงานอยู่' }, { status: 409 });
-
-      try {
-        await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
-          job_id: subtitleJobId,
-          video_id: String(videoId),
-          raw_file_name: String(effectiveRawName),
-          custom_prompt: String(customPrompt || ''),
-        });
-      } catch (error) {
-        await markSubtitleDispatchFailed(sql, videoId, subtitleJobId, video.audio_status);
-        throw error;
-      }
-      await appendWorkerLog(sql, videoId, {
-        source: 'subtitles',
-        label: 'Audio & Sub',
-        message: `🚀 ส่งคำสั่ง GitHub Actions (extract-audio-subtitles.yml) 3.5 Transcribe + 3.8 Flash — รอ Ubuntu Runner รับงาน...`,
-      });
-
-      return NextResponse.json({
-        success: true,
-        videoId,
-        workflowType,
-        audioStatus: 'extracting',
-        subtitleStatus: 'processing',
-        message: 'ส่งคำสั่งให้ GitHub Actions สกัดไฟล์เสียงและสร้างซับไตเติลผ่าน AI เรียบร้อยแล้ว',
-      });
-    }
 
     if (workflowType === 'sprite_rating') {
       if (isRecent && (video.sprite_status === 'generating' || video.rating_check_status === 'analyzing')) {

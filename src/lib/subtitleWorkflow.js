@@ -52,7 +52,7 @@ export async function markSubtitleDispatchFailed(sql, videoId, jobId, previousAu
     UPDATE videos
     SET subtitle_status = 'failed',
         audio_status = ${previousAudioStatus === 'ready' ? 'ready' : 'failed'}
-    WHERE id = ${videoId} AND subtitle_job_id = ${jobId} AND subtitle_status = 'processing'
+    WHERE id = ${videoId} AND subtitle_job_id = ${jobId} AND subtitle_status = 'extracting'
   `;
 }
 

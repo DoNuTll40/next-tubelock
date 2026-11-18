@@ -32,7 +32,6 @@ import {
 } from './worker-utils.js';
 
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
-const RAW_FILE_NAME = process.env.RAW_FILE_NAME || process.argv[3] || '';
 const AI_MODEL = 'gemini-3.8-flash';
 const CUSTOM_PROMPT = (process.env.CUSTOM_PROMPT || '').trim();
 
@@ -936,6 +935,26 @@ async function downloadHlsAudioSource(driveId, folderId, masterName, tempDir, lo
 
 async function main() {
   const vidNum = Number(VIDEO_ID);
+  const jobId = process.env.SUBTITLE_JOB_ID || '';
+  if (!jobId.endsWith('-ai') && !jobId.endsWith('-auto')) {
+    console.log('ข้ามงานซับที่ไม่มีรหัสงานจากหน้าอัปโหลด');
+    return;
+  }
+
+  const [video] = await sql`
+    UPDATE videos
+    SET subtitle_status = 'processing', updated_at = NOW()
+    WHERE id = ${vidNum} AND subtitle_job_id = ${jobId}
+      AND subtitle_status = 'extracting' AND audio_status = 'extracting'
+    RETURNING id, title, raw_file_name, onedrive_folder_id, master_playlist_path
+  `;
+  if (!video) {
+    console.log('ข้ามงานซับที่เริ่มไปแล้วหรือไม่อยู่ในคิวอัปโหลด');
+    return;
+  }
+
+  const activeRawName = video.raw_file_name;
+  const thaiTrackLabel = jobId.endsWith('-ai') ? 'ไทย (แปลโดย AI)' : 'ไทย (แปลอัตโนมัติ)';
   const tempDir = path.resolve('./temp_audio_sub', String(vidNum));
   fs.mkdirSync(tempDir, { recursive: true });
   const logger = createWorkerLogger(sql, vidNum, 'sub', 'เสียง & ซับไตเติล AI');
@@ -944,27 +963,6 @@ async function main() {
     const primaryModel = `${TRANSCRIBE_MODEL} / ${AI_MODEL}`;
     await logger.log(`🎬 เริ่มงานสกัดเสียงและสร้างซับไตเติลอัตโนมัติ (วิดีโอ #${vidNum}, โมเดล ${primaryModel})...`, { toDb: true });
     await ensureAudioSubtitleColumns();
-
-    const rows = await sql`
-      SELECT id, title, raw_file_name, onedrive_folder_id, master_playlist_path
-      FROM videos
-      WHERE id = ${vidNum}
-      LIMIT 1;
-    `;
-    if (!rows || rows.length === 0) {
-      throw new Error(`ไม่พบวิดีโอ ID #${vidNum} ในฐานข้อมูล`);
-    }
-
-    const video = rows[0];
-    const activeRawName = RAW_FILE_NAME || video.raw_file_name;
-
-    await sql`
-      UPDATE videos
-      SET audio_status = 'extracting',
-          subtitle_status = 'processing',
-          updated_at = NOW()
-      WHERE id = ${vidNum};
-    `;
 
     await logger.log('🔑 กำลังยืนยันตัวตนกับ Microsoft OneDrive...', { toDb: false });
     const driveId = await getUserDriveId();
@@ -1061,7 +1059,7 @@ async function main() {
         },
         {
           id: 'th',
-          label: 'ไทย (แปลอัตโนมัติ)',
+          label: thaiTrackLabel,
           lang: 'th',
           isAutoTranslate: true,
           isOriginal: false,
@@ -1073,7 +1071,7 @@ async function main() {
       tracks = [
         {
           id: 'th',
-          label: 'ไทย (สร้างอัตโนมัติ)',
+          label: thaiTrackLabel,
           lang: 'th',
           isAutoTranslate: false,
           isOriginal: true,

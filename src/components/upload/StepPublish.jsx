@@ -32,11 +32,11 @@ export default function StepPublish({
   const hasRating = Boolean(contentRating);
 
   // Subtitle summary text
-  const subtitleSummary = manualSubtitleFile
+  const subtitleSummary = subtitleMode === 'manual' && manualSubtitleFile
     ? `แนบไฟล์เอง: ${manualSubtitleFile.name}`
-    : subtitleMode === 'ai'
-    ? 'ให้ AI ถอดเสียงและสร้างซับอัตโนมัติ'
-    : 'ไม่ระบุซับไตเติล';
+    : subtitleMode === 'requested-ai'
+    ? 'แปลโดย AI'
+    : 'แปลอัตโนมัติเมื่ออัปโหลดเสร็จ';
 
   const categoryLabels = {
     general: 'ทั่วไป (General)',

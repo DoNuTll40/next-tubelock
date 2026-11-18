@@ -22,7 +22,7 @@ export async function POST(request) {
       category,
       tags,
       contentRating = 'all',
-      subtitleMode = 'none', // 'manual' | 'ai' | 'none'
+      subtitleMode = 'auto', // 'manual' | 'requested-ai' | 'auto'
       manualSubtitleSrt = '',
       manualSubtitleVtt = '',
       selectedModel = '',
@@ -176,6 +176,57 @@ export async function POST(request) {
       }, { status: 503 });
     }
 
+    // Claim subtitle generation once, during initial upload completion.
+    const shouldDispatchAudioSub =
+      currentVideo.status === 'UPLOADING' && !hasManualSub &&
+      currentVideo.subtitle_status !== 'ready' &&
+      !isSubtitleWorkflowActive(currentVideo);
+
+    let dispatchedAudioSub = false;
+    if (shouldDispatchAudioSub) {
+      const requestedAi = subtitleMode === 'requested-ai';
+      const subtitleJobId = `${Date.now()}-${randomUUID()}-${requestedAi ? 'ai' : 'auto'}`;
+      try {
+        const claimed = await sql`
+          UPDATE videos
+          SET audio_status = 'extracting',
+              subtitle_status = 'extracting',
+              subtitle_job_id = ${subtitleJobId},
+              subtitle_model = 'gemini-3.5-transcribe',
+              updated_at = NOW()
+          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
+            AND subtitle_job_id IS NULL
+            AND COALESCE(audio_status, '') <> 'extracting'
+            AND COALESCE(subtitle_status, '') NOT IN ('extracting', 'processing', 'ready')
+          RETURNING id;
+        `;
+        if (claimed.length) {
+          await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
+            job_id: subtitleJobId,
+            video_id: String(videoId),
+            raw_file_name: String(finalRawFileName),
+            custom_prompt: requestedAi ? String(customPrompt || '') : '',
+          });
+          dispatchedAudioSub = true;
+          await appendWorkerLog(sql, videoId, {
+            source: 'subtitles',
+            label: 'Audio & Sub',
+            message: `🚀 ส่งคำสั่งถอดเสียงและซับอัตโนมัติ (3.5 Transcribe + 3.8 Flash) เข้าคิว GitHub Actions`,
+          });
+        }
+      } catch (subErr) {
+        await markSubtitleDispatchFailed(sql, videoId, subtitleJobId, currentVideo.audio_status)
+          .catch((error) => console.warn('[Subtitle dispatch status]', error.message));
+        console.warn('[Auto-dispatch Audio Subtitle Warning]:', subErr.message);
+        await appendWorkerLog(sql, videoId, {
+          source: 'subtitles',
+          label: 'Audio & Sub',
+          level: 'warn',
+          message: `⚠️ Auto-dispatch ซับล้มเหลว: ${subErr.message}`,
+        });
+      }
+    }
+
     // 3. Dispatch Workflow #3: HLS Multi-bitrate Transcoder (transcode.yml)
     try {
       await appendWorkerLog(sql, videoId, {
@@ -203,8 +254,8 @@ export async function POST(request) {
         message: `❌ ส่งคำสั่ง transcode.yml ไม่สำเร็จ: ${failMsg}`,
       });
       await sql`
-        UPDATE videos 
-        SET 
+        UPDATE videos
+        SET
           status = 'FAILED',
           stage_detail = 'ส่งคำสั่งเข้า GitHub Actions ไม่สำเร็จ',
           error_message = ${failMsg},
@@ -215,53 +266,6 @@ export async function POST(request) {
         { success: false, videoId, status: 'FAILED', error: failMsg },
         { status: 502 }
       );
-    }
-
-    // 4. Dispatch Workflow #1 (Audio & AI Subtitles) if subtitleMode === 'ai' and not already running/ready
-    const shouldDispatchAudioSub =
-      subtitleMode === 'ai' &&
-      currentVideo.subtitle_status !== 'ready' &&
-      !isSubtitleWorkflowActive(currentVideo);
-
-    if (shouldDispatchAudioSub) {
-      const subtitleJobId = `${Date.now()}-${randomUUID()}`;
-      try {
-        const claimed = await sql`
-          UPDATE videos
-          SET audio_status = 'extracting',
-              subtitle_status = 'processing',
-              subtitle_job_id = ${subtitleJobId},
-              subtitle_model = 'gemini-3.5-transcribe',
-              updated_at = NOW()
-          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
-            AND COALESCE(audio_status, '') <> 'extracting'
-            AND COALESCE(subtitle_status, '') NOT IN ('extracting', 'processing', 'ready')
-          RETURNING id;
-        `;
-        if (claimed.length) {
-          await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
-            job_id: subtitleJobId,
-            video_id: String(videoId),
-            raw_file_name: String(finalRawFileName),
-            custom_prompt: String(customPrompt || ''),
-          });
-          await appendWorkerLog(sql, videoId, {
-            source: 'subtitles',
-            label: 'Audio & Sub',
-            message: `🚀 ส่งคำสั่งถอดเสียงและซับอัตโนมัติ (3.5 Transcribe + 3.8 Flash) เข้าคิว GitHub Actions`,
-          });
-        }
-      } catch (subErr) {
-        await markSubtitleDispatchFailed(sql, videoId, subtitleJobId, currentVideo.audio_status)
-          .catch((error) => console.warn('[Subtitle dispatch status]', error.message));
-        console.warn('[Auto-dispatch Audio Subtitle Warning]:', subErr.message);
-        await appendWorkerLog(sql, videoId, {
-          source: 'subtitles',
-          label: 'Audio & Sub',
-          level: 'warn',
-          message: `⚠️ Auto-dispatch ซับล้มเหลว: ${subErr.message}`,
-        });
-      }
     }
 
     // 5. Dispatch Workflow #2 (Detailed Sprite Sheet Grid & AI Content Rating Verification)
@@ -323,7 +327,7 @@ export async function POST(request) {
       success: true,
       videoId,
       status: 'PROCESSING',
-      dispatchedAudioSub: shouldDispatchAudioSub,
+      dispatchedAudioSub,
       dispatchedSpriteRating: shouldDispatchSpriteRating,
       message: 'ส่งคำสั่งรัน Transcode และ AI Workflows ไปยัง GitHub Actions เรียบร้อยแล้ว',
     });

@@ -7,7 +7,7 @@ on:
       job_id:
         description: 'TubeLock subtitle job ID'
         type: string
-        default: ''
+        required: true
       video_id:
         description: 'Video record ID in Neon DB'
         required: true
@@ -30,7 +30,7 @@ on:
 
 concurrency:
   group: audio-sub-vid-${{ inputs.video_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   extract-and-subtitle:
@@ -70,6 +70,7 @@ jobs:
           ONEDRIVE_USER_ID: ${{ secrets.ONEDRIVE_USER_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          SUBTITLE_JOB_ID: ${{ inputs.job_id }}
           VIDEO_ID: ${{ inputs.video_id }}
           RAW_FILE_NAME: ${{ inputs.raw_file_name }}
           CUSTOM_PROMPT: ${{ inputs.custom_prompt }}
