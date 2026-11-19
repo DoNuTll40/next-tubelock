@@ -26,11 +26,14 @@ updated: 19 พฤศจิกายน 2026
   - เพิ่มการเรียก `preloadHlsModule()` ควบคู่กับ `prewarmVideoSourceClient()` ตอนชี้/กด และเพิ่ม click handler (`primeGlobalWatchVideo`) บนการ์ดวิดีโอทุกแบบ ให้ Global `#movie_player` เริ่มถอดรหัส manifest และบัฟเฟอร์ไฟล์ทันทีตั้งแต่จังหวะกดคลิกโดยไม่ต้องรอผล SSR ของหน้า `/watch/[id]` เสร็จก่อน
   - แยก `initStream()` ใน `GlobalPlayerContext.jsx` ให้ไม่รอผล metadata `/api/videos/[id]` บน critical path ก่อนสร้าง Blob URL และเริ่ม `hls.js`
 
-### 3. Safe Parking, Audio Recovery & Zero-Reload Protection (`VideoPlayer.jsx`, `PlayerBottomBar.jsx`, `GlobalPlayerContext.jsx`, `ResultsClient.jsx`)
+### 3. Safe Parking, Audio Recovery & Zero-Reload Protection (`VideoPlayer.jsx`, `PlayerBottomBar.jsx`, `GlobalPlayerContext.jsx`, `VideoCard.jsx`, `ResultsClient.jsx`)
 - **ควบคุมสถานะเมื่อถูกจอดนอกหน้า Watch (`isActive` + `isActiveRef`):** ปิดคีย์ลัด, ปิดเมนู/context menu, พัก `MediaSession` และป้องกันไม่ให้ `attemptAutoPlay` หรือ `onPause` auto-resume แอบเล่นต่อเบื้องหลังเมื่อออกจาก `/watch`
 - **ป้องกันการรีเซ็ต `hls.js` ตอน SSR Hydrate:** เก็บ `resolution` ใน `resolutionRef` และนำออกจาก dependency array ของ `initHls` พร้อมรีเซ็ต `lastReportedRatioRef` / `detectedRatio` ทุกครั้งที่สลับ `videoId`
 - **แก้ปัญหาเสียงหายเวลาสลับคลิป & ปุ่มเปิด/ปิดเสียงบนมือถือ/PWA:** ปรับ `attemptAutoPlay` ไม่ให้ปิดเสียง (`v.muted = true`) เมื่อเกิด `AbortError` ระหว่างเปลี่ยนคลิป, ให้ `MANIFEST_PARSED` เรียกเล่นเฉพาะเมื่อ `v.readyState >= 2`, เพิ่ม `isUserMutedRef` คืนค่าเสียงอัตโนมัติในคลิปถัดไป และเพิ่มปุ่ม `<Volume2>` / `<VolumeX>` ข้างแถบเวลาใน `PlayerBottomBar.jsx` ทั้งโหมดแนวตั้งและเต็มจอ (ติดไฮไลต์สีส้มเมื่อถูกปิดเสียง)
-- **กำจัดเสียงกระแทก/ชนกัน ("ตับ") ระหว่างสลับคลิปบน Singleton Player:** เพิ่ม `silenceAndPauseCurrentVideo()` (`v.muted = true` ก่อน `v.pause()`) และ `isSwitchingVideoRef` ใน `GlobalPlayerContext.jsx` เพื่อไม่ให้ `dockPlayerSlot` สั่งเล่นบัฟเฟอร์เก่าค้างไว้ พร้อมเพิ่ม `isTransitioningStreamRef` และ `finishStreamTransitionUnmute()` ใน `VideoPlayer.jsx` ป้องกัน `onPause` auto-resume ปลุกเสียงคลิปเก่าและรื้อ `MediaSource`/`hls.destroy()` แบบปิดเสียงก่อนคืนค่าเสียงตาม `isUserMutedRef.current` เมื่อสตรีมใหม่พร้อม
+- **กำจัดเสียงตัด/กระแทกระหว่างสลับคลิป & True In-Place Switching (`GlobalPlayerContext.jsx`, `VideoPlayer.jsx`, `VideoCard.jsx`):**
+  - ปรับ `VideoCard.jsx` ให้สลับคลิปผ่าน `primeGlobalWatchVideo(..., { inPlace: true, replace })` → `handleSelectVideo()` ทันทีเมื่อกำลังอยู่บน `/watch/` อยู่แล้ว (อัปเดต URL, `document.title` และสลับคลิปเก่ากลับเข้า `relatedVideos` โดยไม่ unmount `WatchClient`)
+  - เพิ่ม `reparentPlayerHost()` ใช้ `Element.moveBefore()` (fallback `appendChild`) เพื่อย้าย `#movie_player` แบบอะตอมิกโดยไม่ตัด pipeline ของ `<video>` และถอด `v.play()` ออกจาก `dockPlayerSlot`
+  - ถอด attribute `autoPlay` ออกจากแท็ก `<video>`, คุมระดับเสียงเป็น `v.volume = 0` + `v.muted = true` (`silenceAndPauseCurrentVideo()`) ตลอดช่วงเปลี่ยนสตรีม/รื้อ `hls.js` และเลื่อนการคืนเสียงไปยัง `restoreAudioAfterTransition()` ใน `attemptAutoPlay()` / `togglePlay()` / `onPlaying` พร้อมตัด `v.currentTime = 0` ที่ซ้ำซ้อน
 - **แก้ไข Lint Error เดิมใน `ResultsClient.jsx`:** ลบการเรียก `setLoading(true)` ซ้ำซ้อนใน `useEffect`, ย้ายฐานเวลา `Date.now()` ออกจากการ render และ escape อัญประกาศใน JSX ให้ผ่าน `eslint` ด้วย 0 errors
 
 ---

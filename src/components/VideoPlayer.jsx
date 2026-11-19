@@ -127,6 +127,7 @@ export default function VideoPlayer({
       if (video.current) {
         try {
           video.current.muted = true;
+          video.current.volume = 0;
           video.current.pause();
         } catch (_) { }
       }
@@ -303,6 +304,10 @@ export default function VideoPlayer({
   const [duration, setDuration] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
   const [volume, setVolume] = useState(defaultVolume);
+  const volumeRef = useRef(defaultVolume);
+  useEffect(() => {
+    volumeRef.current = volume;
+  }, [volume]);
   const [isMuted, setIsMuted] = useState(false);
   const isUserMutedRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -723,8 +728,11 @@ export default function VideoPlayer({
   // Initial volume setup
   useEffect(() => {
     if (video.current) {
-      video.current.volume = defaultVolume;
+      volumeRef.current = defaultVolume;
       setVolume(defaultVolume);
+      if (!isTransitioningStreamRef.current && isActiveRef.current && !isSwitchingVideoRef.current) {
+        video.current.volume = isUserMutedRef.current ? 0 : defaultVolume;
+      }
       video.current.playbackRate = defaultSpeed;
       setPlaybackRate(defaultSpeed);
     }
@@ -950,10 +958,26 @@ export default function VideoPlayer({
     };
   }, [isMobileView, mobileControlsCanHide, showControls, isPlaying, scheduleControlsHide]);
 
+  const restoreAudioAfterTransition = useCallback(() => {
+    const v = video.current;
+    if (!v) return;
+    const targetMuted = isUserMutedRef.current;
+    const targetVol = targetMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : (defaultVolume || 0.8));
+    if (isTransitioningStreamRef.current) {
+      isTransitioningStreamRef.current = false;
+    }
+    try {
+      v.muted = targetMuted;
+      v.volume = targetVol;
+    } catch (_) { }
+    setIsMuted(targetMuted);
+  }, [video, defaultVolume]);
+
   // Reliable Autoplay with YouTube-style graceful unmuted -> muted fallback
   const attemptAutoPlay = useCallback(() => {
     const v = video.current;
     if (!v || !isActiveRef.current || !defaultAutoplay || isUserPausedRef.current) return;
+    if (isSwitchingVideoRef.current || v.readyState < 2) return;
 
     // Do NOT autoplay if video is ended or approaching the end (leaves playback stopped at end screen)
     if (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current) {
@@ -961,6 +985,10 @@ export default function VideoPlayer({
     }
 
     if (!v.paused) return;
+
+    if (isTransitioningStreamRef.current) {
+      restoreAudioAfterTransition();
+    }
 
     const p = v.play();
     if (p !== undefined) {
@@ -984,7 +1012,7 @@ export default function VideoPlayer({
         }
       });
     }
-  }, [defaultAutoplay]);
+  }, [defaultAutoplay, restoreAudioAfterTransition]);
 
   // Initialize HLS or Native Player
   useEffect(() => {
@@ -992,7 +1020,10 @@ export default function VideoPlayer({
     if (!v || !src || isSwitchingVideo) return;
 
     isTransitioningStreamRef.current = true;
-    try { v.muted = true; } catch (_) { }
+    try {
+      v.muted = true;
+      v.volume = 0;
+    } catch (_) { }
 
     setHlsError(null);
     setIsBuffering(true);
@@ -1007,14 +1038,6 @@ export default function VideoPlayer({
       hlsInstanceRef.current.destroy();
       hlsInstanceRef.current = null;
     }
-
-    const finishStreamTransitionUnmute = () => {
-      if (!isTransitioningStreamRef.current) return;
-      isTransitioningStreamRef.current = false;
-      const targetMuted = isUserMutedRef.current;
-      try { v.muted = targetMuted; } catch (_) { }
-      setIsMuted(targetMuted);
-    };
 
     const isHls = src.startsWith('blob:') || src.includes('.m3u8') || src.includes('playlist');
     let isMounted = true;
@@ -1112,7 +1135,7 @@ export default function VideoPlayer({
             isEndedRef.current = false;
             setIsEnded(false);
             const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
-            if (v) {
+            if (startSec > 0 && v) {
               try {
                 v.currentTime = startSec;
               } catch (_) { }
@@ -1172,7 +1195,6 @@ export default function VideoPlayer({
             }
 
             hls.startLoad(targetInitialTime > 0 ? targetInitialTime : -1);
-            finishStreamTransitionUnmute();
             if (v && v.readyState >= 2) {
               attemptAutoPlay();
             }
@@ -1200,7 +1222,6 @@ export default function VideoPlayer({
           });
 
           hls.on(Hls.Events.FRAG_BUFFERED, () => {
-            finishStreamTransitionUnmute();
             checkAndUpdateRatio();
             attemptAutoPlay();
           });
@@ -1258,7 +1279,6 @@ export default function VideoPlayer({
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
           // Native Safari Apple hardware acceleration
           v.src = src;
-          finishStreamTransitionUnmute();
           if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
             initialSeekDoneRef.current = true;
             const applySeek = () => {
@@ -1277,7 +1297,6 @@ export default function VideoPlayer({
       } else {
         // Direct MP4 - Clean Native Playback
         v.src = src;
-        finishStreamTransitionUnmute();
         if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
           initialSeekDoneRef.current = true;
           const applySeek = () => {
@@ -1293,6 +1312,7 @@ export default function VideoPlayer({
           }
         }
         if (isActiveRef.current && defaultAutoplay && !isUserPausedRef.current) {
+          restoreAudioAfterTransition();
           v.play().then(() => setIsPlaying(true)).catch((err) => {
             if (err?.name === 'NotAllowedError') {
               v.muted = true;
@@ -1346,6 +1366,7 @@ export default function VideoPlayer({
       isEndedRef.current = false;
       setIsEnded(false);
       isUserPausedRef.current = false;
+      restoreAudioAfterTransition();
       if (fadeBlackOverlayRef.current) {
         fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
         fadeBlackOverlayRef.current.style.opacity = '0';
@@ -1361,6 +1382,7 @@ export default function VideoPlayer({
 
     if (video.current.paused) {
       isUserPausedRef.current = false;
+      restoreAudioAfterTransition();
       video.current.play()
         .then(() => {
           setIsPlaying(true);
@@ -1372,13 +1394,15 @@ export default function VideoPlayer({
       setIsPlaying(false);
     }
     resetControlsTimer();
-  }, [video, isEnded, resetControlsTimer]);
+  }, [video, isEnded, resetControlsTimer, restoreAudioAfterTransition]);
 
   // Volume Handlers
   const handleVolumeChange = (e) => {
     const val = parseFloat(e.target.value);
+    volumeRef.current = val;
     setVolume(val);
     isUserMutedRef.current = val === 0;
+    isTransitioningStreamRef.current = false;
     if (video.current) {
       video.current.volume = val;
       video.current.muted = val === 0;
@@ -1391,13 +1415,16 @@ export default function VideoPlayer({
     if (!video.current) return;
     const nextMuted = !isMuted;
     isUserMutedRef.current = nextMuted;
+    isTransitioningStreamRef.current = false;
+    const targetVol = nextMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : 0.5);
+    if (!nextMuted && volume === 0) {
+      volumeRef.current = 0.5;
+      setVolume(0.5);
+    }
+    video.current.volume = targetVol;
     video.current.muted = nextMuted;
     setIsMuted(nextMuted);
-    if (!nextMuted && volume === 0) {
-      setVolume(0.5);
-      video.current.volume = 0.5;
-    }
-    showToast(nextMuted ? 'ปิดเสียง' : `ระดับเสียง: ${Math.round((nextMuted ? 0 : volume) * 100)}%`);
+    showToast(nextMuted ? 'ปิดเสียง' : `ระดับเสียง: ${Math.round(targetVol * 100)}%`);
     resetControlsTimer();
   };
 
@@ -2093,13 +2120,15 @@ export default function VideoPlayer({
         setContextMenu(null);
       });
       if (v && (typeof document === 'undefined' || document.pictureInPictureElement !== v)) {
+        isTransitioningStreamRef.current = true;
         try {
           v.muted = true;
+          v.volume = 0;
           if (!v.paused) v.pause();
         } catch (_) { }
       }
     } else if (v && src && !isSwitchingVideo && !isSwitchingVideoRef.current && !isTransitioningStreamRef.current) {
-      try { v.muted = isUserMutedRef.current; } catch (_) { }
+      restoreAudioAfterTransition();
       if (v.readyState >= 2) {
         attemptAutoPlay();
       }
@@ -2107,7 +2136,7 @@ export default function VideoPlayer({
     return () => {
       cancelled = true;
     };
-  }, [isActive, src, isSwitchingVideo, attemptAutoPlay]);
+  }, [isActive, src, isSwitchingVideo, attemptAutoPlay, restoreAudioAfterTransition]);
 
   // Keyboard Shortcuts (Supports all keyboard languages via physical e.code)
   useEffect(() => {
@@ -2425,7 +2454,6 @@ export default function VideoPlayer({
         ref={video}
         poster={poster}
         crossOrigin="anonymous"
-        autoPlay={defaultAutoplay}
         loop={isLooping}
         playsInline
         webkit-playsinline="true"
@@ -2438,6 +2466,9 @@ export default function VideoPlayer({
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => {
           if (isSwitchingVideo || isSwitchingVideoRef.current) return;
+          if (isTransitioningStreamRef.current) {
+            restoreAudioAfterTransition();
+          }
           setIsBuffering(false);
           setIsPlaying(true);
           setShowPoster(false);
@@ -2642,9 +2673,11 @@ export default function VideoPlayer({
           const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
           if (!initialSeekDoneRef.current) {
             initialSeekDoneRef.current = true;
-            try {
-              e.target.currentTime = startSec;
-            } catch (_) { }
+            if (startSec > 0) {
+              try {
+                e.target.currentTime = startSec;
+              } catch (_) { }
+            }
           }
           lastReportedSecondRef.current = Math.floor(startSec);
 

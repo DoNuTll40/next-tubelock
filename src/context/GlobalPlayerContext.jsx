@@ -57,14 +57,28 @@ function getSingletonPlayerHost() {
 
 const primeListeners = new Set();
 
+function reparentPlayerHost(targetParent, hostEl) {
+  if (!targetParent || !hostEl || hostEl.parentNode === targetParent) return;
+  if (typeof targetParent.moveBefore === 'function' && hostEl.isConnected && targetParent.isConnected) {
+    try {
+      targetParent.moveBefore(hostEl, null);
+      return;
+    } catch (_) { }
+  }
+  targetParent.appendChild(hostEl);
+}
+
 /**
  * Trigger instant Player-First stream resolution & buffering at click time (t = 0ms)
  * before Next.js App Router finishes navigating / SSR-rendering /watch/[id].
  */
-export function primeGlobalWatchVideo(videoData, { startTime = 0, versionKey = null } = {}) {
+export function primeGlobalWatchVideo(
+  videoData,
+  { startTime = 0, versionKey = null, inPlace = false, replace = false } = {}
+) {
   if (!videoData) return;
   for (const listener of primeListeners) {
-    listener(videoData, { startTime, versionKey });
+    listener(videoData, { startTime, versionKey, inPlace, replace });
   }
 }
 
@@ -161,6 +175,11 @@ export function GlobalPlayerProvider({ children }) {
     isSwitchingVideoRef.current = isSwitchingVideo;
   }, [isSwitchingVideo]);
 
+  const currentVideoRef = useRef(video);
+  useEffect(() => {
+    currentVideoRef.current = video;
+  }, [video]);
+
   // Ensure singleton host is parked offscreen when no /watch slot owns it
   useLayoutEffect(() => {
     if (
@@ -169,7 +188,7 @@ export function GlobalPlayerProvider({ children }) {
       !activeSlotRef.current &&
       hostEl.parentNode !== parkingRef.current
     ) {
-      parkingRef.current.appendChild(hostEl);
+      reparentPlayerHost(parkingRef.current, hostEl);
     }
   }, [hostEl]);
 
@@ -197,11 +216,12 @@ export function GlobalPlayerProvider({ children }) {
     if (v && typeof document !== 'undefined' && document.pictureInPictureElement !== v) {
       try {
         v.muted = true;
+        v.volume = 0;
         if (!v.paused) v.pause();
       } catch (_) { }
     }
     if (hostEl && parkingRef.current && hostEl.parentNode !== parkingRef.current) {
-      parkingRef.current.appendChild(hostEl);
+      reparentPlayerHost(parkingRef.current, hostEl);
     }
 
     return () => { void t; };
@@ -212,22 +232,7 @@ export function GlobalPlayerProvider({ children }) {
       if (!slotEl) return;
       activeSlotRef.current = slotEl;
       setIsDockedInWatch(true);
-
-      if (hostEl && hostEl.parentNode !== slotEl) {
-        const v = videoRef.current;
-        const wasPlaying = Boolean(v && !v.paused && !v.ended);
-        slotEl.appendChild(hostEl);
-        if (
-          v &&
-          !isSwitchingVideoRef.current &&
-          Boolean(streamUrlRef.current) &&
-          (wasPlaying || (playerConfigRef.current?.autoplay ?? true)) &&
-          v.paused &&
-          v.readyState >= 2
-        ) {
-          v.play().catch(() => { });
-        }
-      }
+      reparentPlayerHost(slotEl, hostEl);
     },
     [hostEl]
   );
@@ -237,6 +242,7 @@ export function GlobalPlayerProvider({ children }) {
     if (!v) return;
     try {
       v.muted = true;
+      v.volume = 0;
       if (!v.paused) {
         v.pause();
       }
@@ -259,12 +265,13 @@ export function GlobalPlayerProvider({ children }) {
         if (v && typeof document !== 'undefined' && document.pictureInPictureElement !== v) {
           try {
             v.muted = true;
+            v.volume = 0;
             if (!v.paused) v.pause();
           } catch (_) { }
         }
       }
       if (hostEl && parkingRef.current && hostEl.parentNode !== parkingRef.current) {
-        parkingRef.current.appendChild(hostEl);
+        reparentPlayerHost(parkingRef.current, hostEl);
       }
     },
     [hostEl]
@@ -277,69 +284,149 @@ export function GlobalPlayerProvider({ children }) {
     } catch (_) { }
   }, []);
 
-  const handlePrimeVideo = useCallback((newVideo, { startTime = 0, versionKey = null } = {}) => {
-    const nextId =
-      newVideo?.id && newVideo.id !== 'undefined'
-        ? newVideo.id
-        : newVideo?.video_id && newVideo.video_id !== 'undefined'
-          ? newVideo.video_id
-          : null;
-    if (!nextId) return;
-
-    const normalizedVersion = versionKey ? String(versionKey) : null;
-    const nextStart = Number(startTime) || 0;
-    primedInfoRef.current = {
-      id: String(nextId),
-      versionKey: normalizedVersion,
-      at: Date.now(),
-    };
-
-    const nextConfig = readStoredPlayerConfig();
-    if (nextConfig) {
-      playerConfigRef.current = nextConfig;
-      setPlayerConfig(nextConfig);
-    }
-
-    // Resume instantaneously if exact same video & version are already loaded cleanly
-    if (
-      String(selectionIdRef.current) === String(nextId) &&
-      (activeVersionKeyRef.current || null) === normalizedVersion &&
-      streamUrlRef.current &&
-      !errorRef.current
-    ) {
-      const v = videoRef.current;
-      if (v && (v.ended || Math.abs((v.currentTime || 0) - nextStart) > 2)) {
-        try { v.currentTime = nextStart; } catch (_) { }
+  // YouTube In-Place Instant Video Switcher (keeps #movie_player, #player-primary-container & Fullscreen 100% intact)
+  const handleSelectVideo = useCallback(
+    (newVideo, resumeTime = 0, { replace = false } = {}) => {
+      if (
+        !newVideo ||
+        !newVideo.id ||
+        newVideo.id === 'undefined' ||
+        String(newVideo.id) === String(selectionIdRef.current)
+      ) {
+        return;
       }
+
+      const safeId = newVideo.id && newVideo.id !== 'undefined' ? newVideo.id : '';
+      const videoSlug =
+        encodeVideoSlug(safeId, newVideo.category) || (safeId ? String(safeId) : '');
+      const newUrl = videoSlug ? `/watch/${videoSlug}` : '/';
+
+      if (typeof window !== 'undefined') {
+        if (replace) {
+          window.history.replaceState(null, '', newUrl);
+        } else {
+          window.history.pushState(null, '', newUrl);
+        }
+        document.title = newVideo.title ? `${newVideo.title} - TubeLock` : 'TubeLock';
+        if (window.scrollY > 120) {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }
+
+      silenceAndPauseCurrentVideo();
+
+      const prevVideo = currentVideoRef.current;
+      primedInfoRef.current = null;
+      isSwitchingVideoRef.current = Boolean(streamUrlRef.current);
+      selectionIdRef.current = newVideo.id;
+      activeVersionKeyRef.current = null;
+      errorRef.current = null;
+      latestSourceTypeRef.current = newVideo?.source_type;
+      currentVideoRef.current = newVideo;
+
+      setError(null);
+      setStoryboard(null);
+      setDetectedRatio(null);
+      setActiveVersionKey(null);
+      setIsSwitchingVersion(false);
+      setIsSwitchingVideo(Boolean(streamUrlRef.current));
+      setSelection({ id: newVideo.id, startTime: Number(resumeTime) || 0 });
+      setVideo(newVideo);
+      setRelatedVideos((prevList) => {
+        const filtered = (Array.isArray(prevList) ? prevList : []).filter(
+          (item) => String(item.id) !== String(newVideo.id)
+        );
+        if (
+          prevVideo?.id &&
+          String(prevVideo.id) !== String(newVideo.id) &&
+          !filtered.some((item) => String(item.id) === String(prevVideo.id))
+        ) {
+          const {
+            description: _d,
+            subtitle_srt: _srt,
+            subtitle_vtt: _vtt,
+            subtitle_tracks: _tracks,
+            versions: _vers,
+            ...compactPrev
+          } = prevVideo;
+          return [compactPrev, ...filtered].slice(0, 16);
+        }
+        return filtered;
+      });
+      setStreamAttemptSeq((s) => s + 1);
+    },
+    [silenceAndPauseCurrentVideo]
+  );
+
+  const handlePrimeVideo = useCallback(
+    (newVideo, { startTime = 0, versionKey = null, inPlace = false, replace = false } = {}) => {
+      if (inPlace) {
+        handleSelectVideo(newVideo, startTime, { replace });
+        return;
+      }
+
+      const nextId =
+        newVideo?.id && newVideo.id !== 'undefined'
+          ? newVideo.id
+          : newVideo?.video_id && newVideo.video_id !== 'undefined'
+            ? newVideo.video_id
+            : null;
+      if (!nextId) return;
+
+      const normalizedVersion = versionKey ? String(versionKey) : null;
+      const nextStart = Number(startTime) || 0;
+      primedInfoRef.current = {
+        id: String(nextId),
+        versionKey: normalizedVersion,
+        at: Date.now(),
+      };
+
+      const nextConfig = readStoredPlayerConfig();
+      if (nextConfig) {
+        playerConfigRef.current = nextConfig;
+        setPlayerConfig(nextConfig);
+      }
+
+      // Resume instantaneously if exact same video & version are already loaded cleanly
+      if (
+        String(selectionIdRef.current) === String(nextId) &&
+        (activeVersionKeyRef.current || null) === normalizedVersion &&
+        streamUrlRef.current &&
+        !errorRef.current
+      ) {
+        const v = videoRef.current;
+        if (v && (v.ended || Math.abs((v.currentTime || 0) - nextStart) > 2)) {
+          try { v.currentTime = nextStart; } catch (_) { }
+        }
+        setSelection({ id: nextId, startTime: nextStart });
+        setVideo((prev) => ({ ...(prev || {}), ...newVideo, id: nextId }));
+        isSwitchingVideoRef.current = false;
+        setIsSwitchingVideo(false);
+        return;
+      }
+
+      silenceAndPauseCurrentVideo();
+
+      const hasPreviousStream = Boolean(streamUrlRef.current);
+      isSwitchingVideoRef.current = hasPreviousStream;
+      selectionIdRef.current = nextId;
+      activeVersionKeyRef.current = normalizedVersion;
+      errorRef.current = null;
+      latestSourceTypeRef.current = newVideo?.source_type;
+      currentVideoRef.current = { ...newVideo, id: nextId };
+
+      setError(null);
+      setStoryboard(null);
+      setDetectedRatio(null);
+      setIsSwitchingVersion(false);
+      setIsSwitchingVideo(hasPreviousStream);
+      setActiveVersionKey(normalizedVersion);
       setSelection({ id: nextId, startTime: nextStart });
-      setVideo((prev) => ({ ...(prev || {}), ...newVideo, id: nextId }));
-      isSwitchingVideoRef.current = false;
-      setIsSwitchingVideo(false);
-      if (v && v.readyState >= 2) {
-        v.play().catch(() => { });
-      }
-      return;
-    }
-
-    silenceAndPauseCurrentVideo();
-
-    const hasPreviousStream = Boolean(streamUrlRef.current);
-    isSwitchingVideoRef.current = hasPreviousStream;
-    selectionIdRef.current = nextId;
-    activeVersionKeyRef.current = normalizedVersion;
-    errorRef.current = null;
-    latestSourceTypeRef.current = newVideo?.source_type;
-
-    setError(null);
-    setStoryboard(null);
-    setDetectedRatio(null);
-    setIsSwitchingVersion(false);
-    setIsSwitchingVideo(hasPreviousStream);
-    setActiveVersionKey(normalizedVersion);
-    setSelection({ id: nextId, startTime: nextStart });
-    setVideo({ ...newVideo, id: nextId });
-    setStreamAttemptSeq((s) => s + 1);
-  }, [silenceAndPauseCurrentVideo]);
+      setVideo({ ...newVideo, id: nextId });
+      setStreamAttemptSeq((s) => s + 1);
+    },
+    [handleSelectVideo, silenceAndPauseCurrentVideo]
+  );
 
   useEffect(() => {
     primeListeners.add(handlePrimeVideo);
@@ -501,42 +588,6 @@ export function GlobalPlayerProvider({ children }) {
     if (video?.category === 'shorts') return 9 / 16;
     return 16 / 9;
   }, [detectedRatio, videoResolution, videoWidth, videoHeight, video?.category]);
-
-  // YouTube In-Place Instant Video Switcher (keeps #movie_player & Fullscreen 100% active)
-  const handleSelectVideo = useCallback(
-    (newVideo, resumeTime = 0) => {
-      if (!newVideo || !newVideo.id || newVideo.id === 'undefined' || newVideo.id === id) return;
-      const safeId = newVideo.id && newVideo.id !== 'undefined' ? newVideo.id : '';
-      const videoSlug =
-        encodeVideoSlug(safeId, newVideo.category) || (safeId ? String(safeId) : '');
-      const newUrl = videoSlug ? `/watch/${videoSlug}` : '/';
-
-      if (typeof window !== 'undefined') {
-        window.history.pushState(null, '', newUrl);
-      }
-
-      silenceAndPauseCurrentVideo();
-
-      primedInfoRef.current = null;
-      isSwitchingVideoRef.current = true;
-      selectionIdRef.current = newVideo.id;
-      activeVersionKeyRef.current = null;
-      errorRef.current = null;
-      latestSourceTypeRef.current = newVideo?.source_type;
-
-      setError(null);
-      setStoryboard(null);
-      setDetectedRatio(null);
-      setActiveVersionKey(null);
-      setIsSwitchingVersion(false);
-      setIsSwitchingVideo(true);
-      setSelection({ id: newVideo.id, startTime: resumeTime });
-      setVideo(newVideo);
-      setRelatedVideos((prev) => prev.filter((item) => item.id !== newVideo.id));
-      setStreamAttemptSeq((s) => s + 1);
-    },
-    [id, silenceAndPauseCurrentVideo]
-  );
 
   // Version Switcher (keeps #movie_player & Fullscreen intact + preserves current timestamp)
   const handleSelectVersion = useCallback(

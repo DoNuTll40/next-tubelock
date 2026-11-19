@@ -117,7 +117,17 @@ function VideoCard({
     ) {
       handlePreWarmImmediate();
       if (typeof watchUrl === 'string' && watchUrl.startsWith('/watch/') && safeId) {
-        primeGlobalWatchVideo({ ...video, id: safeId }, { startTime: resumeTime });
+        const isAlreadyOnWatchPage =
+          typeof window !== 'undefined' && window.location.pathname.startsWith('/watch/');
+        if (isAlreadyOnWatchPage) {
+          e.preventDefault();
+          primeGlobalWatchVideo(
+            { ...video, id: safeId },
+            { startTime: resumeTime, inPlace: true, replace }
+          );
+        } else {
+          primeGlobalWatchVideo({ ...video, id: safeId }, { startTime: resumeTime });
+        }
       }
     }
   };
