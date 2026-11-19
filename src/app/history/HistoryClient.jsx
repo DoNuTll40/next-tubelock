@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, getVideoResumeTime } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
+import { prewarmVideoSourceClient, preloadHlsModule } from '@/lib/playbackResolver';
+import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
 
 // Helper: Group items by Date (YouTube Standard: วันนี้, เมื่อวานนี้, สัปดาห์นี้, เดือนนี้, ก่อนหน้านี้)
 function groupHistoryByDate(items) {
@@ -94,6 +96,32 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, dur);
   const watchUrl = videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/';
 
+  const handlePrewarmItem = () => {
+    if (!safeId) return;
+    prewarmVideoSourceClient(safeId, { immediate: true });
+    if (item.source_type !== 'mp4') {
+      preloadHlsModule().catch(() => {});
+    }
+  };
+
+  const handlePrimeItemClick = (e) => {
+    if (
+      !safeId ||
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
+    handlePrewarmItem();
+    if (watchUrl.startsWith('/watch/')) {
+      primeGlobalWatchVideo({ ...item, id: safeId }, { startTime: resumeTime });
+    }
+  };
+
   const handleImageLoad = (e) => {
     const color = extractDominantColor(e.target);
     if (color) setDominantColor(color);
@@ -123,11 +151,14 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   return (
     <div
       className="group relative flex flex-row items-start gap-3 sm:gap-4 p-2 sm:p-2.5 rounded-2xl yt-card-hover transition-colors cursor-pointer select-none"
+      onMouseEnter={handlePrewarmItem}
+      onMouseDown={handlePrewarmItem}
       style={cardHoverStyle}
     >
       {/* Thumbnail (16:9) with Watched Progress Bar */}
       <Link
         href={watchUrl}
+        onClick={handlePrimeItemClick}
         className="relative aspect-video w-[140px] sm:w-[200px] md:w-[240px] shrink-0 rounded-xl overflow-hidden bg-zinc-900 shadow-2xs group-hover:opacity-95 transition"
       >
         {item.thumbnail_url ? (
@@ -173,6 +204,7 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
         {/* Title */}
         <Link
           href={watchUrl}
+          onClick={handlePrimeItemClick}
           className="font-medium text-xs sm:text-sm md:text-[15px] text-[#0F0F0F] dark:text-[#F1F1F1] group-hover:text-black dark:group-hover:text-white line-clamp-2 leading-snug transition-colors"
           title={item.title}
         >

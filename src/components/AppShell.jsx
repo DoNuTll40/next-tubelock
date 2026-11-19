@@ -6,6 +6,7 @@ import Sidebar from '@/components/Sidebar';
 import SidebarDrawer from '@/components/SidebarDrawer';
 import BottomNav from '@/components/BottomNav';
 import { SessionProvider } from '@/context/SessionContext';
+import { GlobalPlayerProvider } from '@/context/GlobalPlayerContext';
 import { useViewMode } from '@/context/ViewModeContext';
 import { usePathname } from 'next/navigation';
 
@@ -53,5 +54,9 @@ export default function AppShell({ session, children }) {
     </div>
   );
 
-  return <SessionProvider session={session}>{shellContent}</SessionProvider>;
+  return (
+    <SessionProvider session={session}>
+      <GlobalPlayerProvider>{shellContent}</GlobalPlayerProvider>
+    </SessionProvider>
+  );
 }

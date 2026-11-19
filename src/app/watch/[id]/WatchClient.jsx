@@ -1,27 +1,33 @@
 'use client';
 
-import { useCallback, useEffect, useState, useRef, useMemo, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import VideoPlayer from '@/components/VideoPlayer';
 import VideoCard from '@/components/VideoCard';
-import { usePosterReveal } from '@/lib/usePosterReveal';
-import { usePosterPreference } from '@/lib/usePosterPreference';
-import AmbientLight from '@/components/player/AmbientLight';
 import DescriptionBox from '@/components/watch/DescriptionBox';
 import {
-  Share2, ThumbsUp, ThumbsDown,
-  Film, Bookmark, UploadCloud,
-  AlertCircle, ArrowLeft
+  DESKTOP_PLAYER_MAX_HEIGHT,
+  useGlobalPlayer,
+} from '@/context/GlobalPlayerContext';
+import {
+  Share2,
+  ThumbsUp,
+  ThumbsDown,
+  Film,
+  Bookmark,
+  UploadCloud,
+  AlertCircle,
+  ArrowLeft,
 } from 'lucide-react';
-import { resolveClientPlaybackSource, fetchVideoSourceClient, resolveStoryboard, preloadHlsModule } from '@/lib/playbackResolver';
-import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
-
-// ============================================================================
-// 🎛️ [Video Player Desktop Height Settings]
-// ============================================================================
-const DESKTOP_HEADER_OFFSET_PX = 105;
-const DESKTOP_PLAYER_MAX_HEIGHT = `calc(100vh - ${DESKTOP_HEADER_OFFSET_PX}px)`;
+import { formatResolutionBadge } from '@/lib/videoUtils';
 
 function formatDuration(seconds) {
   if (!seconds || isNaN(seconds)) return '0:00';
@@ -53,17 +59,63 @@ export default function WatchClient({
   initialShowAdultPosters = false,
   initialSource = null,
 }) {
-  const initialSourceRef = useRef(initialSource);
-  const initialVideoIdRef = useRef(initialVideo?.id);
-  const initialVersionKeyRef = useRef(
-    initialVideo?.active_version?.versionKey ||
-    (initialVideo?.active_version?.id ? String(initialVideo.active_version.id) : null)
-  );
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlT = searchParams?.get('t');
-  const [selection, setSelection] = useState(() => ({ id: initialVideo?.id, startTime: initialTime }));
-  const { id, startTime } = selection;
+  const urlV = searchParams?.get('v')?.trim() || null;
+
+  const {
+    video: globalVideo,
+    error,
+    videoRatio: globalVideoRatio,
+    relatedVideos: globalRelated,
+    isDockedInWatch,
+    handleSeek,
+    dockPlayerSlot,
+    undockPlayerSlot,
+    hydrateWatchPage,
+  } = useGlobalPlayer();
+
+  // Compute SSR fallback aspect ratio for initial pre-dock frame
+  const initialRatio = useMemo(() => {
+    const res = initialVideo?.active_version?.resolution || initialVideo?.resolution;
+    if (typeof res === 'string' && res.includes('x')) {
+      const [w, h] = res.split('x').map(parseFloat);
+      if (w > 0 && h > 0) return w / h;
+    }
+    if (initialVideo?.width > 0 && initialVideo?.height > 0) {
+      return initialVideo.width / initialVideo.height;
+    }
+    if (initialVideo?.category === 'shorts') return 9 / 16;
+    return 16 / 9;
+  }, [initialVideo]);
+
+  const video = isDockedInWatch ? (globalVideo || initialVideo) : initialVideo;
+  const relatedVideos = isDockedInWatch ? globalRelated : initialRelated;
+  const videoRatio = isDockedInWatch ? globalVideoRatio : initialRatio;
+
+  const [copied, setCopied] = useState(false);
+  const [liked, setLiked] = useState(false);
+  const [disliked, setDisliked] = useState(false);
+  const [likeCount, setLikeCount] = useState(652);
+  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [activeFilter, setActiveFilter] = useState('all');
+  const [avatarError, setAvatarError] = useState(false);
+  const [prevVideoId, setPrevVideoId] = useState(initialVideo?.id ?? null);
+
+  if ((video?.id ?? null) !== prevVideoId) {
+    setPrevVideoId(video?.id ?? null);
+    setAvatarError(false);
+  }
+
+  const playerWrapperRef = useRef(null);
+  const [playerHeight, setPlayerHeight] = useState(0);
+  const isDesktopLg = useSyncExternalStore(
+    subscribeDesktopLg,
+    getDesktopLgSnapshot,
+    getDesktopLgServerSnapshot
+  );
 
   // Handle browser Back / Forward buttons
   useEffect(() => {
@@ -83,127 +135,35 @@ export default function WatchClient({
     }
   }, [urlT]);
 
-  // SSR Initialized State — Zero Waiting, Zero Mock Skeletons!
-  const [video, setVideo] = useState(initialVideo);
-  const [activeVersionKey, setActiveVersionKey] = useState(() => (
-    initialVideo?.active_version?.versionKey ||
-    (initialVideo?.active_version?.id ? String(initialVideo.active_version.id) : null)
-  ));
-  const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
+  // Sync SSR watch page payload to GlobalPlayerContext (reuses already-primed stream if matched!)
+  useLayoutEffect(() => {
+    hydrateWatchPage({
+      initialVideo,
+      initialRelated,
+      initialTime,
+      initialShowAdultPosters,
+      initialSource,
+      requestedVersion: urlV,
+    });
+  }, [
+    initialVideo,
+    initialRelated,
+    initialTime,
+    initialShowAdultPosters,
+    initialSource,
+    urlV,
+    hydrateWatchPage,
+  ]);
 
-  const rawVersions = video?.versions;
-  const fallbackActiveVersion = video?.active_version;
-
-  const playableVersions = useMemo(() => {
-    const raw = Array.isArray(rawVersions) ? rawVersions : [];
-    return raw.filter((v) => !v?.status || ['READY', 'COMPLETED'].includes(String(v.status).toUpperCase()));
-  }, [rawVersions]);
-
-  const activeVersion = useMemo(() => {
-    if (playableVersions.length > 0) {
-      if (activeVersionKey) {
-        const matched = playableVersions.find(
-          (v) => v.versionKey === activeVersionKey || String(v.id) === String(activeVersionKey)
-        );
-        if (matched) return matched;
-      }
-      if (fallbackActiveVersion) {
-        const matched = playableVersions.find(
-          (v) => v.id === fallbackActiveVersion.id || v.versionKey === fallbackActiveVersion.versionKey
-        );
-        if (matched) return matched;
-      }
-      return playableVersions.find((v) => v.isDefault) || playableVersions[0];
-    }
-    return fallbackActiveVersion || null;
-  }, [playableVersions, activeVersionKey, fallbackActiveVersion]);
-
-  const isMusic = isMusicVideo(video);
-  const matureVideo = isMatureVideo(video);
-  const showAdultPoster = usePosterPreference(matureVideo, initialShowAdultPosters);
-  const { poster: revealedPoster } = usePosterReveal(matureVideo ? video?.id : null, !showAdultPoster);
-  const watchPoster = matureVideo
-    ? (showAdultPoster
-        ? `/api/videos/${video.id}/poster${activeVersionKey ? `?v=${encodeURIComponent(activeVersionKey)}` : ''}`
-        : revealedPoster?.url || RESTRICTED_POSTER)
-    : activeVersion?.thumbnailUrl || video?.thumbnail_url || (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
-  const [relatedVideos, setRelatedVideos] = useState(initialRelated);
-
-  const [playerConfig, setPlayerConfig] = useState(() => {
-    if (typeof window === 'undefined') return null;
-    try {
-      const saved = localStorage.getItem('tubelock_settings');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-
-  const [streamUrl, setStreamUrl] = useState('');
-  const [isSwitchingVideo, setIsSwitchingVideo] = useState(false);
-  const [storyboard, setStoryboard] = useState(null);
-  const [error, setError] = useState(null);
-  const [copied, setCopied] = useState(false);
-  const [liked, setLiked] = useState(false);
-  const [disliked, setDisliked] = useState(false);
-  const [likeCount, setLikeCount] = useState(652);
-  const [isSubscribed, setIsSubscribed] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
-  const [activeFilter, setActiveFilter] = useState('all');
-  const [detectedRatio, setDetectedRatio] = useState(null);
-  const [avatarError, setAvatarError] = useState(false);
-  const [ambientMode, setAmbientMode] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    try {
-      const saved = localStorage.getItem('tubelock_ambient_mode');
-      return saved !== null ? JSON.parse(saved) : true;
-    } catch {
-      return true;
-    }
-  });
-
-  const handleSetAmbientMode = useCallback((val) => {
-    setAmbientMode(val);
-    try {
-      localStorage.setItem('tubelock_ambient_mode', JSON.stringify(val));
-    } catch (_) { }
-  }, []);
-
-  const videoRef = useRef(null);
-  const playerWrapperRef = useRef(null);
-  const [playerHeight, setPlayerHeight] = useState(0);
-  const activeBlobUrlsRef = useRef([]);
-  const partialSegmentMapRef = useRef({});
-  const loadedDetailIdRef = useRef(initialVideo?.id ?? null);
-  const latestSourceTypeRef = useRef(video?.source_type);
-  const isDesktopLg = useSyncExternalStore(
-    subscribeDesktopLg,
-    getDesktopLgSnapshot,
-    getDesktopLgServerSnapshot
-  );
-
-  useEffect(() => {
-    latestSourceTypeRef.current = video?.source_type;
-  }, [video?.source_type]);
-
-  // Compute effective video aspect ratio
-  const videoResolution = activeVersion?.resolution || video?.resolution;
-  const videoWidth = video?.width;
-  const videoHeight = video?.height;
-
-  const videoRatio = useMemo(() => {
-    if (detectedRatio && detectedRatio > 0) return detectedRatio;
-    if (typeof videoResolution === 'string' && videoResolution.includes('x')) {
-      const parts = videoResolution.split('x');
-      const w = parseFloat(parts[0]);
-      const h = parseFloat(parts[1]);
-      if (w > 0 && h > 0) return w / h;
-    } else if (videoWidth && videoHeight) {
-      return videoWidth / videoHeight;
-    }
-    if (video?.category === 'shorts') return 9 / 16;
-    return 16 / 9;
-  }, [detectedRatio, videoResolution, videoWidth, videoHeight, video?.category]);
+  // Dock persistent singleton #movie_player into #player-primary-container via DOM Reparenting
+  useLayoutEffect(() => {
+    const slotEl = playerWrapperRef.current;
+    if (!slotEl) return undefined;
+    dockPlayerSlot(slotEl);
+    return () => {
+      undockPlayerSlot(slotEl);
+    };
+  }, [dockPlayerSlot, undockPlayerSlot]);
 
   // Measure player height for mobile sticky chips (< 768px only; tablet/desktop md+ uses static flow)
   useEffect(() => {
@@ -224,303 +184,7 @@ export default function WatchClient({
     const ro = new ResizeObserver(updateHeight);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [streamUrl, videoRatio]);
-
-  // Update initial props if server props change (during soft navigation)
-  const [prevInitialProps, setPrevInitialProps] = useState(() => ({
-    initialVideo,
-    initialRelated,
-    initialTime,
-  }));
-
-  if (
-    prevInitialProps.initialVideo !== initialVideo ||
-    prevInitialProps.initialRelated !== initialRelated ||
-    prevInitialProps.initialTime !== initialTime
-  ) {
-    setPrevInitialProps({ initialVideo, initialRelated, initialTime });
-    if (initialVideo) {
-      setSelection({ id: initialVideo.id, startTime: initialTime });
-      setVideo(initialVideo);
-      setActiveVersionKey(
-        initialVideo.active_version?.versionKey ||
-        (initialVideo.active_version?.id ? String(initialVideo.active_version.id) : null)
-      );
-      setDetectedRatio(null);
-      setAvatarError(false);
-    }
-    if (initialRelated && initialRelated.length > 0) {
-      setRelatedVideos(initialRelated);
-    }
-  }
-
-  useEffect(() => {
-    if (initialVideo?.id) {
-      loadedDetailIdRef.current = initialVideo.id;
-    }
-  }, [initialVideo?.id]);
-
-  // ⚡ YouTube In-Place Instant Video Switcher (Keeps DOM intact -> Fullscreen stays 100% active!)
-  const handleSelectVideo = (newVideo, resumeTime = 0) => {
-    if (!newVideo || !newVideo.id || newVideo.id === 'undefined' || newVideo.id === id) return;
-    const safeId = newVideo.id && newVideo.id !== 'undefined' ? newVideo.id : '';
-    const videoSlug = encodeVideoSlug(safeId, newVideo.category) || (safeId ? String(safeId) : '');
-    const newUrl = videoSlug ? `/watch/${videoSlug}` : '/';
-
-    if (typeof window !== 'undefined') {
-      window.history.pushState(null, '', newUrl);
-    }
-
-    setDetectedRatio(null);
-    setActiveVersionKey(null);
-    setIsSwitchingVideo(true);
-    setSelection({ id: newVideo.id, startTime: resumeTime });
-    setVideo(newVideo);
-    setRelatedVideos((prev) => prev.filter((item) => item.id !== newVideo.id));
-  };
-
-  // ⚡ Disney+ "IMAX Enhanced" Style Version Switcher (Keeps DOM & Fullscreen intact + preserves timestamp!)
-  const handleSelectVersion = (targetVersion) => {
-    if (!targetVersion) return;
-    const targetKey = targetVersion.versionKey || String(targetVersion.id);
-    const currentKey = activeVersion?.versionKey || (activeVersion?.id ? String(activeVersion.id) : null);
-    if (targetKey === currentKey || (targetVersion.id && targetVersion.id === activeVersion?.id)) return;
-
-    const currentPos = Number.isFinite(videoRef.current?.currentTime)
-      ? videoRef.current.currentTime
-      : 0;
-
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      if (targetVersion.isDefault) {
-        url.searchParams.delete('v');
-      } else {
-        url.searchParams.set('v', targetKey);
-      }
-      window.history.replaceState(null, '', url.pathname + (url.search ? url.search : ''));
-    }
-
-    setDetectedRatio(null);
-    setIsSwitchingVersion(true);
-    setSelection({ id, startTime: currentPos });
-    setActiveVersionKey(targetKey);
-
-    if (id && targetVersion.id) {
-      fetch('/api/history', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoId: id,
-          versionId: targetVersion.id,
-          position: Math.floor(currentPos),
-        }),
-      }).catch(() => {});
-    }
-  };
-
-  // Fetch Stream Source from OneDrive
-  useEffect(() => {
-    if (!id) return;
-    let cancelled = false;
-    let hydrationTimer = null;
-    const storyboardRequest = new AbortController();
-
-    async function initStream() {
-      try {
-        setError(null);
-        setStoryboard(null);
-        setDetectedRatio(null);
-        // เก็บ blob URLs เดิมไว้ revoke หลัง stream ใหม่พร้อม
-        // ไม่เรียก setStreamUrl('') ทันที เพื่อป้องกัน VideoPlayer ถูก unmount จนทำให้หลุด Fullscreen
-        const prevBlobUrls = [...activeBlobUrlsRef.current];
-        activeBlobUrlsRef.current = [];
-
-        // If switched video in-place (not initial SSR video), also fetch subtitles & description once
-        const needsMetadataDetail = loadedDetailIdRef.current !== id;
-        const versionQuery = activeVersionKey ? `?v=${encodeURIComponent(activeVersionKey)}` : '';
-        const metadataPromise = needsMetadataDetail
-          ? fetch(`/api/videos/${id}${versionQuery}`, { cache: 'no-store' })
-              .then((r) => (r.ok ? r.json() : null))
-              .catch(() => null)
-          : Promise.resolve(null);
-
-        // ⚡ Preload hls.js chunk in parallel while fetching /source (0ms wait once streamUrl resolves)
-        if (latestSourceTypeRef.current !== 'mp4') {
-          preloadHlsModule().catch(() => {});
-        }
-
-        // ⚡ Step: Fetch Stream Source from OneDrive (0ms if warm SSR initialSource matched, else client cache / API)
-        const canUseSsrSource =
-          initialSourceRef.current &&
-          id === initialVideoIdRef.current &&
-          (activeVersionKey || null) === (initialVersionKeyRef.current || null);
-        const ssrSource = canUseSsrSource ? initialSourceRef.current : null;
-        if (canUseSsrSource) {
-          initialSourceRef.current = null;
-        }
-        let [sourceData, detailRes] = await Promise.all([
-          ssrSource
-            ? Promise.resolve(ssrSource)
-            : fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster, version: activeVersionKey }),
-          metadataPromise,
-        ]);
-        if (cancelled) return;
-
-        if (needsMetadataDetail && detailRes?.video) {
-          loadedDetailIdRef.current = id;
-        }
-        const detailVideo = detailRes?.video || {};
-
-        const needsRestrictedStoryboard = !showAdultPoster && sourceData.type === 'hls' && isMatureVideo(sourceData.video);
-        if (needsRestrictedStoryboard) {
-          fetch(`/api/videos/${id}/storyboard${versionQuery}`, { method: 'POST', signal: storyboardRequest.signal })
-            .then((response) => response.ok ? response.json() : null)
-            .then((data) => resolveStoryboard(data?.items?.map((item) => ({
-              ...item,
-              downloadUrl: new URL(item.downloadUrl, window.location.origin).href,
-            }))))
-            .then((preview) => {
-              if (!cancelled && preview) setStoryboard(preview);
-            })
-            .catch(() => {});
-        }
-
-        if (sourceData.video || detailRes?.video) {
-          setVideo((prev) => {
-            const nextVersions =
-              detailVideo.versions ??
-              (Array.isArray(sourceData.video?.versions) && sourceData.video.versions.length > 0
-                ? sourceData.video.versions
-                : prev?.versions) ??
-              [];
-            const nextActiveVersion =
-              detailVideo.active_version ??
-              sourceData.video?.active_version ??
-              prev?.active_version ??
-              null;
-            return {
-              ...prev,
-              ...(sourceData.video || {}),
-              ...detailVideo,
-              versions: nextVersions,
-              active_version: nextActiveVersion,
-              subtitle_srt: detailVideo.subtitle_srt ?? sourceData.video?.subtitle_srt ?? prev?.subtitle_srt ?? '',
-              subtitle_vtt: detailVideo.subtitle_vtt ?? sourceData.video?.subtitle_vtt ?? prev?.subtitle_vtt ?? '',
-              subtitle_tracks: detailVideo.subtitle_tracks ?? sourceData.video?.subtitle_tracks ?? prev?.subtitle_tracks ?? [],
-              subtitle_status: detailVideo.subtitle_status || sourceData.video?.subtitle_status || prev?.subtitle_status || 'waiting',
-              author_name: detailVideo.author_name || sourceData.video?.author_name || prev?.author_name,
-              author_picture: detailVideo.author_picture || sourceData.video?.author_picture || prev?.author_picture,
-            };
-          });
-        }
-
-        // ⚡ Step: Resolve Playback URL & Storyboard
-        let resolved;
-        try {
-          resolved = await resolveClientPlaybackSource(sourceData);
-        } catch (resolveErr) {
-          console.warn('[WatchPage] Token expired or fetch failed, auto-recovering with fresh tokens...', resolveErr);
-          sourceData = await fetchVideoSourceClient(id, {
-            forceFresh: true,
-            showAdultPreviews: showAdultPoster,
-            version: activeVersionKey,
-          });
-          resolved = await resolveClientPlaybackSource(sourceData);
-        }
-
-        if (cancelled) return;
-
-        if (resolved.blobUrls && resolved.blobUrls.length > 0) {
-          activeBlobUrlsRef.current = resolved.blobUrls;
-        }
-
-        partialSegmentMapRef.current = resolved.segmentUrlMap ? { ...resolved.segmentUrlMap } : {};
-
-        setStreamUrl(resolved.url);
-        setIsSwitchingVideo(false);
-        setIsSwitchingVersion(false);
-        // Revoke blob URLs เก่าหลังจาก stream ใหม่พร้อมแล้ว
-        for (const u of prevBlobUrls) {
-          try { URL.revokeObjectURL(u); } catch (_) { }
-        }
-        if (resolved.aspectRatio) {
-          setDetectedRatio(resolved.aspectRatio);
-        }
-
-        // ⚡ Two-Phase Cold-Batch Hydration:
-        // Video is already playing from initial $batch chunks (_000/_001/_002.ts).
-        // Quietly fetch full signed URL map ~2.2s later so chunks _002+ bypass /streams/ completely!
-        if (resolved.partial) {
-          hydrationTimer = setTimeout(() => {
-            if (cancelled) return;
-            fetchVideoSourceClient(id, {
-              preferFull: true,
-              lowPriority: true,
-              showAdultPreviews: showAdultPoster,
-              version: activeVersionKey,
-            })
-              .then((fullSource) => {
-                if (cancelled || !Array.isArray(fullSource?.items)) return;
-                const map = partialSegmentMapRef.current || {};
-                for (const item of fullSource.items) {
-                  if (item?.name && item.downloadUrl && item.name.toLowerCase().endsWith('.ts')) {
-                    const cleanName = item.name.replace(/^\.?\//, '');
-                    const baseName = cleanName.includes('/')
-                      ? cleanName.slice(cleanName.lastIndexOf('/') + 1)
-                      : cleanName;
-                    map[item.name] = item.downloadUrl;
-                    map[cleanName] = item.downloadUrl;
-                    map[baseName] = item.downloadUrl;
-                  }
-                }
-                partialSegmentMapRef.current = map;
-                if (!needsRestrictedStoryboard) {
-                  resolveStoryboard(fullSource.items)
-                    .then((sb) => {
-                      if (!cancelled && sb) setStoryboard(sb);
-                    })
-                    .catch(() => {});
-                }
-              })
-              .catch(() => {});
-          }, 2200);
-        }
-
-        if (needsRestrictedStoryboard) return;
-        if (resolved.storyboard) {
-          setStoryboard(resolved.storyboard);
-        } else if (resolved.storyboardPromise) {
-          resolved.storyboardPromise.then((sb) => {
-            if (!cancelled && sb) {
-              setStoryboard(sb);
-            }
-          }).catch(() => { });
-        } else {
-          setStoryboard(null);
-        }
-      } catch (err) {
-        console.error('[WatchPage Error]:', err);
-        if (!cancelled) {
-          setIsSwitchingVideo(false);
-          setIsSwitchingVersion(false);
-          setStreamUrl('');
-          setError(err.message || 'เกิดข้อผิดพลาดในการโหลดวิดีโอ');
-        }
-      }
-    }
-
-    initStream();
-
-    return () => {
-      cancelled = true;
-      if (hydrationTimer) clearTimeout(hydrationTimer);
-      storyboardRequest.abort();
-      for (const u of activeBlobUrlsRef.current) {
-        try { URL.revokeObjectURL(u); } catch (_) { }
-      }
-      activeBlobUrlsRef.current = [];
-    };
-  }, [id, activeVersionKey, showAdultPoster]);
+  }, [videoRatio, isDockedInWatch]);
 
   const handleCopyLink = () => {
     if (typeof window !== 'undefined') {
@@ -553,29 +217,15 @@ export default function WatchClient({
     }
   };
 
-  const handleSeek = useCallback((timeInSeconds) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = timeInSeconds;
-      videoRef.current.play().catch(() => { });
-    }
-  }, []);
-
-  const handleBack = useCallback(() => {
-    router.push('/');
-  }, [router]);
-
-  const handleRatioChange = useCallback((r) => {
-    setDetectedRatio(r);
-  }, []);
-
   const fileSizeMB = video?.file_size_bytes
     ? (Number(video.file_size_bytes) / (1024 * 1024)).toFixed(1)
     : '0';
 
   const resBadge = formatResolutionBadge(video?.resolution);
-
-  // Exact views count without mock 270K
-  const viewsCount = typeof video?.views_count === 'number' || video?.views_count ? Number(video.views_count) : 0;
+  const viewsCount =
+    typeof video?.views_count === 'number' || video?.views_count
+      ? Number(video.views_count)
+      : 0;
   const viewsDisplay = `${viewsCount.toLocaleString()} ครั้ง`;
 
   // Filter recommendations
@@ -641,9 +291,7 @@ export default function WatchClient({
       )}
 
       <div className="block lg:flex lg:flex-row lg:items-start lg:justify-center lg:gap-4 w-full">
-        {/* Left Column: Player + Details (YouTube Standard Full-Width Layout) */}
-        {/* On mobile (< md): 'contents' unwraps the column so sticky player & chips track full-page scrolling */}
-        {/* On tablet/desktop (md+): Navbar is visible, so player is static in flow alongside/above related videos */}
+        {/* Left Column: Player Slot + Details */}
         <div
           className="contents md:flex md:flex-col md:w-full md:mx-auto lg:mx-0 lg:flex-1 lg:min-w-0"
           style={{
@@ -654,110 +302,21 @@ export default function WatchClient({
                 : '100%',
           }}
         >
-          {/* 🎯 Video Player: Sticky on mobile (< md) / Static in flow on tablet & desktop (md+) so Navbar never overlaps */}
+          {/* 🎯 Primary Player Slot: Receives singleton #movie_player (AmbientLight + VideoPlayer) via DOM Reparenting */}
           <div
             ref={playerWrapperRef}
+            id="player-primary-container"
             className={`sticky top-0 z-30 w-full bg-black md:bg-transparent md:relative md:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] md:h-auto flex justify-center items-center md:block' : ''
               }`}
-          >
-            {/* YouTube-style Storyboard Ambient Mode Light */}
-            <AmbientLight
-              videoRef={videoRef}
-              storyboard={matureVideo && !showAdultPoster ? null : storyboard}
-              poster={watchPoster}
-              enabled={ambientMode}
-              aspectRatio={videoRatio}
-              className="hidden sm:block"
-            />
-
-            <div className="relative z-10 w-full">
-              {streamUrl ? (
-                <VideoPlayer
-                  src={streamUrl}
-                  partialSegmentMapRef={partialSegmentMapRef}
-                  poster={watchPoster}
-                  storyboard={storyboard}
-                  keepScrubPreviewOnLoad={matureVideo && !showAdultPoster}
-                  channelName={video?.author_name || 'DONUŤ'}
-                  title={video?.title}
-                  onBack={handleBack}
-                  resolution={activeVersion?.resolution || video?.resolution}
-                  width={video?.width}
-                  height={video?.height}
-                  aspectRatio={videoRatio}
-                  fps={activeVersion?.fps || video?.fps}
-                  codec={activeVersion?.codec || video?.codec}
-                  videoId={video?.id}
-                  videoSlug={video?.slug || encodeVideoSlug(video?.id, video?.category) || (video?.id && video?.id !== 'undefined' ? String(video?.id) : '')}
-                  videoCategory={video?.category}
-                  videoRef={videoRef}
-                  desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}
-                  defaultVolume={playerConfig?.volume ?? 0.8}
-                  defaultAutoplay={playerConfig?.autoplay ?? true}
-                  defaultSpeed={playerConfig?.default_speed ?? 1}
-                  defaultFit={playerConfig?.default_fit ?? 'fit'}
-                  seekStep={playerConfig?.seek_step ?? 10}
-                  autoStats={playerConfig?.auto_stats ?? false}
-                  initialTime={startTime}
-                  isMusic={isMusic}
-                  onRatioChange={handleRatioChange}
-                  ambientMode={ambientMode}
-                  setAmbientMode={handleSetAmbientMode}
-                  currentVideo={video}
-                  relatedVideos={relatedVideos}
-                  onSelectVideo={handleSelectVideo}
-                  isSwitchingVideo={isSwitchingVideo}
-                  versions={playableVersions}
-                  activeVersion={activeVersion}
-                  onSelectVersion={handleSelectVersion}
-                  isSwitchingVersion={isSwitchingVersion}
-                />
-              ) : (
-                /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
-                <div
-                  className={`relative bg-zinc-950 sm:rounded-2xl overflow-hidden flex items-center justify-center select-none ${videoRatio < 0.98
-                    ? 'w-full h-[min(48vh,380px)] md:h-auto md:aspect-video'
-                    : 'w-full h-auto'
-                    }`}
-                  style={{
-                    aspectRatio: videoRatio < 0.98 ? undefined : `${videoRatio}`,
-                    maxWidth: videoRatio >= 0.98 ? `calc((${DESKTOP_PLAYER_MAX_HEIGHT}) * ${videoRatio})` : undefined,
+            style={
+              !isDockedInWatch
+                ? {
+                    aspectRatio: videoRatio < 0.98 ? '16 / 9' : `${videoRatio}`,
                     maxHeight: DESKTOP_PLAYER_MAX_HEIGHT,
-                    margin: videoRatio >= 0.98 ? 0 : '0 auto',
-                  }}
-                >
-                  {/* Background Poster / Thumbnail */}
-                  {watchPoster && (
-                    <img
-                      src={watchPoster}
-                      alt={video?.title || 'Thumbnail'}
-                      fetchPriority="high"
-                      decoding="async"
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                      className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
-                    />
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/65 backdrop-blur-[0.5px]" />
-
-                  {/* Center Glowing Spinner */}
-                  <div className="relative z-10 flex flex-col items-center gap-3.5 px-4 text-center">
-                    <div className="relative flex items-center justify-center">
-                      <div className="absolute w-14 h-14 rounded-full bg-[#FF7A00]/25 blur-lg animate-pulse" />
-                      <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-full border-[3px] border-white/15 border-t-[#FF7A00] animate-spin" />
-                    </div>
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="text-white text-xs sm:text-sm font-semibold tracking-wide drop-shadow-md">
-                        กำลังเตรียมสัญญาณภาพ...
-                      </span>
-                      <span className="text-zinc-400 text-[10px] sm:text-[11px] font-mono">
-                        เชื่อมต่อคลาวด์สตรีมมิ่ง TubeLock
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+                  }
+                : undefined
+            }
+          />
 
           {/* 📱 YouTube-Style Video Details Section (SSR Rendered Immediately!) */}
           <div className="relative z-10 w-full flex flex-col gap-3 p-3.5 sm:px-0 sm:pt-3.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] sm:bg-transparent dark:sm:bg-transparent transition-colors">
@@ -766,11 +325,10 @@ export default function WatchClient({
               {video?.title || ''}
             </h1>
 
-            {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) with graceful wrap on tablet/split-screen */}
+            {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) */}
             <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 py-1">
-              {/* Channel Info & Subscribe Button */}
               <div className="flex justify-between items-center min-w-0">
-                <div className='flex gap-3 items-center min-w-0'>
+                <div className="flex gap-3 items-center min-w-0">
                   {video?.author_picture && !avatarError ? (
                     <img
                       src={video.author_picture}
@@ -793,7 +351,6 @@ export default function WatchClient({
                     </span>
                   </div>
                 </div>
-                {/* YouTube Subscribe Capsule Button */}
                 <button
                   type="button"
                   onClick={() => setIsSubscribed(!isSubscribed)}
@@ -806,9 +363,7 @@ export default function WatchClient({
                 </button>
               </div>
 
-              {/* Action Buttons: Like/Dislike, Share, Save */}
               <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
-                {/* Like / Dislike Split Pill */}
                 <div className="flex items-center bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 rounded-full text-xs font-semibold text-[#0F0F0F] dark:text-[#F1F1F1] shrink-0 transition">
                   <button
                     type="button"
@@ -828,7 +383,6 @@ export default function WatchClient({
                   </button>
                 </div>
 
-                {/* Share Pill */}
                 <button
                   type="button"
                   onClick={handleCopyLink}
@@ -838,7 +392,6 @@ export default function WatchClient({
                   <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
                 </button>
 
-                {/* Save / Bookmark Pill */}
                 <button
                   type="button"
                   onClick={() => setIsSaved(!isSaved)}
@@ -850,7 +403,6 @@ export default function WatchClient({
               </div>
             </div>
 
-            {/* 3. YouTube-Style Description Box (Interactive Timestamps, URLs, Expandable Body) */}
             <DescriptionBox
               video={video}
               viewsDisplay={viewsDisplay}
@@ -862,9 +414,8 @@ export default function WatchClient({
           </div>
         </div>
 
-        {/* Right / Sidebar: Related Videos Column (YouTube Desktop Standard ~400px) */}
+        {/* Right / Sidebar: Related Videos Column */}
         <div className="w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pt-2 lg:pt-0 pb-10">
-          {/* 🏷️ YouTube Recommendation Filter Chips: Sticky directly under video player on mobile (< md) only */}
           <div
             style={{
               top: playerHeight ? `${playerHeight}px` : '56.25vw',
@@ -894,7 +445,6 @@ export default function WatchClient({
           </div>
 
           {filteredRelated.length === 0 ? (
-            /* Premium YouTube-Style Empty Recommendations Card */
             <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-6 text-center shadow-xs flex flex-col items-center gap-3.5 mt-1">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#FF7A00]/15 to-[#FF9E40]/25 flex items-center justify-center text-[#FF7A00]">
                 <Film className="w-6 h-6 stroke-[1.8]" />
@@ -916,7 +466,6 @@ export default function WatchClient({
               </Link>
             </div>
           ) : isDesktopLg === false ? (
-            /* Mobile (< sm) & Tablet (sm–md): Vertical feed cards (mounted only when < 1024px) */
             <div className="isolate grid grid-cols-1 sm:grid-cols-2 gap-4">
               {filteredRelated.map((item, idx) => (
                 <div
@@ -928,7 +477,6 @@ export default function WatchClient({
               ))}
             </div>
           ) : (
-            /* Desktop (lg+): Compact horizontal sidebar cards (SSR default hidden on < lg, mounted only on lg+) */
             <div className={`isolate ${isDesktopLg === null ? 'hidden lg:flex' : 'flex'} flex-col gap-2.5`}>
               {filteredRelated.map((item, idx) => (
                 <div

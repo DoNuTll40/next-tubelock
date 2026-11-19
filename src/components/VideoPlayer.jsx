@@ -41,6 +41,7 @@ function unlockBrowserOrientation() {
 }
 
 export default function VideoPlayer({
+  isActive = true,
   src,
   poster,
   storyboard = null,
@@ -83,6 +84,14 @@ export default function VideoPlayer({
   partialSegmentMapRef = null,
 }) {
   const video = useRef(null);
+  const isActiveRef = useRef(isActive);
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+  const resolutionRef = useRef(resolution);
+  useEffect(() => {
+    resolutionRef.current = resolution;
+  }, [resolution]);
   const segmentMapRefProp = useRef(partialSegmentMapRef);
   useEffect(() => {
     segmentMapRefProp.current = partialSegmentMapRef;
@@ -650,6 +659,11 @@ export default function VideoPlayer({
     accumulatedWatchTimeRef.current = 0;
     lastTickTimeRef.current = null;
     viewCountRecordedRef.current = false;
+    lastReportedRatioRef.current = null;
+    const resetTimer = Promise.resolve().then(() => {
+      setDetectedRatio(null);
+    });
+    return () => { void resetTimer; };
   }, [videoId]);
 
   const isUserPausedRef = useRef(!defaultAutoplay);
@@ -923,7 +937,7 @@ export default function VideoPlayer({
   // Reliable Autoplay with YouTube-style graceful unmuted -> muted fallback
   const attemptAutoPlay = useCallback(() => {
     const v = video.current;
-    if (!v || !defaultAutoplay || isUserPausedRef.current) return;
+    if (!v || !isActiveRef.current || !defaultAutoplay || isUserPausedRef.current) return;
 
     // Do NOT autoplay if video is ended or approaching the end (leaves playback stopped at end screen)
     if (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current) {
@@ -964,7 +978,7 @@ export default function VideoPlayer({
     setIsBuffering(true);
     setLevels([]);
     setCurrentLevelIndex(-1);
-    setActiveLevelLabel(formatResolutionBadge(resolution) || 'Auto');
+    setActiveLevelLabel(formatResolutionBadge(resolutionRef.current) || 'Auto');
     hlsRetryCountRef.current = 0;
 
     isUserPausedRef.current = false;
@@ -1243,7 +1257,7 @@ export default function VideoPlayer({
             v.addEventListener('loadedmetadata', applySeek);
           }
         }
-        if (defaultAutoplay && !isUserPausedRef.current) {
+        if (isActiveRef.current && defaultAutoplay && !isUserPausedRef.current) {
           v.play().then(() => setIsPlaying(true)).catch(() => {
             v.muted = true;
             setIsMuted(true);
@@ -1262,7 +1276,7 @@ export default function VideoPlayer({
         hlsInstanceRef.current = null;
       }
     };
-  }, [src, defaultAutoplay, resolution, video, showToast, isSwitchingVideo]);
+  }, [src, defaultAutoplay, video, showToast, isSwitchingVideo]);
 
   // Quality selector (100% Smooth switch: nextLevel only, no stream reload)
   const handleSelectQuality = (levelIdx) => {
@@ -2028,9 +2042,31 @@ export default function VideoPlayer({
     resetControlsTimer();
   };
 
+  // Pause parked singleton player & dismiss menus cleanly when leaving /watch; resume buffered stream upon docking
+  useEffect(() => {
+    let cancelled = false;
+    const v = video.current;
+    if (!isActive) {
+      Promise.resolve().then(() => {
+        if (cancelled) return;
+        setShowSettingsMenu(false);
+        setContextMenu(null);
+      });
+      if (v && !v.paused && (typeof document === 'undefined' || document.pictureInPictureElement !== v)) {
+        try { v.pause(); } catch (_) { }
+      }
+    } else if (v && src && !isSwitchingVideo && v.readyState >= 2) {
+      attemptAutoPlay();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [isActive, src, isSwitchingVideo, attemptAutoPlay]);
+
   // Keyboard Shortcuts (Supports all keyboard languages via physical e.code)
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (!isActive) return;
       // Ignore if user is typing in an input, textarea, or contentEditable element
       if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName) || e.target?.isContentEditable) return;
       // Do not hijack browser system combos (Ctrl+C, Ctrl+F, Ctrl+P, Alt+Left, etc.)
@@ -2113,7 +2149,7 @@ export default function VideoPlayer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive]);
+  }, [isActive, togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive]);
 
   // Sync position progress & playback speed with OS media controls (Android / Lockscreen / Bluetooth)
   const syncMediaPositionState = useCallback((positionOverride = null) => {
@@ -2141,6 +2177,7 @@ export default function VideoPlayer({
 
   // Register Media Session metadata (title, artist, thumbnail artwork)
   useEffect(() => {
+    if (!isActive || !videoId) return;
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') {
       return;
     }
@@ -2163,22 +2200,24 @@ export default function VideoPlayer({
         artwork,
       });
     } catch (_) { }
-  }, [title, channelName, poster, videoId, videoSlug, keepScrubPreviewOnLoad]);
+  }, [isActive, title, channelName, poster, videoId, videoSlug, keepScrubPreviewOnLoad]);
 
   // Keep OS Media Notification playbackState & timeline synced
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
     try {
-      navigator.mediaSession.playbackState = (!src || isSwitchingVideo)
+      navigator.mediaSession.playbackState = (!isActive || !src || isSwitchingVideo)
         ? 'none'
         : (isPlaying && !isEnded ? 'playing' : 'paused');
     } catch (_) { }
-    syncMediaPositionState();
-  }, [src, isSwitchingVideo, isPlaying, isEnded, syncMediaPositionState]);
+    if (isActive) {
+      syncMediaPositionState();
+    }
+  }, [isActive, src, isSwitchingVideo, isPlaying, isEnded, syncMediaPositionState]);
 
   // Bind OS notification, lockscreen, and Bluetooth media transport buttons
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    if (!isActive || !videoId || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
     const ms = navigator.mediaSession;
     const safeSetHandler = (action, handler) => {
       try {
@@ -2244,7 +2283,7 @@ export default function VideoPlayer({
         ms.playbackState = 'none';
       } catch (_) { }
     };
-  }, [video, togglePlay, commitSeek, seekStep, duration, syncMediaPositionState]);
+  }, [isActive, videoId, video, togglePlay, commitSeek, seekStep, duration, syncMediaPositionState]);
 
 
   const is4K = (resolution && resolution.toString().includes('2160')) ||
@@ -2404,7 +2443,7 @@ export default function VideoPlayer({
           }
 
           // หากเบราว์เซอร์ emit pause เองระหว่างเล่น โดยที่ผู้ใช้ไม่ได้กดหยุด และคลิปยังไม่จบ (เช่น Buffer stall / MSE pipeline hiccup)
-          if (!isUserPausedRef.current && !isSwitchingVideo) {
+          if (!isUserPausedRef.current && !isSwitchingVideo && isActiveRef.current) {
             if (v && v.readyState >= 2) {
               v.play().catch(() => { });
               return;

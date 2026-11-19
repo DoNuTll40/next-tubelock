@@ -18,11 +18,12 @@ import {
 import { memo, useState, useRef, useEffect } from 'react';
 import { formatResolutionBadge, encodeVideoSlug, isMatureVideo, getVideoResumeTime } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
-import { prewarmVideoSourceClient, invalidateClientVideoCache } from '@/lib/playbackResolver';
+import { prewarmVideoSourceClient, invalidateClientVideoCache, preloadHlsModule } from '@/lib/playbackResolver';
 import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
 import { useSession } from '@/context/SessionContext';
+import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
 
 // Module-level Set: track which video IDs are already pre-warmed this session
@@ -105,10 +106,27 @@ function VideoCard({
     );
   };
 
+  const handlePrimeCardClick = (e) => {
+    if (
+      !e.defaultPrevented &&
+      e.button === 0 &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.shiftKey &&
+      !e.altKey
+    ) {
+      handlePreWarmImmediate();
+      if (typeof watchUrl === 'string' && watchUrl.startsWith('/watch/') && safeId) {
+        primeGlobalWatchVideo({ ...video, id: safeId }, { startTime: resumeTime });
+      }
+    }
+  };
+
   const renderCardLink = () => (
     <Link
       href={watchUrl}
       replace={replace}
+      onClick={handlePrimeCardClick}
       aria-label={video.title}
       className="absolute inset-0 z-10 rounded-[inherit] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF7A00]"
     />
@@ -138,6 +156,9 @@ function VideoCard({
     hoverTimerRef.current = setTimeout(() => {
       preWarmedIds.add(video.id);
       prewarmVideoSourceClient(video.id, { immediate: false });
+      if (video.source_type !== 'mp4') {
+        preloadHlsModule().catch(() => {});
+      }
     }, 250);
   };
 
@@ -146,6 +167,9 @@ function VideoCard({
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     preWarmedIds.add(video.id);
     prewarmVideoSourceClient(video.id, { immediate: true });
+    if (video.source_type !== 'mp4') {
+      preloadHlsModule().catch(() => {});
+    }
   };
 
   const handlePreWarmCancel = () => {
@@ -458,6 +482,7 @@ function VideoCard({
       className={`flex flex-col group relative select-none rounded-2xl p-2 yt-card-hover cursor-pointer ${isMenuOpen ? 'z-30' : ''}`}
       onMouseEnter={handlePreWarm}
       onMouseLeave={handlePreWarmCancel}
+      onMouseDown={handlePreWarmImmediate}
       onFocus={handlePreWarm}
       style={cardHoverStyle}
     >

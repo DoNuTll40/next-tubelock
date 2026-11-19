@@ -17,6 +17,8 @@ import {
   ListPlus
 } from 'lucide-react';
 import { formatResolutionBadge, encodeVideoSlug, isMusicVideo, getVideoResumeTime } from '@/lib/videoUtils';
+import { prewarmVideoSourceClient, preloadHlsModule } from '@/lib/playbackResolver';
+import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
 
 const FILTER_CHIPS = [
   { id: 'all', label: 'ทั้งหมด' },
@@ -37,6 +39,7 @@ export default function ResultsClient({ initialQuery = '' }) {
 
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [renderNow] = useState(() => Date.now());
   const [activeChip, setActiveChip] = useState('all');
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [sortBy, setSortBy] = useState('relevance'); // relevance, date, views
@@ -46,7 +49,6 @@ export default function ResultsClient({ initialQuery = '' }) {
   // Load videos from API
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
     fetch('/api/videos', { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
@@ -259,7 +261,7 @@ export default function ResultsClient({ initialQuery = '' }) {
 
       // Freshness bonus
       if (score > 0 && video.created_at) {
-        const daysOld = (Date.now() - new Date(video.created_at).getTime()) / (1000 * 60 * 60 * 24);
+        const daysOld = (renderNow - new Date(video.created_at).getTime()) / (1000 * 60 * 60 * 24);
         if (daysOld < 30) score += 10;
         if (daysOld < 7) score += 15;
       }
@@ -274,7 +276,7 @@ export default function ResultsClient({ initialQuery = '' }) {
       .map((item) => item.video);
 
     return applyFilters(sortedVideos);
-  }, [videos, currentQuery, activeChip, durationFilter, featureFilter, sortBy]);
+  }, [videos, currentQuery, activeChip, durationFilter, featureFilter, sortBy, renderNow]);
 
   return (
     <div className="w-full min-h-[calc(100vh-56px)] bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#0F0F0F] dark:text-[#F1F1F1] pb-16">
@@ -444,7 +446,7 @@ export default function ResultsClient({ initialQuery = '' }) {
               <div className="w-16 h-16 rounded-full bg-black/5 dark:bg-white/5 flex items-center justify-center mb-3">
                 <Search className="w-7 h-7 text-[#8C857B] dark:text-[#AAAAAA]" />
               </div>
-              <h3 className="text-lg font-semibold mb-1">ไม่พบผลการค้นหาสำหรับ "{currentQuery}"</h3>
+              <h3 className="text-lg font-semibold mb-1">ไม่พบผลการค้นหาสำหรับ &quot;{currentQuery}&quot;</h3>
               <p className="text-xs text-[#606060] dark:text-[#AAAAAA] max-w-md">
                 ลองค้นหาด้วยคำอื่น หรือเลือกดูวิดีโอน่าสนใจด้านล่างนี้
               </p>
@@ -475,6 +477,7 @@ export default function ResultsClient({ initialQuery = '' }) {
 function HorizontalVideoCard({ video }) {
   const [imgError, setImgError] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [renderNow] = useState(() => Date.now());
   const menuRef = useRef(null);
 
   const formatDuration = (sec) => {
@@ -493,7 +496,7 @@ function HorizontalVideoCard({ video }) {
 
   const formatTimeAgo = (dateStr) => {
     if (!dateStr) return 'ไม่นานมานี้';
-    const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
+    const diff = (renderNow - new Date(dateStr).getTime()) / 1000;
     if (diff < 3600) return `${Math.max(1, Math.floor(diff / 60))} นาทีที่ผ่านมา`;
     if (diff < 86400) return `${Math.floor(diff / 3600)} ชั่วโมงที่ผ่านมา`;
     if (diff < 2592000) return `${Math.floor(diff / 86400)} วันที่ผ่านมา`;
@@ -508,6 +511,32 @@ function HorizontalVideoCard({ video }) {
   const dur = Number(video?.duration || 0);
   const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, dur);
   const watchUrl = videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/';
+
+  const handlePrewarmCard = () => {
+    if (!safeId) return;
+    prewarmVideoSourceClient(safeId, { immediate: true });
+    if (video.source_type !== 'mp4') {
+      preloadHlsModule().catch(() => {});
+    }
+  };
+
+  const handlePrimeCardClick = (e) => {
+    if (
+      !safeId ||
+      e.defaultPrevented ||
+      e.button !== 0 ||
+      e.metaKey ||
+      e.ctrlKey ||
+      e.shiftKey ||
+      e.altKey
+    ) {
+      return;
+    }
+    handlePrewarmCard();
+    if (watchUrl.startsWith('/watch/')) {
+      primeGlobalWatchVideo({ ...video, id: safeId }, { startTime: resumeTime });
+    }
+  };
 
   const resBadge = formatResolutionBadge(video.resolution);
   const effectiveThumbnail =
@@ -530,10 +559,15 @@ function HorizontalVideoCard({ video }) {
   }, [showMenu]);
 
   return (
-    <div className="group flex flex-col sm:flex-row gap-4 relative select-none">
+    <div
+      className="group flex flex-col sm:flex-row gap-4 relative select-none"
+      onMouseEnter={handlePrewarmCard}
+      onMouseDown={handlePrewarmCard}
+    >
       {/* 🖼️ Left Thumbnail Container */}
       <Link
         href={watchUrl}
+        onClick={handlePrimeCardClick}
         className="w-full sm:w-[360px] md:w-[420px] lg:w-[480px] aspect-video rounded-2xl overflow-hidden relative bg-zinc-900 shrink-0 shadow-2xs group-hover:shadow-md transition duration-200"
       >
         {effectiveThumbnail && !imgError ? (
@@ -568,7 +602,7 @@ function HorizontalVideoCard({ video }) {
       {/* 📋 Right Info Column */}
       <div className="flex-1 min-w-0 flex flex-col justify-start pt-0.5 relative pr-8">
         {/* Title */}
-        <Link href={watchUrl}>
+        <Link href={watchUrl} onClick={handlePrimeCardClick}>
           <h3 className="text-[17px] sm:text-[18px] font-normal sm:font-medium leading-snug line-clamp-2 text-[#0F0F0F] dark:text-[#F1F1F1] group-hover:text-black dark:group-hover:text-white transition-colors">
             {video.title}
           </h3>

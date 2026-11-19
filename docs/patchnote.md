@@ -11,6 +11,28 @@ updated: 19 พฤศจิกายน 2026
 
 ---
 
+## เวอร์ชัน 1.2.7 Patch v2 (Build 1.2.7.20261119 — 19 พฤศจิกายน 2026) — Global Singleton Video Player (`#movie_player`), Global Ambient Light & Player-First Instant Startup
+
+### 1. สถาปัตยกรรม Global Singleton `#movie_player` + `AmbientLight`
+- **Persistent Root Player (`GlobalPlayerContext.jsx` & `AppShell.jsx`):**
+  - สร้าง `GlobalPlayerProvider`, `useGlobalPlayer()` และ `primeGlobalWatchVideo()` ครอบใต้ `SessionProvider` ใน `src/components/AppShell.jsx`
+  - ใช้ `useSyncExternalStore` + `createPortal` เพื่อสร้างและรักษา DOM container `<div id="movie_player">` เพียงตัวเดียวตลอดอายุการเปิดแท็บ ครอบทั้ง `<AmbientLight>` และ `<VideoPlayer>` แล้วพักไว้ใน `#movie_player_parking` นอกจอเมื่อไม่ได้อยู่หน้า `/watch`
+- **DOM Reparenting ไร้รอยต่อ (`dockPlayerSlot` / `undockPlayerSlot`):**
+  - ปรับ `src/app/watch/[id]/WatchClient.jsx` ให้ถอด `<VideoPlayer>` และ `<AmbientLight>` ออก เหลือเป็น `<div id="player-primary-container" />` พร้อม fallback `aspectRatio` ระหว่างก่อน dock
+  - เมื่อเข้าหน้า `/watch/[id]` ระบบจะย้าย `<div id="movie_player">` ด้วย `appendChild` ใน `useLayoutEffect` และเรียก `hydrateWatchPage(...)` เพื่อผสานข้อมูลจาก SSR (`description`, `versions`, `subtitle_tracks`) โดย **ไม่รีสตาร์ทสตรีมที่กำลังโหลดอยู่** และจะย้ายกลับพร้อมสั่งหยุดเล่นอัตโนมัติเมื่อออกจาก `/watch` (ยกเว้นขณะเปิด OS Picture-in-Picture ค้างไว้)
+
+### 2. Player-First Startup ตั้งแต่จังหวะกดคลิก (`t = 0ms`)
+- **Prewarm + Click Priming ครบทุกจุด (`VideoCard.jsx`, `HistoryClient.jsx`, `ResultsClient.jsx`):**
+  - เพิ่มการเรียก `preloadHlsModule()` ควบคู่กับ `prewarmVideoSourceClient()` ตอนชี้/กด และเพิ่ม click handler (`primeGlobalWatchVideo`) บนการ์ดวิดีโอทุกแบบ ให้ Global `#movie_player` เริ่มถอดรหัส manifest และบัฟเฟอร์ไฟล์ทันทีตั้งแต่จังหวะกดคลิกโดยไม่ต้องรอผล SSR ของหน้า `/watch/[id]` เสร็จก่อน
+  - แยก `initStream()` ใน `GlobalPlayerContext.jsx` ให้ไม่รอผล metadata `/api/videos/[id]` บน critical path ก่อนสร้าง Blob URL และเริ่ม `hls.js`
+
+### 3. Safe Parking & Zero-Reload Protection (`VideoPlayer.jsx` & `ResultsClient.jsx`)
+- **ควบคุมสถานะเมื่อถูกจอดนอกหน้า Watch (`isActive` + `isActiveRef`):** ปิดคีย์ลัด, ปิดเมนู/context menu, พัก `MediaSession` และป้องกันไม่ให้ `attemptAutoPlay` หรือ `onPause` auto-resume แอบเล่นต่อเบื้องหลังเมื่อออกจาก `/watch`
+- **ป้องกันการรีเซ็ต `hls.js` ตอน SSR Hydrate:** เก็บ `resolution` ใน `resolutionRef` และนำออกจาก dependency array ของ `initHls` พร้อมรีเซ็ต `lastReportedRatioRef` / `detectedRatio` ทุกครั้งที่สลับ `videoId`
+- **แก้ไข Lint Error เดิมใน `ResultsClient.jsx`:** ลบการเรียก `setLoading(true)` ซ้ำซ้อนใน `useEffect`, ย้ายฐานเวลา `Date.now()` ออกจากการ render และ escape อัญประกาศใน JSX ให้ผ่าน `eslint` ด้วย 0 errors
+
+---
+
 ## เวอร์ชัน 1.2.7 (Build 1.2.7.20261119 — 19 พฤศจิกายน 2026) — ปรับแต่งประสิทธิภาพการ Render, SSR Cache, Bundle Splitting และ GPU Compositing ของหน้า `/watch/[id]`
 
 ### 1. Server-Side Rendering & Session Caching (ลดงานซ้ำฝั่งเซิร์ฟเวอร์และ Neon DB)
