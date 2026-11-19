@@ -1,27 +1,10 @@
-import { protectVideoPoster } from '@/lib/videoUtils';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
-import { isMusicVideo } from '@/lib/videoUtils';
+import { getCachedServerSession } from '@/lib/access';
+import { protectVideoPoster, isMusicVideo } from '@/lib/videoUtils';
 
 export const dynamic = 'force-dynamic';
-
-async function getAuthUser(sql) {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('tubelock_session')?.value;
-  if (!token) return null;
-
-  const rows = await sql`
-    SELECT s.user_id, u.name, u.email, u.picture
-    FROM user_sessions s
-    JOIN users u ON u.id = s.user_id
-    WHERE s.session_token = ${token}
-      AND s.is_active = TRUE
-      AND s.expires_at > NOW()
-    LIMIT 1;
-  `;
-  return rows[0] || null;
-}
 
 /**
  * GET /api/history
@@ -29,12 +12,12 @@ async function getAuthUser(sql) {
  */
 export async function GET(request) {
   try {
-    const sql = getDb();
-    const user = await getAuthUser(sql);
-    if (!user) {
+    const session = await getCachedServerSession();
+    if (!session?.id) {
       return NextResponse.json({ success: false, error: 'Unauthorized', history: [] }, { status: 401 });
     }
 
+    const sql = getDb();
     const { searchParams } = new URL(request.url);
     const query = searchParams.get('q')?.trim();
 
@@ -68,7 +51,7 @@ export async function GET(request) {
         FROM watch_history h
         JOIN videos v ON h.video_id = v.id
         LEFT JOIN users u ON v.user_id = u.id
-        WHERE h.user_id = ${user.user_id}
+        WHERE h.user_id = ${session.id}
           AND (v.title ILIKE ${searchPattern} OR v.description ILIKE ${searchPattern})
         ORDER BY h.updated_at DESC
         LIMIT 100;
@@ -101,7 +84,7 @@ export async function GET(request) {
         FROM watch_history h
         JOIN videos v ON h.video_id = v.id
         LEFT JOIN users u ON v.user_id = u.id
-        WHERE h.user_id = ${user.user_id}
+        WHERE h.user_id = ${session.id}
         ORDER BY h.updated_at DESC
         LIMIT 100;
       `;
@@ -135,9 +118,8 @@ export async function POST(request) {
       return NextResponse.json({ success: true, message: 'History paused' });
     }
 
-    const sql = getDb();
-    const user = await getAuthUser(sql);
-    if (!user) {
+    const session = await getCachedServerSession();
+    if (!session?.id) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -157,14 +139,21 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: 'Invalid videoId' }, { status: 400 });
     }
 
-    // Music category check: Music tracks always reset to 0
-    const videoRows = await sql`SELECT id, category, tags, title FROM videos WHERE id = ${videoId} LIMIT 1;`;
-    const isMusic = videoRows.length > 0 && isMusicVideo(videoRows[0]);
+    const sql = getDb();
+
+    // Use client-supplied isMusic flag when available to avoid a redundant videos table lookup
+    let isMusic;
+    if (typeof body?.isMusic === 'boolean') {
+      isMusic = body.isMusic;
+    } else {
+      const videoRows = await sql`SELECT id, category, tags, title FROM videos WHERE id = ${videoId} LIMIT 1;`;
+      isMusic = videoRows.length > 0 && isMusicVideo(videoRows[0]);
+    }
     const finalPosition = isMusic ? 0 : position;
 
     await sql`
       INSERT INTO watch_history (user_id, video_id, last_position_seconds, last_version_id, updated_at)
-      VALUES (${user.user_id}, ${videoId}, ${finalPosition}, ${versionId}, NOW())
+      VALUES (${session.id}, ${videoId}, ${finalPosition}, ${versionId}, NOW())
       ON CONFLICT (user_id, video_id)
       DO UPDATE SET
         last_position_seconds = ${finalPosition},
@@ -185,12 +174,12 @@ export async function POST(request) {
  */
 export async function DELETE(request) {
   try {
-    const sql = getDb();
-    const user = await getAuthUser(sql);
-    if (!user) {
+    const session = await getCachedServerSession();
+    if (!session?.id) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
+    const sql = getDb();
     const { searchParams } = new URL(request.url);
     const clearAll = searchParams.get('all') === 'true';
     const videoIdStr = searchParams.get('videoId');
@@ -198,7 +187,7 @@ export async function DELETE(request) {
     if (clearAll) {
       await sql`
         DELETE FROM watch_history 
-        WHERE user_id = ${user.user_id};
+        WHERE user_id = ${session.id};
       `;
       return NextResponse.json({ success: true, message: 'All history cleared' });
     }
@@ -208,7 +197,7 @@ export async function DELETE(request) {
       if (videoId && !isNaN(videoId)) {
         await sql`
           DELETE FROM watch_history 
-          WHERE user_id = ${user.user_id} AND video_id = ${videoId};
+          WHERE user_id = ${session.id} AND video_id = ${videoId};
         `;
         return NextResponse.json({ success: true, message: 'Video removed from history' });
       }

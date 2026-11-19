@@ -698,6 +698,7 @@ export default function VideoPlayer({
   const controlsTimeoutRef = useRef(null);
   const lastSavedTimeRef = useRef(0);
   const lastSavedHistoryTimeRef = useRef(0);
+  const lastDbHistorySyncRef = useRef({ videoId: null, versionId: null, position: -1, at: 0, musicSynced: false });
   const lastReportedSecondRef = useRef(-1);
 
   // ── Quality View Counting Tracker (Anti-Spam & 15s Watch Threshold) ──
@@ -710,6 +711,7 @@ export default function VideoPlayer({
     lastTickTimeRef.current = null;
     viewCountRecordedRef.current = false;
     lastReportedRatioRef.current = null;
+    lastDbHistorySyncRef.current = { videoId: null, versionId: null, position: -1, at: 0, musicSynced: false };
     const resetTimer = Promise.resolve().then(() => {
       setDetectedRatio(null);
     });
@@ -753,6 +755,102 @@ export default function VideoPlayer({
     if (isPlaying) requestWakeLock();
     else releaseWakeLock();
   }, [isPlaying, requestWakeLock, releaseWakeLock]);
+
+  // Sync watch history to localStorage immediately & throttle/deduplicate Neon DB writes
+  const syncHistoryToPlayState = useCallback((curSec, { forceServer = false } = {}) => {
+    if (!videoId || !(curSec > 1)) return;
+    const floorPos = isMusic ? 0 : Math.floor(curSec);
+    const verId = activeVersion?.id || null;
+
+    if (isMusic) {
+      try {
+        localStorage.setItem(`tubelock_watched_${videoId}`, '1');
+        localStorage.removeItem(`tubelock_pos_${videoId}`);
+      } catch (_) { }
+    } else {
+      try {
+        localStorage.setItem(`tubelock_pos_${videoId}`, String(floorPos));
+      } catch (_) { }
+    }
+
+    if (!hasSession) return;
+
+    const now = performance.now();
+    const syncState = lastDbHistorySyncRef.current;
+    const isSameVideo = syncState.videoId === videoId && syncState.versionId === verId;
+
+    if (!isSameVideo) {
+      lastDbHistorySyncRef.current = {
+        videoId,
+        versionId: verId,
+        position: -1,
+        at: 0,
+        musicSynced: false,
+      };
+    }
+
+    const curSync = lastDbHistorySyncRef.current;
+    if (isMusic) {
+      if (curSync.musicSynced) return;
+    } else {
+      const isFirstSync = curSync.position < 0;
+      const posDiff = Math.abs(floorPos - curSync.position);
+      if (forceServer) {
+        if (!isFirstSync && posDiff < 3) return;
+      } else {
+        if (!isFirstSync && (now - curSync.at < 45000 || posDiff < 10)) return;
+      }
+    }
+
+    lastDbHistorySyncRef.current = {
+      videoId,
+      versionId: verId,
+      position: floorPos,
+      at: now,
+      musicSynced: Boolean(isMusic),
+    };
+
+    const historyPayload = JSON.stringify({
+      videoId,
+      versionId: verId,
+      position: floorPos,
+      isMusic: Boolean(isMusic),
+    });
+
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      navigator.sendBeacon('/api/history', historyPayload);
+    } else {
+      fetch('/api/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: historyPayload,
+        keepalive: true,
+      }).catch(() => { });
+    }
+  }, [videoId, activeVersion?.id, isMusic, hasSession]);
+
+  // Flush latest non-music watch position when user switches tabs or closes the page
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const flushHistory = () => {
+      const v = video.current;
+      if (!v || !isActiveRef.current || isSwitchingVideoRef.current) return;
+      if (v.currentTime > 1) {
+        syncHistoryToPlayState(v.currentTime, { forceServer: true });
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushHistory();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', flushHistory);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', flushHistory);
+    };
+  }, [syncHistoryToPlayState]);
 
   // Initial volume setup
   useEffect(() => {
@@ -912,34 +1010,10 @@ export default function VideoPlayer({
       lastSavedTimeRef.current = now;
     }
 
-    // Auto-save Watch History to database every 5 seconds
+    // Auto-save Watch History locally every 5s and sync to database via throttled/deduped helper
     if (videoId && cur > 1 && now - lastSavedHistoryTimeRef.current > 5000) {
       lastSavedHistoryTimeRef.current = now;
-      const historyPayload = JSON.stringify({
-        videoId,
-        versionId: activeVersion?.id || null,
-        position: isMusic ? 0 : Math.floor(cur),
-      });
-      if (isMusic) {
-        try {
-          localStorage.setItem(`tubelock_watched_${videoId}`, '1');
-          localStorage.removeItem(`tubelock_pos_${videoId}`);
-        } catch (_) { }
-      } else {
-        try {
-          localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(cur)));
-        } catch (_) { }
-      }
-      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-        navigator.sendBeacon('/api/history', historyPayload);
-      } else {
-        fetch('/api/history', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: historyPayload,
-          keepalive: true,
-        }).catch(() => { });
-      }
+      syncHistoryToPlayState(cur, { forceServer: false });
     }
   };
 
@@ -2548,27 +2622,7 @@ export default function VideoPlayer({
               fadeBlackOverlayRef.current.style.opacity = '1';
             }
             if (videoId && v && v.currentTime > 1) {
-              const historyPayload = JSON.stringify({ videoId, position: isMusic ? 0 : Math.floor(v.currentTime) });
-              if (isMusic) {
-                try {
-                  localStorage.setItem(`tubelock_watched_${videoId}`, '1');
-                  localStorage.removeItem(`tubelock_pos_${videoId}`);
-                } catch (_) { }
-              } else {
-                try {
-                  localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(v.currentTime)));
-                } catch (_) { }
-              }
-              if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-                navigator.sendBeacon('/api/history', historyPayload);
-              } else {
-                fetch('/api/history', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: historyPayload,
-                  keepalive: true,
-                }).catch(() => { });
-              }
+              syncHistoryToPlayState(v.currentTime, { forceServer: true });
             }
             return;
           }
@@ -2592,27 +2646,7 @@ export default function VideoPlayer({
           setIsPlaying(false);
           lastTickTimeRef.current = null;
           if (videoId && v && v.currentTime > 1) {
-            const historyPayload = JSON.stringify({ videoId, position: isMusic ? 0 : Math.floor(v.currentTime) });
-            if (isMusic) {
-              try {
-                localStorage.setItem(`tubelock_watched_${videoId}`, '1');
-                localStorage.removeItem(`tubelock_pos_${videoId}`);
-              } catch (_) { }
-            } else {
-              try {
-                localStorage.setItem(`tubelock_pos_${videoId}`, String(Math.floor(v.currentTime)));
-              } catch (_) { }
-            }
-            if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-              navigator.sendBeacon('/api/history', historyPayload);
-            } else {
-              fetch('/api/history', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: historyPayload,
-                keepalive: true,
-              }).catch(() => { });
-            }
+            syncHistoryToPlayState(v.currentTime, { forceServer: true });
           }
         }}
         onError={(e) => {
