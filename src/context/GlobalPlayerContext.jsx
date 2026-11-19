@@ -156,6 +156,11 @@ export function GlobalPlayerProvider({ children }) {
     playerConfigRef.current = playerConfig;
   }, [playerConfig]);
 
+  const isSwitchingVideoRef = useRef(isSwitchingVideo);
+  useEffect(() => {
+    isSwitchingVideoRef.current = isSwitchingVideo;
+  }, [isSwitchingVideo]);
+
   // Ensure singleton host is parked offscreen when no /watch slot owns it
   useLayoutEffect(() => {
     if (
@@ -190,7 +195,10 @@ export function GlobalPlayerProvider({ children }) {
 
     const v = videoRef.current;
     if (v && typeof document !== 'undefined' && document.pictureInPictureElement !== v) {
-      try { v.pause(); } catch (_) { }
+      try {
+        v.muted = true;
+        if (!v.paused) v.pause();
+      } catch (_) { }
     }
     if (hostEl && parkingRef.current && hostEl.parentNode !== parkingRef.current) {
       parkingRef.current.appendChild(hostEl);
@@ -211,6 +219,8 @@ export function GlobalPlayerProvider({ children }) {
         slotEl.appendChild(hostEl);
         if (
           v &&
+          !isSwitchingVideoRef.current &&
+          Boolean(streamUrlRef.current) &&
           (wasPlaying || (playerConfigRef.current?.autoplay ?? true)) &&
           v.paused &&
           v.readyState >= 2
@@ -222,15 +232,36 @@ export function GlobalPlayerProvider({ children }) {
     [hostEl]
   );
 
+  const silenceAndPauseCurrentVideo = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      v.muted = true;
+      if (!v.paused) {
+        v.pause();
+      }
+    } catch (_) { }
+  }, []);
+
   const undockPlayerSlot = useCallback(
     (slotEl) => {
       if (!slotEl || activeSlotRef.current !== slotEl) return;
       activeSlotRef.current = null;
-      setIsDockedInWatch(false);
 
-      const v = videoRef.current;
-      if (v && typeof document !== 'undefined' && document.pictureInPictureElement !== v) {
-        try { v.pause(); } catch (_) { }
+      const isPrimedWatchTransition =
+        Boolean(primedInfoRef.current) &&
+        typeof window !== 'undefined' &&
+        window.location.pathname.startsWith('/watch');
+
+      if (!isPrimedWatchTransition) {
+        setIsDockedInWatch(false);
+        const v = videoRef.current;
+        if (v && typeof document !== 'undefined' && document.pictureInPictureElement !== v) {
+          try {
+            v.muted = true;
+            if (!v.paused) v.pause();
+          } catch (_) { }
+        }
       }
       if (hostEl && parkingRef.current && hostEl.parentNode !== parkingRef.current) {
         parkingRef.current.appendChild(hostEl);
@@ -282,6 +313,7 @@ export function GlobalPlayerProvider({ children }) {
       }
       setSelection({ id: nextId, startTime: nextStart });
       setVideo((prev) => ({ ...(prev || {}), ...newVideo, id: nextId }));
+      isSwitchingVideoRef.current = false;
       setIsSwitchingVideo(false);
       if (v && v.readyState >= 2) {
         v.play().catch(() => { });
@@ -289,7 +321,10 @@ export function GlobalPlayerProvider({ children }) {
       return;
     }
 
+    silenceAndPauseCurrentVideo();
+
     const hasPreviousStream = Boolean(streamUrlRef.current);
+    isSwitchingVideoRef.current = hasPreviousStream;
     selectionIdRef.current = nextId;
     activeVersionKeyRef.current = normalizedVersion;
     errorRef.current = null;
@@ -304,7 +339,7 @@ export function GlobalPlayerProvider({ children }) {
     setSelection({ id: nextId, startTime: nextStart });
     setVideo({ ...newVideo, id: nextId });
     setStreamAttemptSeq((s) => s + 1);
-  }, []);
+  }, [silenceAndPauseCurrentVideo]);
 
   useEffect(() => {
     primeListeners.add(handlePrimeVideo);
@@ -377,6 +412,10 @@ export function GlobalPlayerProvider({ children }) {
       primedInfoRef.current = null;
 
       const hasPreviousStream = Boolean(streamUrlRef.current);
+      if (hasPreviousStream) {
+        silenceAndPauseCurrentVideo();
+      }
+      isSwitchingVideoRef.current = hasPreviousStream;
       selectionIdRef.current = initialVideo.id;
       activeVersionKeyRef.current = targetVersionKey;
       errorRef.current = null;
@@ -392,7 +431,7 @@ export function GlobalPlayerProvider({ children }) {
       setVideo(initialVideo);
       setStreamAttemptSeq((s) => s + 1);
     },
-    []
+    [silenceAndPauseCurrentVideo]
   );
 
   const id = selection.id;
@@ -476,7 +515,10 @@ export function GlobalPlayerProvider({ children }) {
         window.history.pushState(null, '', newUrl);
       }
 
+      silenceAndPauseCurrentVideo();
+
       primedInfoRef.current = null;
+      isSwitchingVideoRef.current = true;
       selectionIdRef.current = newVideo.id;
       activeVersionKeyRef.current = null;
       errorRef.current = null;
@@ -493,7 +535,7 @@ export function GlobalPlayerProvider({ children }) {
       setRelatedVideos((prev) => prev.filter((item) => item.id !== newVideo.id));
       setStreamAttemptSeq((s) => s + 1);
     },
-    [id]
+    [id, silenceAndPauseCurrentVideo]
   );
 
   // Version Switcher (keeps #movie_player & Fullscreen intact + preserves current timestamp)
@@ -513,6 +555,8 @@ export function GlobalPlayerProvider({ children }) {
       const currentPos = Number.isFinite(videoRef.current?.currentTime)
         ? videoRef.current.currentTime
         : 0;
+
+      silenceAndPauseCurrentVideo();
 
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href);
@@ -547,7 +591,7 @@ export function GlobalPlayerProvider({ children }) {
         }).catch(() => {});
       }
     },
-    [id, activeVersion]
+    [id, activeVersion, silenceAndPauseCurrentVideo]
   );
 
   // Stream resolution effect (runs immediately on click-prime OR direct SSR hydration!)
@@ -681,6 +725,7 @@ export function GlobalPlayerProvider({ children }) {
           : {};
 
         streamUrlRef.current = resolved.url;
+        isSwitchingVideoRef.current = false;
         setStreamUrl(resolved.url);
         setIsSwitchingVideo(false);
         setIsSwitchingVersion(false);
@@ -746,6 +791,7 @@ export function GlobalPlayerProvider({ children }) {
       } catch (err) {
         console.error('[GlobalPlayer Error]:', err);
         if (!cancelled) {
+          isSwitchingVideoRef.current = false;
           setIsSwitchingVideo(false);
           setIsSwitchingVersion(false);
           streamUrlRef.current = '';

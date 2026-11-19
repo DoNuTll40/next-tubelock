@@ -105,17 +105,30 @@ export default function VideoPlayer({
   const seekTrackRef = useRef(null);
   const hlsInstanceRef = useRef(null);
   const hlsRetryCountRef = useRef(0);
+  const isTransitioningStreamRef = useRef(false);
+  const isSwitchingVideoRef = useRef(isSwitchingVideo);
+  useLayoutEffect(() => {
+    isSwitchingVideoRef.current = isSwitchingVideo;
+  }, [isSwitchingVideo]);
 
   // Resume / Timestamp seeking support (?t=seconds)
   // For music: always restart from 00:00 (targetInitialTime = 0)
   const initialSeekDoneRef = useRef(false);
   const targetInitialTime = isMusic ? 0 : (Number(initialTime) || 0);
 
-  // When switching video: pause old video immediately, show buffering, reset progress to 0:00, show new poster!
+  // When switching video: mute & stopLoad & pause old video silently, show buffering, reset progress to 0:00, show new poster!
   useEffect(() => {
+    isSwitchingVideoRef.current = isSwitchingVideo;
     if (isSwitchingVideo) {
+      isTransitioningStreamRef.current = true;
+      if (hlsInstanceRef.current) {
+        try { hlsInstanceRef.current.stopLoad(); } catch (_) { }
+      }
       if (video.current) {
-        try { video.current.pause(); } catch (_) { }
+        try {
+          video.current.muted = true;
+          video.current.pause();
+        } catch (_) { }
       }
       setIsPlaying(false);
       setIsBuffering(true);
@@ -150,14 +163,12 @@ export default function VideoPlayer({
     if (src === prevSrcRef.current) return;
     prevSrcRef.current = src;
 
+    isTransitioningStreamRef.current = true;
     initialSeekDoneRef.current = false;
     isEndedRef.current = false;
     setIsEnded(false);
     isUserPausedRef.current = false;
-    if (!isUserMutedRef.current) {
-      if (video.current) video.current.muted = false;
-      setIsMuted(false);
-    }
+    setIsMuted(isUserMutedRef.current);
     setShowPoster(true);
     const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
     lastReportedSecondRef.current = Math.floor(startSec);
@@ -980,6 +991,9 @@ export default function VideoPlayer({
     const v = video.current;
     if (!v || !src || isSwitchingVideo) return;
 
+    isTransitioningStreamRef.current = true;
+    try { v.muted = true; } catch (_) { }
+
     setHlsError(null);
     setIsBuffering(true);
     setLevels([]);
@@ -988,14 +1002,19 @@ export default function VideoPlayer({
     hlsRetryCountRef.current = 0;
 
     isUserPausedRef.current = false;
-    if (!isUserMutedRef.current) {
-      v.muted = false;
-      setIsMuted(false);
-    }
     if (hlsInstanceRef.current) {
+      try { hlsInstanceRef.current.stopLoad(); } catch (_) { }
       hlsInstanceRef.current.destroy();
       hlsInstanceRef.current = null;
     }
+
+    const finishStreamTransitionUnmute = () => {
+      if (!isTransitioningStreamRef.current) return;
+      isTransitioningStreamRef.current = false;
+      const targetMuted = isUserMutedRef.current;
+      try { v.muted = targetMuted; } catch (_) { }
+      setIsMuted(targetMuted);
+    };
 
     const isHls = src.startsWith('blob:') || src.includes('.m3u8') || src.includes('playlist');
     let isMounted = true;
@@ -1153,6 +1172,7 @@ export default function VideoPlayer({
             }
 
             hls.startLoad(targetInitialTime > 0 ? targetInitialTime : -1);
+            finishStreamTransitionUnmute();
             if (v && v.readyState >= 2) {
               attemptAutoPlay();
             }
@@ -1180,6 +1200,7 @@ export default function VideoPlayer({
           });
 
           hls.on(Hls.Events.FRAG_BUFFERED, () => {
+            finishStreamTransitionUnmute();
             checkAndUpdateRatio();
             attemptAutoPlay();
           });
@@ -1237,6 +1258,7 @@ export default function VideoPlayer({
         } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
           // Native Safari Apple hardware acceleration
           v.src = src;
+          finishStreamTransitionUnmute();
           if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
             initialSeekDoneRef.current = true;
             const applySeek = () => {
@@ -1255,6 +1277,7 @@ export default function VideoPlayer({
       } else {
         // Direct MP4 - Clean Native Playback
         v.src = src;
+        finishStreamTransitionUnmute();
         if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
           initialSeekDoneRef.current = true;
           const applySeek = () => {
@@ -1270,10 +1293,12 @@ export default function VideoPlayer({
           }
         }
         if (isActiveRef.current && defaultAutoplay && !isUserPausedRef.current) {
-          v.play().then(() => setIsPlaying(true)).catch(() => {
-            v.muted = true;
-            setIsMuted(true);
-            v.play().then(() => setIsPlaying(true)).catch(() => { });
+          v.play().then(() => setIsPlaying(true)).catch((err) => {
+            if (err?.name === 'NotAllowedError') {
+              v.muted = true;
+              setIsMuted(true);
+              v.play().then(() => setIsPlaying(true)).catch(() => { });
+            }
           });
         }
       }
@@ -2067,11 +2092,17 @@ export default function VideoPlayer({
         setShowSettingsMenu(false);
         setContextMenu(null);
       });
-      if (v && !v.paused && (typeof document === 'undefined' || document.pictureInPictureElement !== v)) {
-        try { v.pause(); } catch (_) { }
+      if (v && (typeof document === 'undefined' || document.pictureInPictureElement !== v)) {
+        try {
+          v.muted = true;
+          if (!v.paused) v.pause();
+        } catch (_) { }
       }
-    } else if (v && src && !isSwitchingVideo && v.readyState >= 2) {
-      attemptAutoPlay();
+    } else if (v && src && !isSwitchingVideo && !isSwitchingVideoRef.current && !isTransitioningStreamRef.current) {
+      try { v.muted = isUserMutedRef.current; } catch (_) { }
+      if (v.readyState >= 2) {
+        attemptAutoPlay();
+      }
     }
     return () => {
       cancelled = true;
@@ -2406,7 +2437,7 @@ export default function VideoPlayer({
         onRateChange={() => syncMediaPositionState()}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => {
-          if (isSwitchingVideo) return;
+          if (isSwitchingVideo || isSwitchingVideoRef.current) return;
           setIsBuffering(false);
           setIsPlaying(true);
           setShowPoster(false);
@@ -2418,7 +2449,15 @@ export default function VideoPlayer({
         }}
         onPause={() => {
           const v = video.current;
-          if (isSwitchingVideo || !v || v.readyState < 1) return;
+          if (
+            isSwitchingVideo ||
+            isSwitchingVideoRef.current ||
+            isTransitioningStreamRef.current ||
+            !v ||
+            v.readyState < 1
+          ) {
+            return;
+          }
           const isAtEnd = v && (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current);
 
           if (isAtEnd) {
@@ -2458,7 +2497,13 @@ export default function VideoPlayer({
           }
 
           // หากเบราว์เซอร์ emit pause เองระหว่างเล่น โดยที่ผู้ใช้ไม่ได้กดหยุด และคลิปยังไม่จบ (เช่น Buffer stall / MSE pipeline hiccup)
-          if (!isUserPausedRef.current && !isSwitchingVideo && isActiveRef.current) {
+          if (
+            !isUserPausedRef.current &&
+            !isSwitchingVideo &&
+            !isSwitchingVideoRef.current &&
+            !isTransitioningStreamRef.current &&
+            isActiveRef.current
+          ) {
             if (v && v.readyState >= 2) {
               v.play().catch(() => { });
               return;
