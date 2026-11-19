@@ -1,7 +1,10 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
+import { preloadHlsModule } from '@/lib/playbackResolver';
+import { useSession } from '@/context/SessionContext';
 import {
   formatTime,
   formatTimePair,
@@ -17,10 +20,19 @@ import {
 import PlayerTopBar from './player/PlayerTopBar';
 import PlayerCenterControls from './player/PlayerCenterControls';
 import PlayerBottomBar from './player/PlayerBottomBar';
-import PlayerSettingsModal from './player/PlayerSettingsModal';
-import PlayerStatsModal from './player/PlayerStatsModal';
-import PlayerContextMenu from './player/PlayerContextMenu';
-import PlayerEndScreen from './player/PlayerEndScreen';
+
+const PlayerSettingsModal = dynamic(() => import('./player/PlayerSettingsModal'), { ssr: false });
+const PlayerStatsModal = dynamic(() => import('./player/PlayerStatsModal'), { ssr: false });
+const PlayerContextMenu = dynamic(() => import('./player/PlayerContextMenu'), { ssr: false });
+const PlayerEndScreen = dynamic(() => import('./player/PlayerEndScreen'), { ssr: false });
+
+const SUB_SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const subSettingsCache = { data: null, at: 0 };
+
+function updateSubSettingsCache(data) {
+  subSettingsCache.data = data;
+  subSettingsCache.at = Date.now();
+}
 
 function unlockBrowserOrientation() {
   if (!window.matchMedia('(display-mode: standalone)').matches) {
@@ -104,14 +116,13 @@ export default function VideoPlayer({
       setShowPoster(true);
 
       // Reset playback states immediately
-      setCurrentTime(0);
       setDuration(0);
-      setSeekTime(0);
       setIsSeeking(false);
       lastReportedSecondRef.current = 0;
 
       // Clear progress bar, scrubber knob, buffer bar, and time display immediately
       if (progressBarRef.current) progressBarRef.current.style.width = '0%';
+      if (hoverBarRef.current) hoverBarRef.current.style.width = '0%';
       if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = '0%';
       if (bufferBarRef.current) bufferBarRef.current.style.width = '0%';
       if (timeDisplayRef.current) timeDisplayRef.current.textContent = '0:00 / 0:00';
@@ -136,9 +147,10 @@ export default function VideoPlayer({
     isUserPausedRef.current = false;
     setShowPoster(true);
     const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
-    setCurrentTime(startSec);
+    lastReportedSecondRef.current = Math.floor(startSec);
     if (startSec === 0) {
       if (progressBarRef.current) progressBarRef.current.style.width = '0%';
+      if (hoverBarRef.current) hoverBarRef.current.style.width = '0%';
       if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = '0%';
       if (timeDisplayRef.current) timeDisplayRef.current.textContent = '0:00 / 0:00';
     }
@@ -177,6 +189,7 @@ export default function VideoPlayer({
   // Performance Direct-DOM Refs (Prevents React re-render thrashing!)
   const progressBarRef = useRef(null);
   const bufferBarRef = useRef(null);
+  const hoverBarRef = useRef(null);
   const scrubberKnobRef = useRef(null);
   const timeDisplayRef = useRef(null);
   const fadeBlackOverlayRef = useRef(null);
@@ -264,9 +277,7 @@ export default function VideoPlayer({
   const [isBuffering, setIsBuffering] = useState(false);
   const [showPoster, setShowPoster] = useState(true);
   const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
-  const [seekTime, setSeekTime] = useState(0);
   const [volume, setVolume] = useState(defaultVolume);
   const [isMuted, setIsMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -325,75 +336,115 @@ export default function VideoPlayer({
   }, [isFullscreen, videoRatio, isMobileView]);
 
   // YouTube Mobile UI states & Subtitles (Direct from DB)
+  const session = useSession();
+  const hasSession = Boolean(session);
   const [isAutoplay, setIsAutoplay] = useState(defaultAutoplay);
   const [isCcActive, setIsCcActive] = useState(false);
   const [subtitleStyle, setSubtitleStyle] = useState(DEFAULT_SUBTITLE_STYLE);
   const [activeCueText, setActiveCueText] = useState('');
   const lastCueTextRef = useRef('');
   const subPrefsHydratedRef = useRef(false);
+  const userChangedSubPrefsRef = useRef(false);
   const skipNextDbSyncRef = useRef(false);
   const dbSyncTimerRef = useRef(null);
 
-  // Load saved CC preference & Subtitle style from localStorage + users table in DB
+  const handleUserSetCcActive = useCallback((updater) => {
+    userChangedSubPrefsRef.current = true;
+    setIsCcActive(updater);
+  }, []);
+
+  const handleUserSetSubtitleStyle = useCallback((updater) => {
+    userChangedSubPrefsRef.current = true;
+    setSubtitleStyle(updater);
+  }, []);
+
+  // Load saved CC preference & Subtitle style from localStorage + users table in DB (cached & deferred to protect TTFF)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     let isCancelled = false;
 
-    try {
-      const savedStyle = localStorage.getItem('tubelock_subtitle_style');
-      if (savedStyle) {
-        const parsed = JSON.parse(savedStyle);
-        if (parsed && typeof parsed === 'object') {
-          setSubtitleStyle({ ...DEFAULT_SUBTITLE_STYLE, ...parsed });
-        }
+    const applyDbSettings = (data) => {
+      if (isCancelled || !data?.authenticated || !data?.subtitleSettings) return;
+      const { style: dbStyle, ccActive: dbCcActive } = data.subtitleSettings;
+      skipNextDbSyncRef.current = true;
+      if (dbStyle && typeof dbStyle === 'object') {
+        const merged = { ...DEFAULT_SUBTITLE_STYLE, ...dbStyle };
+        setSubtitleStyle(merged);
+        try {
+          localStorage.setItem('tubelock_subtitle_style', JSON.stringify(merged));
+        } catch (_) { }
       }
-      const savedCc = localStorage.getItem('tubelock_cc_active');
-      if (savedCc === '1') {
-        setIsCcActive(true);
+      if (typeof dbCcActive === 'boolean') {
+        setIsCcActive(dbCcActive);
+        try {
+          localStorage.setItem('tubelock_cc_active', dbCcActive ? '1' : '0');
+        } catch (_) { }
       }
-    } catch (_) { }
-    subPrefsHydratedRef.current = true;
+      setTimeout(() => {
+        skipNextDbSyncRef.current = false;
+      }, 100);
+    };
 
-    // Fetch per-user subtitle settings from DB (`users.subtitle_settings`)
-    fetch('/api/user/subtitle-settings', { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (isCancelled || !data?.authenticated || !data?.subtitleSettings) return;
-        const { style: dbStyle, ccActive: dbCcActive } = data.subtitleSettings;
-        skipNextDbSyncRef.current = true;
-        if (dbStyle && typeof dbStyle === 'object') {
-          const merged = { ...DEFAULT_SUBTITLE_STYLE, ...dbStyle };
-          setSubtitleStyle(merged);
-          try {
-            localStorage.setItem('tubelock_subtitle_style', JSON.stringify(merged));
-          } catch (_) { }
+    Promise.resolve().then(() => {
+      if (isCancelled) return;
+      try {
+        const savedStyle = localStorage.getItem('tubelock_subtitle_style');
+        if (savedStyle) {
+          const parsed = JSON.parse(savedStyle);
+          if (parsed && typeof parsed === 'object') {
+            setSubtitleStyle({ ...DEFAULT_SUBTITLE_STYLE, ...parsed });
+          }
         }
-        if (typeof dbCcActive === 'boolean') {
-          setIsCcActive(dbCcActive);
-          try {
-            localStorage.setItem('tubelock_cc_active', dbCcActive ? '1' : '0');
-          } catch (_) { }
+        const savedCc = localStorage.getItem('tubelock_cc_active');
+        if (savedCc === '1') {
+          setIsCcActive(true);
         }
-        setTimeout(() => {
-          skipNextDbSyncRef.current = false;
-        }, 100);
-      })
-      .catch(() => { });
+      } catch (_) { }
+      subPrefsHydratedRef.current = true;
+    });
+
+    if (!hasSession) {
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    if (subSettingsCache.data && Date.now() - subSettingsCache.at < SUB_SETTINGS_CACHE_TTL_MS) {
+      Promise.resolve().then(() => applyDbSettings(subSettingsCache.data));
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    // Defer account sync so it never contends with initial manifest / chunk #0 startup
+    const fetchTimer = setTimeout(() => {
+      fetch('/api/user/subtitle-settings', { cache: 'no-store' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (isCancelled || !data) return;
+          updateSubSettingsCache(data);
+          applyDbSettings(data);
+        })
+        .catch(() => { });
+    }, 1200);
 
     return () => {
       isCancelled = true;
+      clearTimeout(fetchTimer);
     };
-  }, []);
+  }, [hasSession]);
 
-  // Persist subtitleStyle & isCcActive to localStorage + users table in DB after hydration
+  // Persist subtitleStyle & isCcActive to localStorage + users table ONLY when user explicitly changed preferences
   useEffect(() => {
-    if (typeof window === 'undefined' || !subPrefsHydratedRef.current) return;
+    if (typeof window === 'undefined' || !subPrefsHydratedRef.current || !userChangedSubPrefsRef.current) {
+      return;
+    }
     try {
       localStorage.setItem('tubelock_subtitle_style', JSON.stringify(subtitleStyle));
       localStorage.setItem('tubelock_cc_active', isCcActive ? '1' : '0');
     } catch (_) { }
 
-    if (skipNextDbSyncRef.current) return;
+    if (!hasSession || skipNextDbSyncRef.current) return;
 
     if (dbSyncTimerRef.current) {
       clearTimeout(dbSyncTimerRef.current);
@@ -406,7 +457,17 @@ export default function VideoPlayer({
           style: subtitleStyle,
           ccActive: isCcActive,
         }),
-      }).catch(() => { });
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((saved) => {
+          if (saved?.success) {
+            updateSubSettingsCache({
+              authenticated: true,
+              subtitleSettings: saved.subtitleSettings || { style: subtitleStyle, ccActive: isCcActive },
+            });
+          }
+        })
+        .catch(() => { });
     }, 350);
 
     return () => {
@@ -414,7 +475,7 @@ export default function VideoPlayer({
         clearTimeout(dbSyncTimerRef.current);
       }
     };
-  }, [subtitleStyle, isCcActive]);
+  }, [subtitleStyle, isCcActive, hasSession]);
 
   const computedSubStyles = useMemo(
     () => computeSubtitleStyles(subtitleStyle, isMobileView),
@@ -506,8 +567,19 @@ export default function VideoPlayer({
   // Controls & Menus
   const [showControls, setShowControls] = useState(true);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [hasOpenedSettings, setHasOpenedSettings] = useState(false);
   const settingsMenuRef = useRef(null);
   const [activeMenuTab, setActiveMenuTab] = useState('main'); // 'main' | 'speed' | 'quality' | 'aspect'
+
+  const handleSetShowSettingsMenu = useCallback((nextOrUpdater) => {
+    if (typeof nextOrUpdater === 'function') {
+      setHasOpenedSettings(true);
+      setShowSettingsMenu(nextOrUpdater);
+    } else {
+      if (nextOrUpdater) setHasOpenedSettings(true);
+      setShowSettingsMenu(nextOrUpdater);
+    }
+  }, []);
 
   // Click Outside to Dismiss Settings Menu (YouTube Standard)
   useEffect(() => {
@@ -537,19 +609,14 @@ export default function VideoPlayer({
   const [currentLevelIndex, setCurrentLevelIndex] = useState(-1);
   const [activeLevelLabel, setActiveLevelLabel] = useState(formatResolutionBadge(resolution) || 'Auto');
 
-  // Scrubbing & Hover Preview
+  // Scrubbing & Hover Preview (Direct DOM updates only — zero React state churn during hover/scrub!)
   const [isScrubbing, setIsScrubbing] = useState(false);
   const isScrubbingRef = useRef(false);
   const latestScrubTimeRef = useRef(null);
   useEffect(() => {
     isScrubbingRef.current = isScrubbing;
   }, [isScrubbing]);
-  const [scrubPercent, setScrubPercent] = useState(0);
-  const [previewTime, setPreviewTime] = useState(0);
-  const [previewPercent, setPreviewPercent] = useState(0);
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
-  const [hoverTime, setHoverTime] = useState(0);
-  const [hoverPercent, setHoverPercent] = useState(0);
   const lastHoverTimeRef = useRef(0);    // ค้าง hover time ล่าสุด — ใช้ fallback ไม่ให้ preview วิ่งไป 0:00 ตอน mouse leave
   const lastHoverPercentRef = useRef(0); // ค้าง hover position ล่าสุด
   const scrubPreviewRef = useRef(null);
@@ -689,14 +756,13 @@ export default function VideoPlayer({
       return;
     }
 
-    // Throttled React state update: only update currentTime state once per second to prevent 4x/s re-render thrashing
+    // Direct DOM manipulation only — ZERO React re-renders per second during playback!
     const curSecFloor = Math.floor(cur);
-    if (curSecFloor !== lastReportedSecondRef.current) {
+    const timeChanged = curSecFloor !== lastReportedSecondRef.current;
+    if (timeChanged) {
       lastReportedSecondRef.current = curSecFloor;
-      setCurrentTime(cur);
     }
 
-    // Direct DOM manipulation - doesn't re-render the 1400 lines of React components!
     if (dur > 0) {
       const pct = (cur / dur) * 100;
       if (progressBarRef.current) {
@@ -705,7 +771,7 @@ export default function VideoPlayer({
       if (scrubberKnobRef.current) {
         scrubberKnobRef.current.style.left = `${pct}%`;
       }
-      if (timeDisplayRef.current) {
+      if (timeDisplayRef.current && timeChanged) {
         timeDisplayRef.current.textContent = formatTimePair(cur, dur);
       }
     }
@@ -912,8 +978,8 @@ export default function VideoPlayer({
 
     async function initHls() {
       if (isHls) {
-        const { default: Hls } = await import('hls.js');
-        if (!isMounted) return;
+        const Hls = await preloadHlsModule();
+        if (!isMounted || !Hls) return;
 
         if (Hls.isSupported()) {
           // ✨ Quality Persistence: อ่าน height ที่ผู้ใช้เคยเลือกไว้ → match กับ level index
@@ -1008,7 +1074,7 @@ export default function VideoPlayer({
                 v.currentTime = startSec;
               } catch (_) { }
             }
-            setCurrentTime(startSec);
+            lastReportedSecondRef.current = Math.floor(startSec);
             initialSeekDoneRef.current = true;
             if (data.levels && data.levels.length > 0) {
               const videoFps = Number(fps) || 0;
@@ -1150,7 +1216,6 @@ export default function VideoPlayer({
             const applySeek = () => {
               try {
                 v.currentTime = targetInitialTime;
-                setCurrentTime(targetInitialTime);
               } catch (_) { }
               v.removeEventListener('loadedmetadata', applySeek);
             };
@@ -1169,7 +1234,6 @@ export default function VideoPlayer({
           const applySeek = () => {
             try {
               v.currentTime = targetInitialTime;
-              setCurrentTime(targetInitialTime);
             } catch (_) { }
             v.removeEventListener('loadedmetadata', applySeek);
           };
@@ -1470,8 +1534,7 @@ export default function VideoPlayer({
     isSeekingRef.current = true;
     setIsSeeking(true);
     seekTimeRef.current = clamped;
-    setSeekTime(clamped);
-    setCurrentTime(clamped);
+    lastReportedSecondRef.current = Math.floor(clamped);
 
     if (seekCooldownTimerRef.current) {
       clearTimeout(seekCooldownTimerRef.current);
@@ -1492,18 +1555,17 @@ export default function VideoPlayer({
     if (timeDisplayRef.current) {
       timeDisplayRef.current.textContent = formatTimePair(clamped, dur);
     }
-    setScrubPercent(pct);
-    setPreviewTime(clamped);
-    if (seekTrackRef.current) {
+    if (scrubBadgeRef.current) {
+      scrubBadgeRef.current.textContent = formatTime(clamped);
+    }
+    if (seekTrackRef.current && scrubPreviewRef.current) {
       const rect = seekTrackRef.current.getBoundingClientRect();
       if (rect && rect.width > 0) {
         const offsetX = (clamped / dur) * rect.width;
-        setPreviewPercent(getClampedPreviewPercent(offsetX, rect));
+        scrubPreviewRef.current.style.left = `${getClampedPreviewPercent(offsetX, rect)}%`;
       } else {
-        setPreviewPercent(pct);
+        scrubPreviewRef.current.style.left = `${pct}%`;
       }
-    } else {
-      setPreviewPercent(pct);
     }
     updateStoryboardThumbnail(clamped); // เรียกใช้ได้แล้ว เพราะประกาศไว้ด้านบนแล้ว
     pendingTargetTimeRef.current = null;
@@ -1549,20 +1611,20 @@ export default function VideoPlayer({
 
     latestScrubTimeRef.current = calculatedSec;
 
-    // Zero-lag direct DOM updates!
+    // Zero-lag direct DOM updates (0 React re-renders during drag/scrub!)
     if (scrubPreviewRef.current) {
       scrubPreviewRef.current.style.left = `${clampedPercent}%`;
     }
     if (scrubBadgeRef.current) {
       scrubBadgeRef.current.textContent = formatTime(calculatedSec);
     }
+    if (hoverBarRef.current) hoverBarRef.current.style.width = `${percent}%`;
     if (progressBarRef.current) progressBarRef.current.style.width = `${percent}%`;
     if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${percent}%`;
     if (timeDisplayRef.current) timeDisplayRef.current.textContent = formatTimePair(calculatedSec, realDur);
 
-    setScrubPercent(percent);
-    setPreviewPercent(clampedPercent);
-    setPreviewTime(calculatedSec);
+    lastHoverTimeRef.current = calculatedSec;
+    lastHoverPercentRef.current = clampedPercent;
     updateStoryboardThumbnail(calculatedSec);
   };
 
@@ -1577,17 +1639,17 @@ export default function VideoPlayer({
     const time = (offsetX / rect.width) * realDur;
     const clampedPct = getClampedPreviewPercent(offsetX, rect);
 
-    // Zero-lag direct DOM update on hover as well!
+    // Zero-lag direct DOM updates on hover (0 React re-renders per mousemove!)
     if (scrubPreviewRef.current) {
       scrubPreviewRef.current.style.left = `${clampedPct}%`;
     }
     if (scrubBadgeRef.current) {
       scrubBadgeRef.current.textContent = formatTime(time);
     }
+    if (hoverBarRef.current) {
+      hoverBarRef.current.style.width = `${pct}%`;
+    }
 
-    setHoverPercent(pct);
-    setPreviewPercent(clampedPct);
-    setHoverTime(time);
     lastHoverTimeRef.current = time;       // เก็บค้างไว้ใน ref เพื่อ fallback ตอน fade-out
     lastHoverPercentRef.current = clampedPct;
     updateStoryboardThumbnail(time);
@@ -2011,7 +2073,7 @@ export default function VideoPlayer({
           showToast('วิดีโอนี้ยังไม่มีคำบรรยาย (CC)');
           return;
         }
-        setIsCcActive((prev) => {
+        handleUserSetCcActive((prev) => {
           const next = !prev;
           showToast(next ? 'เปิดคำบรรยาย (CC)' : 'ปิดคำบรรยาย');
           return next;
@@ -2051,7 +2113,7 @@ export default function VideoPlayer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, setIsCcActive]);
+  }, [togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive]);
 
   // Sync position progress & playback speed with OS media controls (Android / Lockscreen / Bluetooth)
   const syncMediaPositionState = useCallback((positionOverride = null) => {
@@ -2190,18 +2252,35 @@ export default function VideoPlayer({
   const isHD = is4K || (resolution && (resolution.toString().includes('1080') || resolution.toString().includes('720') || resolution.toString().includes('1440'))) ||
     (activeLevelLabel && (activeLevelLabel.includes('1080') || activeLevelLabel.includes('720') || activeLevelLabel.includes('1440')));
 
-  // Persistent progress and time values with Optimistic UI:
-  // ให้แถบ Seekbar และตัวเลขเวลาใน UI ใช้ค่าเวลาตามเงื่อนไข: isSeeking ? seekTime : currentTime
-  const effectiveTime = isSwitchingVideo ? 0 : (isSeeking ? seekTime : currentTime);
-  const effectiveDuration = isSwitchingVideo ? 0 : duration;
-  const currentVideoTime = effectiveTime;
-  const currentProgressPct = effectiveDuration > 0 ? Math.min(100, Math.max(0, (currentVideoTime / effectiveDuration) * 100)) : 0;
-  const activeScrubPercent = isSwitchingVideo ? 0 : (isScrubbing ? scrubPercent : currentProgressPct);
-  const activeTimeDisplay = isSwitchingVideo
-    ? '0:00 / 0:00'
-    : isScrubbing
-      ? formatTimePair(previewTime, duration)
-      : formatTimePair(currentVideoTime, duration);
+  // Keep DOM scrubber/timer refs synchronized immediately when bottom bar layout changes (Mobile <-> Desktop <-> Fullscreen)
+  useLayoutEffect(() => {
+    const v = video.current;
+    const dur = isSwitchingVideo ? 0 : (v?.duration || duration || 0);
+    const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
+    const cur = isSwitchingVideo ? 0 : (v?.currentTime ?? startSec);
+    const pct = dur > 0 ? Math.min(100, Math.max(0, (cur / dur) * 100)) : 0;
+
+    if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
+    if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
+    if (timeDisplayRef.current) {
+      timeDisplayRef.current.textContent = dur > 0 ? formatTimePair(cur, dur) : '0:00 / 0:00';
+    }
+    if (bufferBarRef.current) {
+      if (isSwitchingVideo || !v || dur <= 0) {
+        bufferBarRef.current.style.width = '0%';
+      } else {
+        let bufPct = 0;
+        const b = v.buffered;
+        for (let i = 0; i < b.length; i++) {
+          if (b.start(i) <= cur && cur <= b.end(i)) {
+            bufPct = Math.min((b.end(i) / dur) * 100, 100);
+            break;
+          }
+        }
+        bufferBarRef.current.style.width = `${bufPct}%`;
+      }
+    }
+  }, [isMobileView, isFullscreen, isSwitchingVideo, duration, src, targetInitialTime]);
 
   const controlsVisible = showControls || (!isMobileView && !isPlaying);
   const subtitleLayout = useMemo(
@@ -2215,8 +2294,6 @@ export default function VideoPlayer({
     }),
     [containerSize.width, containerSize.height, videoRatio, aspectMode, controlsVisible, isMobileView, isScrubbing]
   );
-
-  const initialBufferPct = 0;
 
   return (
     <div
@@ -2419,11 +2496,15 @@ export default function VideoPlayer({
           const v = video.current;
           if (v) {
             const vDur = Math.max(v.duration || 0, duration, v.currentTime);
-            setCurrentTime(v.currentTime);
             lastReportedSecondRef.current = Math.floor(v.currentTime);
             if (vDur - v.currentTime > 1.0) {
               isEndedRef.current = false;
               setIsEnded(false);
+            }
+            if (vDur > 0) {
+              const pct = Math.min(100, Math.max(0, (v.currentTime / vDur) * 100));
+              if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
+              if (scrubberKnobRef.current) scrubberKnobRef.current.style.left = `${pct}%`;
             }
             if (timeDisplayRef.current) {
               timeDisplayRef.current.textContent = formatTimePair(v.currentTime, vDur);
@@ -2464,9 +2545,9 @@ export default function VideoPlayer({
             initialSeekDoneRef.current = true;
             try {
               e.target.currentTime = startSec;
-              setCurrentTime(startSec);
             } catch (_) { }
           }
+          lastReportedSecondRef.current = Math.floor(startSec);
 
           if (dur && dur > 0) {
             const pct = Math.min((startSec / dur) * 100, 100);
@@ -2547,10 +2628,10 @@ export default function VideoPlayer({
         isAutoplay={isAutoplay}
         setIsAutoplay={setIsAutoplay}
         isCcActive={isCcActive}
-        setIsCcActive={setIsCcActive}
+        setIsCcActive={handleUserSetCcActive}
         hasSubtitles={hasSubtitles}
         showSettingsMenu={showSettingsMenu}
-        setShowSettingsMenu={setShowSettingsMenu}
+        setShowSettingsMenu={handleSetShowSettingsMenu}
         setSettingsPlacement={setSettingsPlacement}
         setActiveMenuTab={setActiveMenuTab}
         activeLevelLabel={activeLevelLabel}
@@ -2581,84 +2662,92 @@ export default function VideoPlayer({
         resetControlsTimer={resetControlsTimer}
       />
 
-      {/* 🎬 YouTube-style End Screen Overlay (Dynamic 3 Cards on PC) */}
-      <PlayerEndScreen
-        isVisible={isEnded && !isLooping && !isSwitchingVideo}
-        isFullscreen={isFullscreen}
-        currentVideo={currentVideo || { id: videoId, title, category: videoCategory, author_name: channelName }}
-        relatedVideos={relatedVideos}
-        onReplay={togglePlay}
-        onSelectVideo={onSelectVideo}
-      />
+      {/* 🎬 YouTube-style End Screen Overlay (Lazy-loaded via next/dynamic only when ended) */}
+      {(isEnded && !isLooping && !isSwitchingVideo) && (
+        <PlayerEndScreen
+          isVisible={true}
+          isFullscreen={isFullscreen}
+          currentVideo={currentVideo || { id: videoId, title, category: videoCategory, author_name: channelName }}
+          relatedVideos={relatedVideos}
+          onReplay={togglePlay}
+          onSelectVideo={onSelectVideo}
+        />
+      )}
 
-      {/* Telemetry HUD (Stats for Nerds) */}
-      <PlayerStatsModal
-        showStats={showStats}
-        setShowStats={setShowStats}
-        video={video}
-        hlsRef={hlsInstanceRef}
-        containerRef={containerRef}
-        videoRatio={videoRatio}
-        aspectMode={aspectMode}
-        isPlaying={isPlaying}
-        fps={fps}
-        codec={codec}
-        videoId={videoId}
-        videoSlug={videoSlug}
-        videoCategory={videoCategory}
-        src={src}
-        showToast={showToast}
-      />
+      {/* Telemetry HUD (Stats for Nerds — Lazy-loaded only when opened) */}
+      {showStats && (
+        <PlayerStatsModal
+          showStats={showStats}
+          setShowStats={setShowStats}
+          video={video}
+          hlsRef={hlsInstanceRef}
+          containerRef={containerRef}
+          videoRatio={videoRatio}
+          aspectMode={aspectMode}
+          isPlaying={isPlaying}
+          fps={fps}
+          codec={codec}
+          videoId={videoId}
+          videoSlug={videoSlug}
+          videoCategory={videoCategory}
+          src={src}
+          showToast={showToast}
+        />
+      )}
 
-      {/* Custom Context Menu */}
-      <PlayerContextMenu
-        contextMenu={contextMenu}
-        setContextMenu={setContextMenu}
-        video={video}
-        isLooping={isLooping}
-        setIsLooping={setIsLooping}
-        showStats={showStats}
-        setShowStats={setShowStats}
-        showToast={showToast}
-      />
+      {/* Custom Context Menu (Lazy-loaded only on right-click) */}
+      {contextMenu && (
+        <PlayerContextMenu
+          contextMenu={contextMenu}
+          setContextMenu={setContextMenu}
+          video={video}
+          isLooping={isLooping}
+          setIsLooping={setIsLooping}
+          showStats={showStats}
+          setShowStats={setShowStats}
+          showToast={showToast}
+        />
+      )}
 
-      {/* Multi-Tab Settings Menu */}
-      <PlayerSettingsModal
-        showSettingsMenu={showSettingsMenu}
-        setShowSettingsMenu={setShowSettingsMenu}
-        settingsMenuRef={settingsMenuRef}
-        settingsPlacement={settingsPlacement}
-        isMobileView={isMobileView}
-        isFullscreen={isFullscreen}
-        activeMenuTab={activeMenuTab}
-        setActiveMenuTab={setActiveMenuTab}
-        levels={levels}
-        currentLevelIndex={currentLevelIndex}
-        activeLevelLabel={activeLevelLabel}
-        handleSelectQuality={handleSelectQuality}
-        playbackRate={playbackRate}
-        setPlaybackRate={setPlaybackRate}
-        aspectMode={aspectMode}
-        setAspectMode={setAspectMode}
-        video={video}
-        showToast={showToast}
-        resetControlsTimer={resetControlsTimer}
-        ambientMode={ambientMode}
-        setAmbientMode={setAmbientMode}
-        isCcActive={isCcActive}
-        setIsCcActive={setIsCcActive}
-        hasSubtitles={hasSubtitles}
-        subtitleTracks={subtitleTracks}
-        selectedSubTrackId={selectedSubTrackId}
-        setSelectedSubTrackId={setSelectedSubTrackId}
-        activeSubTrack={activeSubTrack}
-        subtitleStyle={subtitleStyle}
-        setSubtitleStyle={setSubtitleStyle}
-        versions={versions}
-        activeVersion={activeVersion}
-        onSelectVersion={onSelectVersion}
-        isSwitchingVersion={isSwitchingVersion}
-      />
+      {/* Multi-Tab Settings Menu (Lazy-loaded with framer-motion ONLY on first settings open!) */}
+      {(hasOpenedSettings || showSettingsMenu) && (
+        <PlayerSettingsModal
+          showSettingsMenu={showSettingsMenu}
+          setShowSettingsMenu={handleSetShowSettingsMenu}
+          settingsMenuRef={settingsMenuRef}
+          settingsPlacement={settingsPlacement}
+          isMobileView={isMobileView}
+          isFullscreen={isFullscreen}
+          activeMenuTab={activeMenuTab}
+          setActiveMenuTab={setActiveMenuTab}
+          levels={levels}
+          currentLevelIndex={currentLevelIndex}
+          activeLevelLabel={activeLevelLabel}
+          handleSelectQuality={handleSelectQuality}
+          playbackRate={playbackRate}
+          setPlaybackRate={setPlaybackRate}
+          aspectMode={aspectMode}
+          setAspectMode={setAspectMode}
+          video={video}
+          showToast={showToast}
+          resetControlsTimer={resetControlsTimer}
+          ambientMode={ambientMode}
+          setAmbientMode={setAmbientMode}
+          isCcActive={isCcActive}
+          setIsCcActive={handleUserSetCcActive}
+          hasSubtitles={hasSubtitles}
+          subtitleTracks={subtitleTracks}
+          selectedSubTrackId={selectedSubTrackId}
+          setSelectedSubTrackId={setSelectedSubTrackId}
+          activeSubTrack={activeSubTrack}
+          subtitleStyle={subtitleStyle}
+          setSubtitleStyle={handleUserSetSubtitleStyle}
+          versions={versions}
+          activeVersion={activeVersion}
+          onSelectVersion={onSelectVersion}
+          isSwitchingVersion={isSwitchingVersion}
+        />
+      )}
 
       {/* 💬 YouTube-Style Subtitle (CC) Overlay */}
       {(() => {
@@ -2705,7 +2794,6 @@ export default function VideoPlayer({
         isScrubbing={isScrubbing}
         isMobileView={isMobileView}
         isFullscreen={isFullscreen}
-        activeTimeDisplay={activeTimeDisplay}
         timeDisplayRef={timeDisplayRef}
         togglePlay={togglePlay}
         toggleMute={toggleMute}
@@ -2723,10 +2811,10 @@ export default function VideoPlayer({
         isAutoplay={isAutoplay}
         setIsAutoplay={setIsAutoplay}
         isCcActive={isCcActive}
-        setIsCcActive={setIsCcActive}
+        setIsCcActive={handleUserSetCcActive}
         hasSubtitles={hasSubtitles}
         showSettingsMenu={showSettingsMenu}
-        setShowSettingsMenu={setShowSettingsMenu}
+        setShowSettingsMenu={handleSetShowSettingsMenu}
         setSettingsPlacement={setSettingsPlacement}
         setActiveMenuTab={setActiveMenuTab}
         activeLevelLabel={activeLevelLabel}
@@ -2744,20 +2832,13 @@ export default function VideoPlayer({
         scrubThumbHdRef={scrubThumbHdRef}
         scrubBadgeRef={scrubBadgeRef}
         bufferBarRef={bufferBarRef}
+        hoverBarRef={hoverBarRef}
         progressBarRef={progressBarRef}
         scrubberKnobRef={scrubberKnobRef}
         isHoveringSeek={isHoveringSeek}
         setIsHoveringSeek={setIsHoveringSeek}
-        previewPercent={previewPercent}
-        hoverPercent={hoverPercent}
-        previewTime={previewTime}
-        hoverTime={hoverTime}
-        lastHoverTimeRef={lastHoverTimeRef}
-        lastHoverPercentRef={lastHoverPercentRef}
         videoRatio={videoRatio}
         poster={keepScrubPreviewOnLoad ? null : poster}
-        initialBufferPct={initialBufferPct}
-        activeScrubPercent={activeScrubPercent}
         handlePointerDown={handlePointerDown}
         handleSeekMouseMove={handleSeekMouseMove}
         handlePointerUp={handlePointerUp}

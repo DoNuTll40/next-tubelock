@@ -1,3 +1,4 @@
+import { getCachedServerSession } from '@/lib/access';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
 import { protectVideoPoster } from '@/lib/videoUtils';
 import { notFound, redirect } from 'next/navigation';
@@ -170,22 +171,9 @@ export default async function WatchPage({ params, searchParams }) {
 
   const sql = getDb();
 
-  // Resolve user_id from session cookie
-  const cookieStore = await cookies();
-  const token = cookieStore.get('tubelock_session')?.value;
-  let userId = null;
-  if (token) {
-    try {
-      const sRows = await sql`
-        SELECT user_id FROM user_sessions
-        WHERE session_token = ${token}
-          AND is_active = TRUE
-          AND expires_at > NOW()
-        LIMIT 1;
-      `;
-      if (sRows.length > 0) userId = sRows[0].user_id;
-    } catch (_) {}
-  }
+  // Reuse request-deduped & 30s cached session from RootLayout (0 extra DB queries!)
+  const [cookieStore, session] = await Promise.all([cookies(), getCachedServerSession()]);
+  const userId = session?.id ?? null;
 
   let video = null;
   let relatedVideos = [];
@@ -193,11 +181,44 @@ export default async function WatchPage({ params, searchParams }) {
   try {
     // ⚡ Performance Optimization:
     // 1. getVideoById is deduplicated via React cache() (0 extra DB hit)
-    // 2. relatedRows does NOT select huge v.description or unused fields
+    // 2. relatedRows runs in parallel with video + versions lookup & omits heavy v.description
     // 3. LIMIT 12 reduces initial SSR payload to < 100 KB
-    const [rawVideo, readyVersions] = await Promise.all([
+    const relatedQueryPromise = (userId
+      ? sql`
+          SELECT 
+            v.id, v.title, v.duration, v.resolution, v.thumbnail_url, v.category, v.content_rating, v.views_count, v.created_at,
+            v.status,
+            h.last_position_seconds,
+            (h.id IS NOT NULL) AS has_watched,
+            u.name AS author_name, u.picture AS author_picture
+          FROM videos v
+          LEFT JOIN users u ON v.user_id = u.id
+          LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
+          WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
+          ORDER BY v.created_at DESC
+          LIMIT 12;
+        `
+      : sql`
+          SELECT 
+            v.id, v.title, v.duration, v.resolution, v.thumbnail_url, v.category, v.content_rating, v.views_count, v.created_at,
+            v.status,
+            NULL AS last_position_seconds,
+            FALSE AS has_watched,
+            u.name AS author_name, u.picture AS author_picture
+          FROM videos v
+          LEFT JOIN users u ON v.user_id = u.id
+          WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
+          ORDER BY v.created_at DESC
+          LIMIT 12;
+        `).catch((relErr) => {
+          console.warn('[WatchPage] Related videos query failed gracefully:', relErr?.message);
+          return [];
+        });
+
+    const [rawVideo, readyVersions, relatedRows] = await Promise.all([
       getVideoById(numericId),
       getVideoVersions(sql, numericId, { readyOnly: true }),
+      relatedQueryPromise,
     ]);
 
     if (!rawVideo) {
@@ -223,41 +244,6 @@ export default async function WatchPage({ params, searchParams }) {
     );
     if (activeVersion && !requestedVersion && lastWatchedVersionId) {
       prewarmVideoSourceServer(numericId, { version: activeVersion.id });
-    }
-
-    let relatedRows = [];
-    try {
-      relatedRows = await (userId
-        ? sql`
-            SELECT 
-              v.id, v.title, v.duration, v.resolution, v.thumbnail_url, v.category, v.content_rating, v.views_count, v.created_at,
-              v.status,
-              h.last_position_seconds,
-              (h.id IS NOT NULL) AS has_watched,
-              u.name AS author_name, u.picture AS author_picture
-            FROM videos v
-            LEFT JOIN users u ON v.user_id = u.id
-            LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
-            WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
-            ORDER BY v.created_at DESC
-            LIMIT 12;
-          `
-        : sql`
-            SELECT 
-              v.id, v.title, v.duration, v.resolution, v.thumbnail_url, v.category, v.content_rating, v.views_count, v.created_at,
-              v.status,
-              NULL AS last_position_seconds,
-              FALSE AS has_watched,
-              u.name AS author_name, u.picture AS author_picture
-            FROM videos v
-            LEFT JOIN users u ON v.user_id = u.id
-            WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
-            ORDER BY v.created_at DESC
-            LIMIT 12;
-          `);
-    } catch (relErr) {
-      console.warn('[WatchPage] Related videos query failed gracefully:', relErr?.message);
-      relatedRows = [];
     }
 
     const {

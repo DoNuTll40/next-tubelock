@@ -1,6 +1,5 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
 import { Play, Pause, RotateCcw, RotateCw } from 'lucide-react';
 import DoubleTapArrows from './DoubleTapArrows';
 
@@ -25,50 +24,33 @@ export default function PlayerCenterControls({
 }) {
   return (
     <>
-      {/* Toast — Framer OK ทั้ง mobile/desktop เพราะ mount/unmount ครั้งเดียว */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.12 }}
-            className="absolute top-10 left-1/2 -translate-x-1/2 z-40 bg-black/25 backdrop-blur-md text-white px-4 py-1.5 rounded-full border border-white/15 text-xs font-semibold shadow-2xl flex items-center gap-2 pointer-events-none"
-          >
-            <span>{toastMessage}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Toast — Pure CSS fade-in (zero framer-motion bundle weight on initial /watch load) */}
+      {toastMessage && (
+        <div
+          key={toastMessage}
+          className="absolute top-10 left-1/2 -translate-x-1/2 z-40 bg-black/25 backdrop-blur-md text-white px-4 py-1.5 rounded-full border border-white/15 text-xs font-semibold shadow-2xl flex items-center gap-2 pointer-events-none [animation:fadein_0.12s_ease-out]"
+        >
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
       {/* Double Tap Arc */}
-      <AnimatePresence>
-        {doubleTapSide && (
-          <motion.div
-            key={`dt-${doubleTapSide}`}
-            initial={{ opacity: 0, x: doubleTapSide === 'left' ? -30 : 30 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{
-              opacity: 0,
-              x: doubleTapSide === 'left' ? -50 : 50,
-              transition: { duration: 0.15, ease: 'easeIn' },
-            }}
-            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            className={`absolute top-0 bottom-0 ${doubleTapSide === 'left'
-              ? 'left-0 pr-10 pl-5 sm:pr-24 sm:pl-10 rounded-r-full justify-start'
-              : 'right-0 pl-10 pr-5 sm:pl-24 sm:pr-10 rounded-l-full justify-end'
-              } flex items-center pointer-events-none z-30 select-none bg-gradient-to-${doubleTapSide === 'left' ? 'r' : 'l'
-              } from-black/60 via-black/20 to-transparent`}
-          >
-            <div className="flex flex-col items-center gap-1.5 drop-shadow-[0_4px_14px_rgba(0,0,0,0.9)]">
-              {/* Chevron wave ด้วย GSAP — เฉพาะอนิเมชันลูกศรเท่านั้น ไม่กระทบ UI เดิม */}
-              <DoubleTapArrows side={doubleTapSide} />
-              <span className="text-sm sm:text-base font-bold text-white tracking-wide">
-                {accumulatedSeconds > 0 ? `+${accumulatedSeconds}` : `${accumulatedSeconds}`} วินาที
-              </span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {doubleTapSide && (
+        <div
+          key={`dt-${doubleTapSide}`}
+          className={`absolute top-0 bottom-0 ${doubleTapSide === 'left'
+            ? 'left-0 pr-10 pl-5 sm:pr-24 sm:pl-10 rounded-r-full justify-start bg-gradient-to-r'
+            : 'right-0 pl-10 pr-5 sm:pl-24 sm:pr-10 rounded-l-full justify-end bg-gradient-to-l'
+            } flex items-center pointer-events-none z-30 select-none from-black/60 via-black/20 to-transparent [animation:fadein_0.15s_ease-out]`}
+        >
+          <div className="flex flex-col items-center gap-1.5 drop-shadow-[0_4px_14px_rgba(0,0,0,0.9)]">
+            <DoubleTapArrows side={doubleTapSide} />
+            <span className="text-sm sm:text-base font-bold text-white tracking-wide">
+              {accumulatedSeconds > 0 ? `+${accumulatedSeconds}` : `${accumulatedSeconds}`} วินาที
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Center Controls */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
@@ -137,17 +119,14 @@ export default function PlayerCenterControls({
                   </button>
                 </div>
               ) : (
-                /* Desktop — Framer whileHover/whileTap ปกติ (desktop มี CPU สำรอง) */
                 !isPlaying && !isEnded && (
-                  <motion.button
+                  <button
                     type="button"
-                    // whileHover={{ scale: 1.06 }}
-                    // whileTap={{ scale: 0.92 }}
                     onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-                    className="pointer-events-auto w-16 h-16 rounded-full bg-black/25 hover:bg-[#FF7A00] border border-white/20 text-white flex items-center justify-center transition-colors duration-200 shadow-2xl backdrop-blur-md cursor-pointer"
+                    className="pointer-events-auto w-16 h-16 rounded-full bg-black/25 hover:bg-[#FF7A00] hover:scale-105 active:scale-95 border border-white/20 text-white flex items-center justify-center transition-[transform,background-color] duration-200 shadow-2xl backdrop-blur-md cursor-pointer"
                   >
                     <Play className="w-7 h-7 fill-white ml-0.5" />
-                  </motion.button>
+                  </button>
                 )
               )}
             </>

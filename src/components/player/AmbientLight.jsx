@@ -24,6 +24,7 @@ export default function AmbientLight({
   const lastKeyRef = useRef('');
   const imageCacheRef = useRef(new Map());
   const canUseDirectVideoRef = useRef(true);
+  const corsCheckedRef = useRef(false);
 
   const resolveTile = (sec, effectivePoster) => {
     const safeSec = Math.max(0, sec || 0);
@@ -142,7 +143,10 @@ export default function AmbientLight({
   useEffect(() => {
     if (!isEnabled) return;
 
-    const updateAmbient = async () => {
+    const updateAmbient = async (forceInitial = false) => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (typeof window !== 'undefined' && window.innerWidth < 640) return;
+
       const video = videoRef?.current;
       if (!video) return;
 
@@ -151,16 +155,25 @@ export default function AmbientLight({
         setHasStarted(true);
       }
 
-      // 1. ดึงจาก <video> โดยตรง (หากไม่ติด CORS)
+      // Skip periodic timer redraws when video is paused & already drawn at least once
+      if (!forceInitial && lastKeyRef.current && (video.paused || video.ended)) {
+        return;
+      }
+
+      // 1. ดึงจาก <video> โดยตรง (หากไม่ติด CORS) — ทดสอบ getImageData แค่ครั้งเดียว ไม่ readback ทุกวินาที
       if (canUseDirectVideoRef.current && video.readyState >= 2 && video.videoWidth > 0) {
         const timeBucket = Math.floor(video.currentTime * 1.2);
         const videoKey = `video_frame_${timeBucket}`;
         if (lastKeyRef.current !== videoKey) {
+          const needsCorsCheck = !corsCheckedRef.current;
           const ok = drawToNextCanvas((ctx, w, h) => {
             ctx.drawImage(video, 0, 0, w, h);
-            ctx.getImageData(0, 0, 1, 1);
+            if (needsCorsCheck) {
+              ctx.getImageData(0, 0, 1, 1);
+            }
           });
           if (ok) {
+            corsCheckedRef.current = true;
             lastKeyRef.current = videoKey;
             return;
           } else {
@@ -210,28 +223,37 @@ export default function AmbientLight({
       }
     };
 
-    updateAmbient();
-    const timer = setInterval(updateAmbient, 1500);
+    updateAmbient(true);
+    const timer = setInterval(() => updateAmbient(false), 1500);
+    const onVisibilityChange = () => {
+      if (!document.hidden) updateAmbient(true);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     const video = videoRef?.current;
     if (video) {
       const onPlayOrSeek = () => {
         setHasStarted(true);
-        updateAmbient();
+        updateAmbient(true);
       };
+      const onLoaded = () => updateAmbient(true);
       video.addEventListener('playing', onPlayOrSeek, { passive: true });
       video.addEventListener('seeked', onPlayOrSeek, { passive: true });
-      video.addEventListener('loadeddata', updateAmbient, { passive: true });
+      video.addEventListener('loadeddata', onLoaded, { passive: true });
 
       return () => {
         clearInterval(timer);
+        document.removeEventListener('visibilitychange', onVisibilityChange);
         video.removeEventListener('playing', onPlayOrSeek);
         video.removeEventListener('seeked', onPlayOrSeek);
-        video.removeEventListener('loadeddata', updateAmbient);
+        video.removeEventListener('loadeddata', onLoaded);
       };
     }
 
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [isEnabled, videoRef, storyboard, poster]);
 
   if (!isEnabled) return null;
@@ -261,7 +283,7 @@ export default function AmbientLight({
         ref={canvasRef0}
         width={48}
         height={27}
-        className="absolute inset-2 h-[calc(100%-16px)] w-[calc(100%-16px)] rounded-3xl transition-opacity duration-[1800ms] ease-in-out will-change-transform"
+        className="absolute inset-2 h-[calc(100%-16px)] w-[calc(100%-16px)] rounded-3xl transition-opacity duration-[1800ms] ease-in-out will-change-[opacity]"
         style={canvasLayerStyle(activeLayer === 0)}
       />
 
@@ -270,7 +292,7 @@ export default function AmbientLight({
         ref={canvasRef1}
         width={48}
         height={27}
-        className="absolute inset-2 h-[calc(100%-16px)] w-[calc(100%-16px)] rounded-3xl transition-opacity duration-[1800ms] ease-in-out will-change-transform"
+        className="absolute inset-2 h-[calc(100%-16px)] w-[calc(100%-16px)] rounded-3xl transition-opacity duration-[1800ms] ease-in-out will-change-[opacity]"
         style={canvasLayerStyle(activeLayer === 1)}
       />
     </div>

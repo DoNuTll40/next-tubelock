@@ -1,4 +1,3 @@
-@import url('https://donut-font.vercel.app/api/css2?family=Graphik+Thai+Loop:wght@100;200;300;400;500;600;700;900&display=swap');
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
@@ -93,6 +92,44 @@ html.dark body {
 }
 
 /* Player: Chevron wave (double-tap seek) — GPU compositor only (opacity + transform) */
+@keyframes dt-arrow-left {
+  0% {
+    opacity: 0.25;
+    transform: translateX(0) scale(0.95);
+  }
+  45% {
+    opacity: 1;
+    transform: translateX(-5px) scale(1.25);
+  }
+  90% {
+    opacity: 0.25;
+    transform: translateX(-9px) scale(0.95);
+  }
+  100% {
+    opacity: 0.25;
+    transform: translateX(0) scale(0.95);
+  }
+}
+
+@keyframes dt-arrow-right {
+  0% {
+    opacity: 0.25;
+    transform: translateX(0) scale(0.95);
+  }
+  45% {
+    opacity: 1;
+    transform: translateX(5px) scale(1.25);
+  }
+  90% {
+    opacity: 0.25;
+    transform: translateX(9px) scale(0.95);
+  }
+  100% {
+    opacity: 0.25;
+    transform: translateX(0) scale(0.95);
+  }
+}
+
 @keyframes chevwave {
 
   0%,

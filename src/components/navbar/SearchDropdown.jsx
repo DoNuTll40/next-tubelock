@@ -5,6 +5,23 @@ import { History, Search, X } from 'lucide-react';
 
 // Default initial search history matching YouTube style & local database videos
 const DEFAULT_HISTORY = [];
+const SEARCH_CACHE_TTL_MS = 120 * 1000;
+const searchCache = {
+  history: null,
+  historyAt: 0,
+  videos: null,
+  videosAt: 0,
+};
+
+function updateSearchHistoryCache(items) {
+  searchCache.history = items;
+  searchCache.historyAt = Date.now();
+}
+
+function updateSearchVideosCache(items) {
+  searchCache.videos = items;
+  searchCache.videosAt = Date.now();
+}
 
 export default function SearchDropdown({
   isOpen,
@@ -41,92 +58,95 @@ export default function SearchDropdown({
   };
 
   useEffect(() => {
+    if (!isOpen) return;
     const timer = setTimeout(checkScroll, 60);
     return () => clearTimeout(timer);
   }, [history, videos, searchQuery, isOpen]);
 
-  // Load history: instant localStorage cache + account database sync
+  // Lazy-load history & video suggestions ONLY when search dropdown is actually opened (0 DB hits on /watch load!)
   useEffect(() => {
+    if (!isOpen) return;
     let cancelled = false;
+    const now = Date.now();
 
-    // 1. Initial fast load from localStorage or default
-    if (typeof window !== 'undefined') {
+    // 1. Instant localStorage / module-cache hydration
+    Promise.resolve().then(() => {
+      if (cancelled || typeof window === 'undefined') return;
       try {
         const saved = localStorage.getItem('tubelock_search_history');
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
             setHistory(parsed);
-          } else {
-            setHistory(DEFAULT_HISTORY);
+            return;
           }
-        } else {
-          setHistory(DEFAULT_HISTORY);
         }
-      } catch (_) {
-        setHistory(DEFAULT_HISTORY);
-      }
+      } catch (_) {}
+      setHistory(searchCache.history || DEFAULT_HISTORY);
+    });
+
+    // 2. Fetch account-specific search history at most once every 2 minutes
+    if (!searchCache.history || now - searchCache.historyAt >= SEARCH_CACHE_TTL_MS) {
+      fetch('/api/search/history')
+        .then((res) => res.json())
+        .then((res) => {
+          if (cancelled) return;
+          if (res?.success && res.loggedIn && Array.isArray(res.data) && res.data.length > 0) {
+            const enrichedDb = res.data.map((item) => {
+              if (item.thumbnail) return item;
+              const def = DEFAULT_HISTORY.find(
+                (d) => d.query.toLowerCase() === item.query.toLowerCase()
+              );
+              return def?.thumbnail ? { ...item, thumbnail: def.thumbnail } : item;
+            });
+
+            const existingQueries = new Set(enrichedDb.map((p) => p.query.toLowerCase()));
+            const missingDefaults = DEFAULT_HISTORY.filter(
+              (d) => !existingQueries.has(d.query.toLowerCase())
+            );
+            const merged = [...enrichedDb, ...missingDefaults];
+            updateSearchHistoryCache(merged);
+            setHistory(merged);
+            try {
+              localStorage.setItem('tubelock_search_history', JSON.stringify(merged));
+            } catch (_) { }
+          } else if (res?.success) {
+            searchCache.historyAt = Date.now();
+          }
+        })
+        .catch(() => { });
     }
 
-    // 2. Fetch Account-specific search history from PostgreSQL DB
-    fetch('/api/search/history')
-      .then((res) => res.json())
-      .then((res) => {
-        if (cancelled) return;
-        if (res?.success && res.loggedIn && Array.isArray(res.data) && res.data.length > 0) {
-          // Enrich with default thumbnails if missing
-          const enrichedDb = res.data.map((item) => {
-            if (item.thumbnail) return item;
-            const def = DEFAULT_HISTORY.find(
-              (d) => d.query.toLowerCase() === item.query.toLowerCase()
-            );
-            return def?.thumbnail ? { ...item, thumbnail: def.thumbnail } : item;
-          });
-
-          // Merge: account DB items first, followed by defaults not yet in account
-          const existingQueries = new Set(enrichedDb.map((p) => p.query.toLowerCase()));
-          const missingDefaults = DEFAULT_HISTORY.filter(
-            (d) => !existingQueries.has(d.query.toLowerCase())
-          );
-          const merged = [...enrichedDb, ...missingDefaults];
-          setHistory(merged);
-          try {
-            localStorage.setItem('tubelock_search_history', JSON.stringify(merged));
-          } catch (_) { }
-        }
-      })
-      .catch(() => { });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Fetch available videos from database to enrich suggestions with real thumbnails
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/videos')
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled && data?.data && Array.isArray(data.data)) {
-          setVideos(
-            data.data.map((v) => ({
+    // 3. Fetch video suggestions at most once every 2 minutes
+    if (!searchCache.videos || now - searchCache.videosAt >= SEARCH_CACHE_TTL_MS) {
+      fetch('/api/videos')
+        .then((res) => res.json())
+        .then((data) => {
+          if (!cancelled && data?.data && Array.isArray(data.data)) {
+            const mapped = data.data.map((v) => ({
               id: v.id,
               title: v.title || '',
               thumbnail: v.thumbnail_url || (v.id ? `/streams/stream_vid_${v.id}/poster.jpg` : null),
-            }))
-          );
-        }
-      })
-      .catch(() => { });
+            }));
+            updateSearchVideosCache(mapped);
+            setVideos(mapped);
+          }
+        })
+        .catch(() => { });
+    } else {
+      Promise.resolve().then(() => {
+        if (!cancelled && searchCache.videos) setVideos(searchCache.videos);
+      });
+    }
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isOpen]);
 
-  // Save history to localStorage
+  // Save history to localStorage & module cache
   const saveHistory = (newHistory) => {
+    updateSearchHistoryCache(newHistory);
     setHistory(newHistory);
     try {
       localStorage.setItem('tubelock_search_history', JSON.stringify(newHistory));

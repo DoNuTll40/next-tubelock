@@ -380,6 +380,21 @@ export async function resolveClientPlaybackSource(sourceData) {
 }
 
 
+// ⚡ Preload & deduplicate dynamic import of hls.js across /watch & VideoPlayer
+let hlsModulePromise = null;
+export function preloadHlsModule() {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  if (!hlsModulePromise) {
+    hlsModulePromise = import('hls.js')
+      .then((mod) => mod.default || mod)
+      .catch((err) => {
+        hlsModulePromise = null;
+        throw err;
+      });
+  }
+  return hlsModulePromise;
+}
+
 // ⚡ Client-side In-Memory & In-Flight Source Cache
 // แชร์ผลลัพธ์ระหว่างการ pre-warm บน VideoCard (hover / touch / mousedown) กับหน้า WatchClient
 // ทำให้ไม่ต้องยิง fetch('/api/videos/[id]/source') ซ้ำเป็นรอบที่ 2 เมื่อกดเข้าหน้าดูวิดีโอ

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useCallback, useEffect, useState, useRef, useMemo, useSyncExternalStore } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import VideoPlayer from '@/components/VideoPlayer';
@@ -14,7 +14,7 @@ import {
   Film, Bookmark, UploadCloud,
   AlertCircle, ArrowLeft
 } from 'lucide-react';
-import { resolveClientPlaybackSource, fetchVideoSourceClient, resolveStoryboard } from '@/lib/playbackResolver';
+import { resolveClientPlaybackSource, fetchVideoSourceClient, resolveStoryboard, preloadHlsModule } from '@/lib/playbackResolver';
 import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 
 // ============================================================================
@@ -22,6 +22,29 @@ import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RE
 // ============================================================================
 const DESKTOP_HEADER_OFFSET_PX = 105;
 const DESKTOP_PLAYER_MAX_HEIGHT = `calc(100vh - ${DESKTOP_HEADER_OFFSET_PX}px)`;
+
+function formatDuration(seconds) {
+  if (!seconds || isNaN(seconds)) return '0:00';
+  const s = Math.floor(seconds);
+  const m = Math.floor(s / 60);
+  const remSec = s % 60;
+  const h = Math.floor(m / 60);
+  const remMin = m % 60;
+  if (h > 0) {
+    return `${h}:${remMin.toString().padStart(2, '0')}:${remSec.toString().padStart(2, '0')}`;
+  }
+  return `${remMin}:${remSec.toString().padStart(2, '0')}`;
+}
+
+const subscribeDesktopLg = (cb) => {
+  if (typeof window === 'undefined') return () => {};
+  const mq = window.matchMedia('(min-width: 1024px)');
+  mq.addEventListener('change', cb);
+  return () => mq.removeEventListener('change', cb);
+};
+const getDesktopLgSnapshot = () =>
+  typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : null;
+const getDesktopLgServerSnapshot = () => null;
 
 export default function WatchClient({
   initialVideo,
@@ -139,12 +162,12 @@ export default function WatchClient({
     }
   });
 
-  const handleSetAmbientMode = (val) => {
+  const handleSetAmbientMode = useCallback((val) => {
     setAmbientMode(val);
     try {
       localStorage.setItem('tubelock_ambient_mode', JSON.stringify(val));
     } catch (_) { }
-  };
+  }, []);
 
   const videoRef = useRef(null);
   const playerWrapperRef = useRef(null);
@@ -152,6 +175,16 @@ export default function WatchClient({
   const activeBlobUrlsRef = useRef([]);
   const partialSegmentMapRef = useRef({});
   const loadedDetailIdRef = useRef(initialVideo?.id ?? null);
+  const latestSourceTypeRef = useRef(video?.source_type);
+  const isDesktopLg = useSyncExternalStore(
+    subscribeDesktopLg,
+    getDesktopLgSnapshot,
+    getDesktopLgServerSnapshot
+  );
+
+  useEffect(() => {
+    latestSourceTypeRef.current = video?.source_type;
+  }, [video?.source_type]);
 
   // Compute effective video aspect ratio
   const videoResolution = activeVersion?.resolution || video?.resolution;
@@ -172,16 +205,17 @@ export default function WatchClient({
     return 16 / 9;
   }, [detectedRatio, videoResolution, videoWidth, videoHeight, video?.category]);
 
-  // Measure player height for mobile sticky chips
+  // Measure player height for mobile sticky chips (< 768px only; tablet/desktop md+ uses static flow)
   useEffect(() => {
     const el = playerWrapperRef.current;
     if (!el) return;
 
     const updateHeight = () => {
+      if (typeof window !== 'undefined' && window.innerWidth >= 768) return;
       if (el) {
-        const h = el.getBoundingClientRect().height;
+        const h = Math.round(el.getBoundingClientRect().height);
         if (h > 0) {
-          setPlayerHeight(h);
+          setPlayerHeight((prev) => (prev === h ? prev : h));
         }
       }
     };
@@ -309,6 +343,11 @@ export default function WatchClient({
               .then((r) => (r.ok ? r.json() : null))
               .catch(() => null)
           : Promise.resolve(null);
+
+        // ⚡ Preload hls.js chunk in parallel while fetching /source (0ms wait once streamUrl resolves)
+        if (latestSourceTypeRef.current !== 'mp4') {
+          preloadHlsModule().catch(() => {});
+        }
 
         // ⚡ Step: Fetch Stream Source from OneDrive (0ms if warm SSR initialSource matched, else client cache / API)
         const canUseSsrSource =
@@ -514,26 +553,20 @@ export default function WatchClient({
     }
   };
 
-  const handleSeek = (timeInSeconds) => {
+  const handleSeek = useCallback((timeInSeconds) => {
     if (videoRef.current) {
       videoRef.current.currentTime = timeInSeconds;
       videoRef.current.play().catch(() => { });
     }
-  };
+  }, []);
 
-  // Helper formatters
-  const formatDuration = (seconds) => {
-    if (!seconds || isNaN(seconds)) return '0:00';
-    const s = Math.floor(seconds);
-    const m = Math.floor(s / 60);
-    const remSec = s % 60;
-    const h = Math.floor(m / 60);
-    const remMin = m % 60;
-    if (h > 0) {
-      return `${h}:${remMin.toString().padStart(2, '0')}:${remSec.toString().padStart(2, '0')}`;
-    }
-    return `${remMin}:${remSec.toString().padStart(2, '0')}`;
-  };
+  const handleBack = useCallback(() => {
+    router.push('/');
+  }, [router]);
+
+  const handleRatioChange = useCallback((r) => {
+    setDetectedRatio(r);
+  }, []);
 
   const fileSizeMB = video?.file_size_bytes
     ? (Number(video.file_size_bytes) / (1024 * 1024)).toFixed(1)
@@ -647,7 +680,7 @@ export default function WatchClient({
                   keepScrubPreviewOnLoad={matureVideo && !showAdultPoster}
                   channelName={video?.author_name || 'DONUŤ'}
                   title={video?.title}
-                  onBack={() => router.push('/')}
+                  onBack={handleBack}
                   resolution={activeVersion?.resolution || video?.resolution}
                   width={video?.width}
                   height={video?.height}
@@ -667,7 +700,7 @@ export default function WatchClient({
                   autoStats={playerConfig?.auto_stats ?? false}
                   initialTime={startTime}
                   isMusic={isMusic}
-                  onRatioChange={(r) => setDetectedRatio(r)}
+                  onRatioChange={handleRatioChange}
                   ambientMode={ambientMode}
                   setAmbientMode={handleSetAmbientMode}
                   currentVideo={video}
@@ -698,6 +731,8 @@ export default function WatchClient({
                     <img
                       src={watchPoster}
                       alt={video?.title || 'Thumbnail'}
+                      fetchPriority="high"
+                      decoding="async"
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       className="absolute inset-0 w-full h-full object-cover opacity-60 filter blur-[1px] scale-105 transition-opacity duration-500"
                     />
@@ -880,29 +915,35 @@ export default function WatchClient({
                 <span>อัปโหลดวิดีโอใหม่</span>
               </Link>
             </div>
+          ) : isDesktopLg === false ? (
+            /* Mobile (< sm) & Tablet (sm–md): Vertical feed cards (mounted only when < 1024px) */
+            <div className="isolate grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {filteredRelated.map((item, idx) => (
+                <div
+                  key={`mob-${item.id}`}
+                  style={idx >= 4 ? { contentVisibility: 'auto', containIntrinsicSize: '0 260px' } : undefined}
+                >
+                  <VideoCard video={item} replace={true} compact={false} />
+                </div>
+              ))}
+            </div>
           ) : (
-            <>
-              {/* Mobile (< sm) & Tablet (sm–md): Vertical feed cards (1 col mobile, 2 cols tablet) */}
-              <div className="isolate grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
-                {filteredRelated.map((item) => (
-                  <VideoCard key={`mob-${item.id}`} video={item} replace={true} compact={false} />
-                ))}
-              </div>
-
-              {/* Desktop (lg+): Compact horizontal sidebar cards (YouTube standard) */}
-              <div className="isolate hidden lg:flex flex-col gap-2.5">
-                {filteredRelated.map((item) => (
-                  <div key={`desk-wrap-${item.id}`}>
-                    <VideoCard
-                      key={`desk-${item.id}`}
-                      video={item}
-                      replace={true}
-                      half={true}
-                    />
-                  </div>
-                ))}
-              </div>
-            </>
+            /* Desktop (lg+): Compact horizontal sidebar cards (SSR default hidden on < lg, mounted only on lg+) */
+            <div className={`isolate ${isDesktopLg === null ? 'hidden lg:flex' : 'flex'} flex-col gap-2.5`}>
+              {filteredRelated.map((item, idx) => (
+                <div
+                  key={`desk-wrap-${item.id}`}
+                  style={idx >= 4 ? { contentVisibility: 'auto', containIntrinsicSize: '0 116px' } : undefined}
+                >
+                  <VideoCard
+                    key={`desk-${item.id}`}
+                    video={item}
+                    replace={true}
+                    half={true}
+                  />
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>

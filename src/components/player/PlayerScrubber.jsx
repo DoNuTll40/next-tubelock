@@ -1,7 +1,5 @@
 'use client';
 
-import { formatTime } from './playerUtils';
-
 export default function PlayerScrubber({
   seekTrackRef,
   scrubPreviewRef,
@@ -9,37 +7,22 @@ export default function PlayerScrubber({
   scrubThumbHdRef,
   scrubBadgeRef,
   bufferBarRef,
+  hoverBarRef,
   progressBarRef,
   scrubberKnobRef,
   isScrubbing,
   isHoveringSeek,
   setIsHoveringSeek,
-  previewPercent,
-  hoverPercent,
-  previewTime,
-  hoverTime,
-  lastHoverTimeRef,
-  lastHoverPercentRef,
   videoRatio = 16 / 9,
   poster,
-  initialBufferPct = 0,
-  activeScrubPercent = 0,
   handlePointerDown,
   handleSeekMouseMove,
   handlePointerUp,
   isMobileView,
   showSettingsMenu,
 }) {
-  // ตำแหน่งและเวลาของ preview:
-  // - scrubbing  → ใช้ค่า scrub จริง
-  // - hovering   → ใช้ค่า hover จริง
-  // - fade-out   → ใช้ lastHoverRef (ค้างไว้ไม่ให้วิ่งไป 0:00)
+  // Position, width & preview timestamp are updated 100% via direct DOM refs (zero React re-renders during playback or hover/scrub!)
   const showPreview = (isScrubbing || isHoveringSeek) && !showSettingsMenu;
-  const lastPct = lastHoverPercentRef?.current ?? previewPercent;
-  const lastTime = lastHoverTimeRef?.current ?? previewTime;
-  const rawLeft = (isScrubbing || isHoveringSeek) ? previewPercent : lastPct;
-  const previewLeft = Math.max(0, Math.min(rawLeft ?? 50, 100));
-  const previewDisplayTime = isScrubbing ? previewTime : isHoveringSeek ? hoverTime : lastTime;
   const isVertical = videoRatio && videoRatio < 1;
 
   return (
@@ -60,11 +43,10 @@ export default function PlayerScrubber({
       {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
       <div
         ref={scrubPreviewRef}
-        className={`absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${showPreview
+        className={`left-0 absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${showPreview
           ? 'opacity-100 scale-100 translate-y-10 sm:translate-y-2'
           : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5 pointer-events-none'
           }`}
-        style={{ left: `${previewLeft}%` }}
       >
         {/* Preview Frame Thumbnail Card */}
         <div
@@ -76,6 +58,8 @@ export default function PlayerScrubber({
             <img
               src={poster}
               alt="Thumbnail Preview"
+              loading="lazy"
+              decoding="async"
               className="absolute inset-0 w-full h-full object-cover opacity-75"
             />
           )}
@@ -87,37 +71,39 @@ export default function PlayerScrubber({
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none z-20" />
         </div>
 
-        {/* Time Badge */}
+        {/* Time Badge (Direct DOM updates only) */}
         <div
           ref={scrubBadgeRef}
           className="bg-black/25 shadow-lg backdrop-blur-sm text-white border-1 border-white/25 px-2.5 py-0.5 rounded-full text-[14px] font-mono font-bold whitespace-nowrap "
         >
-          {formatTime(previewDisplayTime)}
+          0:00
         </div>
       </div>
 
       {/* Progress Background Track */}
       <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
         {/* Buffer Track (Direct DOM) */}
-        <div ref={bufferBarRef} className="absolute left-0 top-0 bottom-0 bg-white/40" style={{ width: `${initialBufferPct}%` }} />
-        {/* Hover Preview Track */}
-        {isHoveringSeek && !isScrubbing && !showSettingsMenu && (
-          <div className="absolute left-0 top-0 bottom-0 bg-white/30" style={{ width: `${hoverPercent}%` }} />
-        )}
+        <div ref={bufferBarRef} className="absolute left-0 top-0 bottom-0 w-0 bg-white/40" />
+        {/* Hover Preview Track (Direct DOM) */}
+        <div
+          ref={hoverBarRef}
+          className={`absolute left-0 top-0 bottom-0 w-0 bg-white/30 transition-opacity duration-75 ${
+            isHoveringSeek && !isScrubbing && !showSettingsMenu ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
         {/* Playback Progress (Direct DOM - TubeLock Orange) */}
-        <div ref={progressBarRef} className="absolute left-0 top-0 bottom-0 bg-[#FF7A00]" style={{ width: `${activeScrubPercent}%` }} />
+        <div ref={progressBarRef} className="absolute left-0 top-0 bottom-0 w-0 bg-[#FF7A00]" />
       </div>
 
       {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
       <div
         ref={scrubberKnobRef}
-        className={`absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${isScrubbing
+        className={`left-0 absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${isScrubbing
           ? 'scale-125'
           : showSettingsMenu
             ? 'scale-0'
             : 'scale-100 sm:scale-0 sm:group-hover/seek:scale-100'
           }`}
-        style={{ left: `${activeScrubPercent}%` }}
       />
     </div>
   );

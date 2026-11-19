@@ -15,7 +15,7 @@ import {
   LockKeyhole,
   Pencil
 } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
+import { memo, useState, useRef, useEffect } from 'react';
 import { formatResolutionBadge, encodeVideoSlug, isMatureVideo, getVideoResumeTime } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { prewarmVideoSourceClient, invalidateClientVideoCache } from '@/lib/playbackResolver';
@@ -28,7 +28,7 @@ import DeleteVideoModal from '@/components/DeleteVideoModal';
 // Module-level Set: track which video IDs are already pre-warmed this session
 const preWarmedIds = new Set();
 
-export default function VideoCard({
+function VideoCard({
   video,
   replace = false,
   compact = false,
@@ -121,8 +121,18 @@ export default function VideoCard({
     ? (versionCount > 1 && !String(versionBadges[0]).includes('เวอร์ชัน') ? `${versionBadges[0]} · ${versionCount}v` : versionBadges[0])
     : `${versionCount} เวอร์ชัน`;
 
+  // Lazy-extract YouTube-style hover tint only when user actually hovers or focuses a card (0 startup Canvas readbacks!)
+  const ensureDominantColor = () => {
+    if (isMature || dominantColor) return;
+    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+      const color = extractDominantColor(imgRef.current);
+      if (color) setDominantColor(color);
+    }
+  };
+
   // Pre-warm: ดึง source URL ล่วงหน้าเฉพาะตอนตั้งใจ hover หรือกดคลิกบนเดสก์ท็อป (ไม่ยิงตอนแตะเลื่อนฟีดบนมือถือ)
   const handlePreWarm = () => {
+    ensureDominantColor();
     if (!enablePrewarm || !video?.id || preWarmedIds.has(video.id)) return;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
@@ -193,19 +203,6 @@ export default function VideoCard({
   const watchUrl = href || (videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/');
   const effectiveProgressPct = progressPctOverride !== null ? progressPctOverride : progressPct;
 
-  // สกัดสีเด่นเมื่อภาพ Thumbnail โหลดเสร็จ (สไตล์ YouTube Themed Color)
-  const handleImageLoad = (e) => {
-    const color = extractDominantColor(e.target);
-    if (color) setDominantColor(color);
-  };
-
-  useEffect(() => {
-    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
-      const color = extractDominantColor(imgRef.current);
-      if (color) setDominantColor(color);
-    }
-  }, [effectiveThumbnail]);
-
   // CSS variables กำหนดสี Hover แบบ YouTube (สีชัดลึกใน Dark Mode / พาสเทลใน Light Mode)
   const cardHoverStyle = dominantColor ? {
     '--hover-tint-dark': dominantColor.darkBg,
@@ -237,9 +234,9 @@ export default function VideoCard({
               alt={video.title}
               crossOrigin={isMature ? undefined : "anonymous"}
               onError={() => setImgError(true)}
-              onLoad={isMature ? undefined : handleImageLoad}
               className="w-full h-full object-cover transition-all duration-300"
               loading="lazy"
+              decoding="async"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-zinc-500">
@@ -281,6 +278,8 @@ export default function VideoCard({
                 alt={video.author_name || 'Channel'}
                 className="w-4 h-4 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
                 referrerPolicy="no-referrer"
+                loading="lazy"
+                decoding="async"
               />
             )}
             <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate font-medium">
@@ -323,14 +322,16 @@ export default function VideoCard({
           </div>
         </div>
 
-        <DeleteVideoModal
-          isOpen={showDeleteModal}
-          onClose={() => setShowDeleteModal(false)}
-          onConfirm={handleDelete}
-          isDeleting={isDeleting}
-          deleteError={deleteError}
-          videoTitle={video.title}
-        />
+        {showDeleteModal && (
+          <DeleteVideoModal
+            isOpen={showDeleteModal}
+            onClose={() => setShowDeleteModal(false)}
+            onConfirm={handleDelete}
+            isDeleting={isDeleting}
+            deleteError={deleteError}
+            videoTitle={video.title}
+          />
+        )}
       </div>
     );
   }
@@ -359,9 +360,9 @@ export default function VideoCard({
               alt={video.title}
               crossOrigin={isMature ? undefined : "anonymous"}
               onError={() => setImgError(true)}
-              onLoad={isMature ? undefined : handleImageLoad}
               className="w-full h-full object-cover group-hover:scale-105 transition-all duration-300"
               loading="lazy"
+              decoding="async"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-zinc-500">
@@ -399,6 +400,8 @@ export default function VideoCard({
                 alt={video.author_name || 'Channel'}
                 className="w-3.5 h-3.5 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
                 referrerPolicy="no-referrer"
+                loading="lazy"
+                decoding="async"
               />
             )}
             <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate font-medium">
@@ -433,14 +436,16 @@ export default function VideoCard({
           />
         )}
 
-        <DeleteVideoModal
-          isOpen={showDeleteModal}
-          onClose={() => setShowDeleteModal(false)}
-          onConfirm={handleDelete}
-          isDeleting={isDeleting}
-          deleteError={deleteError}
-          videoTitle={video.title}
-        />
+        {showDeleteModal && (
+          <DeleteVideoModal
+            isOpen={showDeleteModal}
+            onClose={() => setShowDeleteModal(false)}
+            onConfirm={handleDelete}
+            isDeleting={isDeleting}
+            deleteError={deleteError}
+            videoTitle={video.title}
+          />
+        )}
       </div>
     );
   }
@@ -467,6 +472,8 @@ export default function VideoCard({
               crossOrigin={isMature ? undefined : "anonymous"}
               onError={() => setImgError(true)}
               className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none blur-sm scale-110 opacity-30"
+              loading="lazy"
+              decoding="async"
             />
             <img
               ref={imgRef}
@@ -474,9 +481,9 @@ export default function VideoCard({
               alt={video.title}
               crossOrigin={isMature ? undefined : "anonymous"}
               onError={() => setImgError(true)}
-              onLoad={isMature ? undefined : handleImageLoad}
               className="relative z-10 w-full h-full object-contain drop-shadow-sm transition-all duration-300"
               loading="lazy"
+              decoding="async"
             />
           </>
         ) : (
@@ -539,6 +546,8 @@ export default function VideoCard({
               alt={video.author_name || 'Channel'}
               className="w-9 h-9 rounded-full object-cover shadow-xs ring-1 ring-black/10 dark:ring-white/10"
               referrerPolicy="no-referrer"
+              loading="lazy"
+              decoding="async"
             />
           ) : (
             <div className="w-9 h-9 rounded-full bg-[#FFF4EB] dark:bg-[#FF7A00]/15 border border-[#FF7A00]/20 flex items-center justify-center shadow-xs">
@@ -594,7 +603,7 @@ export default function VideoCard({
         )}
       </div>
 
-      {!renderMenu && (
+      {!renderMenu && showDeleteModal && (
         <DeleteVideoModal
           isOpen={showDeleteModal}
           onClose={() => setShowDeleteModal(false)}
@@ -607,6 +616,8 @@ export default function VideoCard({
     </div>
   );
 }
+
+export default memo(VideoCard);
 
 // ==========================================
 // Sub-component: VideoMenu

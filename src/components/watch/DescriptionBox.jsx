@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { memo, useState, useMemo } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, Clock, Cpu, Film, HardDrive } from 'lucide-react';
 
 /**
@@ -256,7 +256,7 @@ function parseDescriptionTokens(text = '', onSeek) {
   return elements;
 }
 
-export default function DescriptionBox({
+function DescriptionBox({
   video,
   viewsDisplay = '0 ครั้ง',
   fileSizeMB = '0',
@@ -417,4 +417,6 @@ export default function DescriptionBox({
     </div>
   );
 }
+
+export default memo(DescriptionBox);
 

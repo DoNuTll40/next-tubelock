@@ -11,6 +11,33 @@ updated: 19 พฤศจิกายน 2026
 
 ---
 
+## เวอร์ชัน 1.2.7 (Build 1.2.7.20261119 — 19 พฤศจิกายน 2026) — ปรับแต่งประสิทธิภาพการ Render, SSR Cache, Bundle Splitting และ GPU Compositing ของหน้า `/watch/[id]`
+
+### 1. Server-Side Rendering & Session Caching (ลดงานซ้ำฝั่งเซิร์ฟเวอร์และ Neon DB)
+- **Cached Server Session (`React.cache()` + 30s TTL Map):** เพิ่ม `getCachedServerSession()` และ `evictCachedServerSession(token)` ใน `src/lib/access.js` (bounded cache สูงสุด 500 รายการ, TTL 30 วินาที) เพื่อให้ `src/app/layout.jsx` และ `src/app/watch/[id]/page.jsx` ใช้ผลลัพธ์ session เดียวกันภายใน request และลด query ซ้ำไปยัง Neon DB พร้อมสั่งล้าง cache ทันทีเมื่อ logout ใน `src/app/api/auth/logout/route.js`
+- **Parallel SSR Queries:** ปรับ `src/app/watch/[id]/page.jsx` ให้เรียก `getCachedServerSession()` ขนานกับ `cookies()` และรวม query วิดีโอหลัก (`getVideoById`), เวอร์ชันวิดีโอ (`getVideoVersions`) และรายการวิดีโอแนะนำ (`relatedRows`) เข้าใน `Promise.all(...)` ชุดเดียวกัน
+
+### 2. Critical Path Fonts, JS Bundle & Dynamic Imports (ลด Render-Blocking และ Initial JS)
+- **Non-blocking Font Loading:** นำ `@import url(...)` ที่บล็อกการ render ออกจาก `src/app/globals.css` แล้วเปลี่ยนไปใช้ `<link rel="preconnect">`, `<link rel="dns-prefetch">` ไปยัง `https://donut-font.vercel.app` และ `<link rel="stylesheet">` ใน `src/app/layout.jsx`
+- **Package Import Optimization:** เปิดใช้งาน `experimental.optimizePackageImports: ['lucide-react', 'framer-motion']` ใน `next.config.mjs`
+- **Zero GSAP / Framer Motion on Player Hot Path:**
+  - แทนที่ `gsap` / `@gsap/react` ใน `src/components/player/DoubleTapArrows.jsx` ด้วย CSS `@keyframes dt-arrow-left` และ `@keyframes dt-arrow-right` บน GPU compositor
+  - แทนที่ `framer-motion` ใน `src/components/player/PlayerCenterControls.jsx` ด้วยแอนิเมชัน CSS ล้วนและปุ่ม `<button>` ปกติ
+- **Code-Splitting Modal & Overlay ของ Player:** โหลด `PlayerSettingsModal`, `PlayerStatsModal`, `PlayerContextMenu` และ `PlayerEndScreen` แบบ `next/dynamic(..., { ssr: false })` ใน `src/components/VideoPlayer.jsx`
+- **Preload `hls.js` แบบ Deduped:** เพิ่ม `preloadHlsModule()` ใน `src/lib/playbackResolver.js` เพื่อโหลดโมดูล `hls.js` ล่วงหน้าขนานกับการเรียก `/source` ใน `src/app/watch/[id]/WatchClient.jsx`
+
+### 3. Direct DOM Player Scrubber & Zero Re-render Playback (ลด React Re-renders ระหว่างเล่นวิดีโอ)
+- **Direct DOM Scrubber & Time Display:** ปรับ `src/components/player/PlayerScrubber.jsx`, `src/components/player/PlayerBottomBar.jsx` และ `src/components/VideoPlayer.jsx` ให้ควบคุมความคืบหน้า (`progressBarRef`, `hoverBarRef`, `scrubberKnobRef`, `timeDisplayRef`) ผ่าน DOM โดยตรงและซิงก์ผ่าน `useLayoutEffect` เมื่อเปลี่ยน layout ช่วยตัด React state ที่เคยอัปเดตทุกวินาทีหรือทุกการขยับเมาส์ออกทั้งหมด
+- **Lazy Subtitle Settings Fetch & No-Spurious-Write:** เพิ่มการตรวจสอบ `hasSession`, หน่วง `GET /api/user/subtitle-settings` 1,200ms พร้อม cache 5 นาที (`subSettingsCache`) และใช้ `userChangedSubPrefsRef` เพื่อไม่ให้เกิดการยิง `POST` ลงฐานข้อมูลโดยไม่จำเป็นตอน mount
+- **Defer Navbar Search Fetches:** ปรับ `src/components/navbar/SearchDropdown.jsx` ให้เลื่อนการเรียก `/api/search/history` และ `/api/videos` ไปทำเมื่อเปิด dropdown (`isOpen`) เท่านั้น พร้อม cache ระดับโมดูล 120 วินาที
+
+### 4. Client Hydration, Paint & GPU Compositing (`/watch/[id]` & Related Grid)
+- **Single-Mount Related Videos + Content Visibility:** ปรับ `src/app/watch/[id]/WatchClient.jsx` ให้ mount รายการวิดีโอแนะนำเพียงชุดเดียวตามหน้าจอผ่าน `useSyncExternalStore` (`min-width: 1024px`) และใส่ `contentVisibility: 'auto'` สำหรับรายการลำดับ `idx >= 4`, เพิ่ม `fetchPriority="high"` และ `decoding="async"` ให้รูปปกเริ่มต้น พร้อม hoist `formatDuration`, ครอบ handlers ด้วย `useCallback` และจำกัด `ResizeObserver` ฝั่ง mobile
+- **Memoization & Lazy Modal/Color Extraction:** ครอบ `DescriptionBox` และ `VideoCard` ด้วย `React.memo`, ใส่ `loading="lazy" decoding="async"` ใน `VideoCard`, เลื่อน `extractDominantColor` ไปทำเมื่อ `onMouseEnter`/`onFocus` (`ensureDominantColor()`) และ mount `<DeleteVideoModal />` เฉพาะเมื่อเปิดใช้งาน
+- **Optimized Ambient Light Canvas:** ปรับ `src/components/player/AmbientLight.jsx` ให้ตรวจสิทธิ์ CORS canvas (`getImageData`) เพียงครั้งเดียวผ่าน `corsCheckedRef`, ข้ามการวาดซ้ำเมื่อแท็บถูกซ่อน (`document.hidden`), จอเล็กกว่า 640px หรือหยุดเล่นหลังวาดเฟรมแรก พร้อมเพิ่ม `visibilitychange` listener และเปลี่ยน `will-change-transform` เป็น `will-change-[opacity]`
+
+---
+
 ## เวอร์ชัน 1.2.6 (Build 1.2.6.20261119 — 19 พฤศจิกายน 2026) — เร่งความเร็ว TTFF สตรีม HLS, ประหยัด Neon Free Tier, บังคับระบุภาษาซับ และปรับ Responsive UI
 
 ### 1. เร่งความเร็วการเปิดวิดีโอ (TTFF Optimization) ภายใต้ Free Tier ($0)

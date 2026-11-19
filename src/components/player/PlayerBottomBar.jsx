@@ -18,7 +18,6 @@ export default function PlayerBottomBar({
   isScrubbing,
   isMobileView,
   isFullscreen,
-  activeTimeDisplay,
   timeDisplayRef,
   togglePlay,
   toggleMute,
@@ -57,20 +56,13 @@ export default function PlayerBottomBar({
   scrubThumbHdRef,
   scrubBadgeRef,
   bufferBarRef,
+  hoverBarRef,
   progressBarRef,
   scrubberKnobRef,
   isHoveringSeek,
   setIsHoveringSeek,
-  previewPercent,
-  hoverPercent,
-  previewTime,
-  hoverTime,
-  lastHoverTimeRef,
-  lastHoverPercentRef,
   videoRatio,
   poster,
-  initialBufferPct,
-  activeScrubPercent,
   handlePointerDown,
   handleSeekMouseMove,
   handlePointerUp,
@@ -100,21 +92,14 @@ export default function PlayerBottomBar({
         scrubThumbHdRef={scrubThumbHdRef}
         scrubBadgeRef={scrubBadgeRef}
         bufferBarRef={bufferBarRef}
+        hoverBarRef={hoverBarRef}
         progressBarRef={progressBarRef}
         scrubberKnobRef={scrubberKnobRef}
         isScrubbing={isScrubbing}
         isHoveringSeek={isHoveringSeek}
         setIsHoveringSeek={setIsHoveringSeek}
-        previewPercent={previewPercent}
-        hoverPercent={hoverPercent}
-        previewTime={previewTime}
-        hoverTime={hoverTime}
-        lastHoverTimeRef={lastHoverTimeRef}
-        lastHoverPercentRef={lastHoverPercentRef}
         videoRatio={videoRatio}
         poster={poster}
-        initialBufferPct={initialBufferPct}
-        activeScrubPercent={activeScrubPercent}
         handlePointerDown={handlePointerDown}
         handleSeekMouseMove={handleSeekMouseMove}
         handlePointerUp={handlePointerUp}
@@ -200,7 +185,7 @@ export default function PlayerBottomBar({
               ref={timeDisplayRef}
               className="h-7 px-2.5 flex items-center justify-center rounded-full bg-white/15 border border-white/15 backdrop-blur-md font-mono text-[12px] sm:text-[12.5px] text-white/95 select-none font-medium ml-1 shadow-xs shrink-0"
             >
-              {activeTimeDisplay}
+              0:00 / 0:00
             </span>
           </div>
 
@@ -383,7 +368,7 @@ export default function PlayerBottomBar({
               ref={timeDisplayRef}
               className="px-2.5 py-1 rounded-full bg-[#1f1f1f]/70 border border-white/15 backdrop-blur-md text-[11.5px] sm:text-xs font-mono font-semibold text-white/95 shadow-sm select-none shrink-0"
             >
-              {activeTimeDisplay}
+              0:00 / 0:00
             </span>
 
             {/* <button
@@ -492,7 +477,7 @@ export default function PlayerBottomBar({
             ref={timeDisplayRef}
             className="px-2.5 py-1 rounded-full bg-black/25 border border-white/15 backdrop-blur-md text-[11.5px] sm:text-xs font-mono font-semibold text-white/95 shadow-sm select-none"
           >
-            {activeTimeDisplay}
+            0:00 / 0:00
           </span>
 
           <div className="flex items-center gap-1.5">

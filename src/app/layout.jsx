@@ -1,7 +1,5 @@
 import "./globals.css";
-import { cookies } from 'next/headers';
-import { getDb } from '@/lib/db';
-import { isAdmin } from '@/lib/access';
+import { getCachedServerSession } from '@/lib/access';
 import NextTopLoader from 'nextjs-toploader';
 import { ThemeProvider } from "@/context/ThemeContext";
 import { ViewModeProvider } from "@/context/ViewModeContext";
@@ -67,34 +65,18 @@ export const metadata = {
 };
 
 export default async function RootLayout({ children }) {
-
-  const cookieStore = await cookies();
-  const token = cookieStore.get("tubelock_session")?.value;
-
-  // Query DB to get session data (token is a hex string, not JSON anymore)
-  let session = null;
-  if (token) {
-    try {
-      const sql = getDb();
-      const [row] = await sql`
-        SELECT u.id, u.provider, u.name, u.email, u.picture
-        FROM user_sessions s
-        JOIN users u ON u.id = s.user_id
-        WHERE s.session_token = ${token}
-          AND s.is_active = TRUE
-          AND s.expires_at > NOW()
-        LIMIT 1
-      `;
-      session = row ? { ...row, isAdmin: isAdmin(row.id) } : null;
-    } catch {
-      session = null;
-    }
-  }
+  const session = await getCachedServerSession();
 
   return (
     <html lang="th" className="h-full antialiased" suppressHydrationWarning>
       <head>
         <link rel="icon" href="/images/TubeLock.png" type="image/png" />
+        <link rel="preconnect" href="https://donut-font.vercel.app" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://donut-font.vercel.app" />
+        <link
+          rel="stylesheet"
+          href="https://donut-font.vercel.app/api/css2?family=Graphik+Thai+Loop:wght@400;500;600;700&display=swap"
+        />
         <link rel="preconnect" href={process.env.CF_WORKER_URL || 'https://tubelock-cache.iinter731.workers.dev'} crossOrigin="anonymous" />
         <link rel="dns-prefetch" href={process.env.CF_WORKER_URL || 'https://tubelock-cache.iinter731.workers.dev'} />
         <script
