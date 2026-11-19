@@ -42,6 +42,7 @@ export async function ensureVideoVersionsSchema(sql) {
         subtitle_tracks_override JSONB DEFAULT NULL,
 
         source_cache_br          TEXT,
+        m3u8_cache_br            TEXT,
         source_cache_items_count INTEGER DEFAULT 0,
         source_cache_expires_at  BIGINT DEFAULT 0,
 
@@ -159,6 +160,7 @@ export async function ensurePrimaryVersionSeeded(sql, videoId, defaultLabel = 'à
       to_jsonb(v)->'runner_specs' AS runner_specs,
       to_jsonb(v)->'worker_logs' AS worker_logs,
       source_cache_br,
+      to_jsonb(v)->>'m3u8_cache_br' AS m3u8_cache_br,
       COALESCE(source_cache_items_count, 0) AS source_cache_items_count,
       COALESCE(source_cache_expires_at, 0) AS source_cache_expires_at
     FROM videos v
@@ -180,7 +182,7 @@ export async function ensurePrimaryVersionSeeded(sql, videoId, defaultLabel = 'à
       duration, file_size_bytes, resolution, fps, codec, bitrate, thumbnail_url,
       status, transcode_progress, stage_detail, error_message,
       runner_specs, worker_logs,
-      source_cache_br, source_cache_items_count, source_cache_expires_at
+      source_cache_br, m3u8_cache_br, source_cache_items_count, source_cache_expires_at
     ) VALUES (
       ${vidNum}, 'standard', ${defaultLabel}, '', '', '',
       TRUE, 0,
@@ -205,6 +207,7 @@ export async function ensurePrimaryVersionSeeded(sql, videoId, defaultLabel = 'à
       ${parent.runner_specs ? JSON.stringify(parent.runner_specs) : null}::jsonb,
       ${Array.isArray(parent.worker_logs) ? JSON.stringify(parent.worker_logs) : '[]'}::jsonb,
       ${parent.source_cache_br || null},
+      ${parent.m3u8_cache_br || null},
       ${Number(parent.source_cache_items_count) || 0},
       ${Number(parent.source_cache_expires_at) || 0}
     )

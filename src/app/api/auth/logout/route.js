@@ -10,8 +10,9 @@ export async function GET(request) {
     const cookieStore = await cookies();
     const token = cookieStore.get('tubelock_session')?.value;
 
-    // Deactivate session in DB (soft delete)
+    // Deactivate session in DB (soft delete) and evict from proxy memory cache
     if (token) {
+        globalThis.__tubelock_proxy_sessions?.delete(token);
         try {
             const sql = getDb();
             await sql`

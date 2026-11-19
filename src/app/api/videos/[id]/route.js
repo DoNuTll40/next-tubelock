@@ -21,6 +21,7 @@ export const revalidate = 0;
  * Lightning-fast metadata retrieval (<50ms) for instant UI rendering
  */
 export async function GET(request, context) {
+  const t0 = performance.now();
   try {
     const { id: rawId } = await context.params;
     const numericId = decodeVideoSlug(rawId) || parseInt(rawId, 10);
@@ -47,7 +48,10 @@ export async function GET(request, context) {
           v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status, 
           v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
           v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
-          v.subtitle_status, v.subtitle_srt, v.subtitle_vtt, v.subtitle_tracks, v.content_rating,
+          v.subtitle_status,
+          CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_srt, '') END AS subtitle_srt,
+          CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_vtt, '') END AS subtitle_vtt,
+          v.subtitle_tracks, v.content_rating,
           v.user_id,
           u.name AS author_name,
           u.picture AS author_picture
@@ -105,6 +109,7 @@ export async function GET(request, context) {
       {
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Server-Timing': `total;dur=${(performance.now() - t0).toFixed(1)}`,
         },
       }
     );

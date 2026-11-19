@@ -27,6 +27,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import Hls from 'hls.js';
+import { resolveClientPlaybackSource } from '@/lib/playbackResolver';
 
 export default function BenchmarkPage() {
   const [isRunningAll, setIsRunningAll] = useState(false);
@@ -87,12 +88,14 @@ export default function BenchmarkPage() {
     try {
       const res = await fetch('/api/benchmark?test=db');
       const data = await res.json();
-      if (data?.tests?.db) {
+      if (data?.tests?.db?.status === 'SUCCESS' && data.tests.db.slimQuery) {
         setDbBench(data.tests.db);
         addLog(
-          `DB Benchmark สำเร็จ: Slim Query ${data.tests.db.slimQuery.timeMs}ms (${data.tests.db.slimQuery.payloadKb}KB) · Full payload ประมาณ ${data.tests.db.fullQuery.payloadKb}KB`,
+          `DB Benchmark สำเร็จ: Slim Query ${data.tests.db.slimQuery.timeMs}ms (${data.tests.db.slimQuery.payloadKb}KB) · Full payload ประมาณ ${data.tests.db.fullQuery?.payloadKb ?? '—'}KB`,
           'success'
         );
+      } else {
+        addLog(`DB Benchmark ล้มเหลว: ${data?.tests?.db?.error || 'ไม่สามารถเชื่อมต่อฐานข้อมูลได้ชั่วคราว'}`, 'error');
       }
     } catch (err) {
       addLog(`DB Benchmark ล้มเหลว: ${err.message}`, 'error');
@@ -105,12 +108,14 @@ export default function BenchmarkPage() {
     try {
       const res = await fetch('/api/benchmark?test=storage');
       const data = await res.json();
-      if (data?.tests?.storage) {
+      if (data?.tests?.storage?.status === 'SUCCESS') {
         setStorageBench(data.tests.storage);
         addLog(
           `Storage Ping สำเร็จ: Graph Auth Token ${data.tests.storage.graphTokenMs}ms | Drive Resolution ${data.tests.storage.driveResolutionMs}ms`,
           'success'
         );
+      } else {
+        addLog(`Storage Ping ล้มเหลว: ${data?.tests?.storage?.error || 'เชื่อมต่อ Storage ไม่สำเร็จ'}`, 'error');
       }
     } catch (err) {
       addLog(`Storage Ping ล้มเหลว: ${err.message}`, 'error');
@@ -122,7 +127,7 @@ export default function BenchmarkPage() {
     try {
       const res = await fetch('/api/benchmark?test=system');
       const data = await res.json();
-      if (data?.tests?.system) {
+      if (data?.tests?.system?.status === 'SUCCESS') {
         setSystemStats(data.tests.system);
       }
     } catch (err) {}
@@ -155,6 +160,9 @@ export default function BenchmarkPage() {
       const metaRes = await fetch(`/api/videos/${selectedVideoId}`);
       tDbDone = performance.now();
       const metaTime = Math.round(tDbDone - tStart);
+      const metaServerTiming = metaRes.headers.get('server-timing') || '';
+      const metaServerMatch = metaServerTiming.match(/total;dur=([\d.]+)/i);
+      const metaServerMs = metaServerMatch ? Math.round(parseFloat(metaServerMatch[1])) : null;
 
       setWaterfall((prev) => [
         { ...prev[0], time: metaTime, status: 'done' },
@@ -168,6 +176,11 @@ export default function BenchmarkPage() {
       const sourceRes = await fetch(`/api/videos/${selectedVideoId}/source`);
       tSourceDone = performance.now();
       const sourceTime = Math.round(tSourceDone - tDbDone);
+      const serverTiming = sourceRes.headers.get('server-timing') || '';
+      const cachePathMatch = serverTiming.match(/path;desc="([^"]+)"/i);
+      const cachePath = cachePathMatch ? cachePathMatch[1] : 'unknown';
+      const sourceServerMatch = serverTiming.match(/total;dur=([\d.]+)/i);
+      const sourceServerMs = sourceServerMatch ? Math.round(parseFloat(sourceServerMatch[1])) : null;
 
       if (!sourceRes.ok) throw new Error('ไม่สามารถดึง source วิดีโอได้');
       const sourceData = await sourceRes.json();
@@ -180,14 +193,10 @@ export default function BenchmarkPage() {
         prev[4],
       ]);
 
-      // Step 3 & 4: Sub-playlist & Chunk download
-      const masterItem = sourceData.items?.find((i) => i.name.toLowerCase() === 'master.m3u8') || sourceData.items?.[0];
-      if (masterItem?.downloadUrl) {
-        const mRes = await fetch(masterItem.downloadUrl);
-        await mRes.text();
-      }
+      // Step 3: Real Sub-Playlist & Blob URL Resolution (identical to /watch — uses hydrated m3u8 content in <5ms!)
+      const resolvedPlayback = await resolveClientPlaybackSource(sourceData);
       tManifestDone = performance.now();
-      const manifestTime = Math.round(tManifestDone - tSourceDone);
+      const manifestTime = Math.max(1, Math.round(tManifestDone - tSourceDone));
 
       setWaterfall((prev) => [
         prev[0],
@@ -197,13 +206,23 @@ export default function BenchmarkPage() {
         prev[4],
       ]);
 
-      // Download a sample chunk to measure raw chunk download latency
-      const chunkItem = sourceData.items?.find((i) => i.name.toLowerCase().endsWith('.ts')) || sourceData.items?.[1];
+      // Step 4: Download Fast-Start First Chunk (360p/480p _000.ts matching real Fast-Start ABR)
+      const tsItems = (sourceData.items || []).filter((i) => i.name?.toLowerCase().endsWith('.ts'));
+      const chunkItem =
+        tsItems.find((i) => /360p.*000\.ts$/i.test(i.name)) ||
+        tsItems.find((i) => /480p.*000\.ts$/i.test(i.name)) ||
+        tsItems.find((i) => /000\.ts$/i.test(i.name)) ||
+        tsItems[0];
       let chunkBytes = 0;
+      let chunkCfStatus = '';
+      let prefetchedChunkBlobUrl = '';
       if (chunkItem?.downloadUrl) {
         const cRes = await fetch(chunkItem.downloadUrl);
+        chunkCfStatus =
+          cRes.headers.get('x-tubelock-cache') || cRes.headers.get('cf-cache-status') || '';
         const cBlob = await cRes.blob();
         chunkBytes = cBlob.size;
+        prefetchedChunkBlobUrl = URL.createObjectURL(cBlob);
       }
       tFirstChunkDone = performance.now();
       const chunkTime = Math.round(tFirstChunkDone - tManifestDone);
@@ -216,34 +235,83 @@ export default function BenchmarkPage() {
         { ...prev[4], status: 'running' },
       ]);
 
-      // Step 5: Video Decode in MSE Video Player
-      if (testVideoRef.current && Hls.isSupported() && sourceData.type === 'hls') {
-        if (hlsRef.current) {
-          hlsRef.current.destroy();
-        }
+      // Step 5: Real Video Decode in MSE Video Player using resolved Blob URL (reuses Step 4's bytes — no double network download!)
+      try {
+        if (testVideoRef.current && Hls.isSupported() && resolvedPlayback?.type === 'hls' && resolvedPlayback.url) {
+          if (hlsRef.current) {
+            hlsRef.current.destroy();
+          }
 
-        const hls = new Hls({ enableWorker: true, lowLatencyMode: false });
-        hlsRef.current = hls;
+          const videoEl = testVideoRef.current;
+          videoEl.muted = true;
+          videoEl.playsInline = true;
 
-        const subPlaylist = sourceData.items?.find((i) => i.name.toLowerCase().endsWith('.m3u8'));
-        if (subPlaylist?.downloadUrl) {
-          hls.loadSource(subPlaylist.downloadUrl);
-          hls.attachMedia(testVideoRef.current);
+          class BenchmarkChunkReuseLoader extends Hls.DefaultConfig.loader {
+            load(context, config, callbacks) {
+              if (prefetchedChunkBlobUrl && chunkItem?.downloadUrl && context?.url === chunkItem.downloadUrl) {
+                context.url = prefetchedChunkBlobUrl;
+              }
+              super.load(context, config, callbacks);
+            }
+          }
+
+          const hls = new Hls({
+            fLoader: BenchmarkChunkReuseLoader,
+            enableWorker: true,
+            lowLatencyMode: false,
+            testBandwidth: false,
+            autoStartLoad: false,
+          });
+          hlsRef.current = hls;
 
           await new Promise((resolve) => {
-            const onPlaying = () => {
-              testVideoRef.current.removeEventListener('playing', onPlaying);
+            let settled = false;
+            const finish = () => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              videoEl.removeEventListener('loadeddata', finish);
+              videoEl.removeEventListener('canplay', finish);
+              videoEl.removeEventListener('playing', finish);
               resolve();
             };
-            testVideoRef.current.addEventListener('playing', onPlaying);
-            testVideoRef.current.play().catch(() => resolve());
-            setTimeout(resolve, 1500); // Fallback timeout
+            const timer = setTimeout(finish, 4000);
+            videoEl.addEventListener('loadeddata', finish);
+            videoEl.addEventListener('canplay', finish);
+            videoEl.addEventListener('playing', finish);
+
+            hls.on(Hls.Events.MANIFEST_PARSED, (_ev, data) => {
+              const lvls = (data?.levels || []).map((l, idx) => ({ idx, h: l.height || 0 })).sort((a, b) => a.h - b.h);
+              const fast = lvls.find((l) => l.h >= 360 && l.h <= 480) || lvls[0];
+              if (fast) hls.startLevel = fast.idx;
+              hls.startLoad(0);
+              videoEl.play().catch(() => {});
+            });
+            hls.on(Hls.Events.ERROR, (_ev, errData) => {
+              if (errData?.fatal) finish();
+            });
+
+            hls.loadSource(resolvedPlayback.url);
+            hls.attachMedia(videoEl);
           });
+        }
+      } finally {
+        if (hlsRef.current) {
+          try { hlsRef.current.destroy(); } catch (_) {}
+          hlsRef.current = null;
+        }
+        if (prefetchedChunkBlobUrl) {
+          try { URL.revokeObjectURL(prefetchedChunkBlobUrl); } catch (_) {}
+        }
+        if (Array.isArray(resolvedPlayback?.blobUrls)) {
+          for (const u of resolvedPlayback.blobUrls) {
+            try { URL.revokeObjectURL(u); } catch (_) {}
+          }
         }
       }
 
       const tEnd = performance.now();
-      const decodeTime = Math.max(15, Math.round(tEnd - tFirstChunkDone));
+      const decodeTime = Math.max(10, Math.round(tEnd - tFirstChunkDone));
       const totalTtff = Math.round(tEnd - tStart);
 
       setWaterfall((prev) => [
@@ -264,7 +332,12 @@ export default function BenchmarkPage() {
         decodeMs: decodeTime,
       });
 
-      addLog(`⚡ TTFF สำเร็จสมบูรณ์! Time to First Frame รวม: ${totalTtff} ms`, 'success');
+      const metaSrvNote = metaServerMs != null ? ` (srv ${metaServerMs}ms)` : '';
+      const srcSrvNote = sourceServerMs != null ? ` / srv ${sourceServerMs}ms` : '';
+      addLog(
+        `⚡ TTFF สำเร็จสมบูรณ์! รวม: ${totalTtff} ms (meta ${metaTime}ms${metaSrvNote} • source: ${cachePath} ${sourceTime}ms${srcSrvNote} • chunk ${chunkItem?.name || '-'} ${Math.round(chunkBytes / 1024)}KB${chunkCfStatus ? ` • CF:${chunkCfStatus}` : ''} • decode ${decodeTime}ms)`,
+        'success'
+      );
     } catch (err) {
       addLog(`TTFF Test ข้อผิดพลาด: ${err.message}`, 'error');
       setWaterfall((prev) => prev.map((s) => ({ ...s, status: s.status === 'running' ? 'failed' : s.status })));
@@ -452,10 +525,10 @@ export default function BenchmarkPage() {
             </div>
             <div className="mt-3">
               <div className="text-2xl sm:text-3xl font-extrabold font-mono tracking-tight text-[#212529] dark:text-white">
-                {dbBench ? `${dbBench.pingMs} ms` : '—'}
+                {dbBench?.pingMs != null ? `${dbBench.pingMs} ms` : '—'}
               </div>
               <div className="text-[11px] text-[#8C857B] dark:text-[#888888] mt-1 flex items-center gap-1 font-medium">
-                {dbBench ? (
+                {dbBench?.slimQuery ? (
                   <span className="text-cyan-600 dark:text-cyan-400 font-semibold">Slim Query: {dbBench.slimQuery.timeMs} ms</span>
                 ) : (
                   'กด Run DB Bench'
@@ -492,11 +565,13 @@ export default function BenchmarkPage() {
             </div>
             <div className="mt-3">
               <div className="text-2xl sm:text-3xl font-extrabold font-mono tracking-tight text-purple-600 dark:text-purple-400">
-                {dbBench ? `${dbBench.savings.byteReductionPct}%` : '—'}
+                {dbBench?.savings ? `${dbBench.savings.byteReductionPct}%` : '—'}
               </div>
               <div className="text-[11px] text-[#8C857B] dark:text-[#888888] mt-1 flex items-center gap-1 font-medium">
                 <span className="text-purple-600 dark:text-purple-300 font-semibold truncate">
-                  {dbBench ? `${dbBench.slimQuery.payloadKb} KB vs ~${dbBench.fullQuery.payloadKb} KB` : 'รัน DB Benchmark เพื่อวัดขนาด'}
+                  {dbBench?.slimQuery && dbBench?.fullQuery
+                    ? `${dbBench.slimQuery.payloadKb} KB vs ~${dbBench.fullQuery.payloadKb} KB`
+                    : 'รัน DB Benchmark เพื่อวัดขนาด'}
                 </span>
               </div>
             </div>
@@ -616,13 +691,13 @@ export default function BenchmarkPage() {
                 <div className="flex justify-between text-[#212529] dark:text-zinc-300 font-medium">
                   <span>⚡ Slim Projection (Optimized)</span>
                   <span className="font-mono text-cyan-600 dark:text-cyan-400 font-bold">
-                    {dbBench ? `${dbBench.slimQuery.timeMs} ms` : '—'}
+                    {dbBench?.slimQuery ? `${dbBench.slimQuery.timeMs} ms` : '—'}
                   </span>
                 </div>
                 <div className="flex justify-between text-[11px] text-[#8C857B] dark:text-zinc-500">
                   <span>Payload Size:</span>
                   <span className="font-mono text-[#212529] dark:text-zinc-300">
-                    {dbBench ? `${dbBench.slimQuery.payloadKb} KB` : '—'}
+                    {dbBench?.slimQuery ? `${dbBench.slimQuery.payloadKb} KB` : '—'}
                   </span>
                 </div>
               </div>
@@ -637,14 +712,14 @@ export default function BenchmarkPage() {
                 <div className="flex justify-between text-[11px] text-[#8C857B] dark:text-zinc-500">
                   <span>Payload Size:</span>
                   <span className="font-mono text-[#212529] dark:text-zinc-300">
-                    {dbBench ? `${dbBench.fullQuery.payloadKb} KB` : '—'}
+                    {dbBench?.fullQuery ? `${dbBench.fullQuery.payloadKb} KB` : '—'}
                   </span>
                 </div>
               </div>
 
               <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[11px] flex items-center gap-2 font-medium">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>{dbBench ? `Slim payload เล็กลงประมาณ ${dbBench.savings.byteReductionPct}%` : 'รัน DB Benchmark เพื่อดูส่วนต่างขนาดข้อมูล'}</span>
+                <span>{dbBench?.savings ? `Slim payload เล็กลงประมาณ ${dbBench.savings.byteReductionPct}%` : 'รัน DB Benchmark เพื่อดูส่วนต่างขนาดข้อมูล'}</span>
               </div>
             </div>
           </div>
@@ -680,7 +755,7 @@ export default function BenchmarkPage() {
                 ))
               ) : (
                 <div className="p-6 text-center text-[#8C857B] dark:text-zinc-500 text-xs">
-                  คลิก "ทดสอบสปีด" เพื่อดาวน์โหลด Chunk จริง 3 ครั้งและคำนวณ Bandwidth
+                  คลิก &ldquo;ทดสอบสปีด&rdquo; เพื่อดาวน์โหลด Chunk จริง 3 ครั้งและคำนวณ Bandwidth
                 </div>
               )}
 

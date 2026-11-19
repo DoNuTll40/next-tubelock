@@ -2,7 +2,12 @@
  * Playback Resolver for OneDrive Streams (MP4 and HLS with nested ABR Blob URLs)
  */
 
-async function rewriteSubPlaylistToBlobUrl(subPlaylistUrl, segmentUrlMap, preloadedText = null) {
+async function rewriteSubPlaylistToBlobUrl(
+  subPlaylistUrl,
+  segmentUrlMap,
+  preloadedText = null,
+  fallbackBaseUrl = ''
+) {
   let text = preloadedText;
   if (!text) {
     const res = await fetch(subPlaylistUrl);
@@ -16,9 +21,19 @@ async function rewriteSubPlaylistToBlobUrl(subPlaylistUrl, segmentUrlMap, preloa
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('#')) return line;
 
-      const cleanBase = trimmed.replace(/\.ts$/i, '');
-      const realSegmentUrl = segmentUrlMap[trimmed] || segmentUrlMap[`${cleanBase}.ts`] || segmentUrlMap[cleanBase];
-      return realSegmentUrl || line;
+      const cleanRel = trimmed.replace(/^\.?\//, '');
+      const cleanBase = cleanRel.replace(/\.ts$/i, '');
+      const realSegmentUrl =
+        segmentUrlMap[trimmed] ||
+        segmentUrlMap[cleanRel] ||
+        segmentUrlMap[`${cleanBase}.ts`] ||
+        segmentUrlMap[cleanBase];
+      if (realSegmentUrl) return realSegmentUrl;
+      if (fallbackBaseUrl) {
+        const encodedRel = cleanRel.split('/').map(encodeURIComponent).join('/');
+        return `${fallbackBaseUrl}/${encodedRel}`;
+      }
+      return line;
     })
     .join('\n');
 
@@ -189,6 +204,13 @@ export async function resolveClientPlaybackSource(sourceData) {
   // Case 2: HLS Stream from OneDrive items
   if (sourceData.type === 'hls' && Array.isArray(sourceData.items)) {
     const items = sourceData.items;
+    const isPartial = Boolean(sourceData.partial);
+    const streamFolder = sourceData.streamFolder || '';
+    const fallbackBaseUrl =
+      isPartial && streamFolder && typeof window !== 'undefined'
+        ? `${window.location.origin}/streams/${encodeURIComponent(streamFolder)}`
+        : '';
+
     // ⚡ Non-blocking Storyboard: Download & parse VTT thumbnails in the background so video begins buffering immediately
     const storyboardPromise = resolveStoryboard(items);
     const segmentUrlMap = {};
@@ -197,25 +219,26 @@ export async function resolveClientPlaybackSource(sourceData) {
     const createdBlobUrls = [];
 
     for (const item of items) {
+      if (!item?.name) continue;
       const downloadUrl = item.downloadUrl;
-      if (!downloadUrl) continue;
-
       const lowerName = item.name.toLowerCase();
 
       if (lowerName === 'master.m3u8') {
-        masterPlaylistItem = item;
+        if (item.content || downloadUrl) masterPlaylistItem = item;
       } else if (lowerName.endsWith('.m3u8')) {
-        subPlaylistItems[item.name] = item;
-      } else if (lowerName.endsWith('.ts')) {
-        const baseName = item.name.replace(/\.ts$/i, '');
+        if (item.content || downloadUrl) subPlaylistItems[item.name] = item;
+      } else if (lowerName.endsWith('.ts') && downloadUrl) {
+        const cleanName = item.name.replace(/^\.?\//, '');
+        const baseName = cleanName.replace(/\.ts$/i, '');
         segmentUrlMap[item.name] = downloadUrl;
+        segmentUrlMap[cleanName] = downloadUrl;
         segmentUrlMap[`${baseName}.ts`] = downloadUrl;
         segmentUrlMap[baseName] = downloadUrl;
       }
     }
 
     // ABR Multi-Quality Mode with master.m3u8
-    if (masterPlaylistItem && masterPlaylistItem.downloadUrl) {
+    if (masterPlaylistItem && (masterPlaylistItem.content || masterPlaylistItem.downloadUrl)) {
       const subPlaylistBlobUrlMap = {};
       const subPlaylistEntries = Object.entries(subPlaylistItems);
 
@@ -231,7 +254,12 @@ export async function resolveClientPlaybackSource(sourceData) {
       await Promise.all(
         subPlaylistEntries.map(async ([fileName, item]) => {
           try {
-            const blobUrl = await rewriteSubPlaylistToBlobUrl(item.downloadUrl, segmentUrlMap, item.content);
+            const blobUrl = await rewriteSubPlaylistToBlobUrl(
+              item.downloadUrl,
+              segmentUrlMap,
+              item.content,
+              fallbackBaseUrl
+            );
             createdBlobUrls.push(blobUrl);
             subPlaylistBlobUrlMap[fileName] = blobUrl;
             subPlaylistBlobUrlMap[fileName.toLowerCase()] = blobUrl;
@@ -300,6 +328,9 @@ export async function resolveClientPlaybackSource(sourceData) {
           blobUrls: createdBlobUrls,
           storyboardPromise,
           aspectRatio: detectedAspect,
+          segmentUrlMap,
+          partial: isPartial,
+          streamFolder,
         };
       }
 
@@ -314,16 +345,24 @@ export async function resolveClientPlaybackSource(sourceData) {
         blobUrls: createdBlobUrls,
         storyboardPromise,
         aspectRatio: detectedAspect,
+        segmentUrlMap,
+        partial: isPartial,
+        streamFolder,
       };
     }
 
     // Fallback: Single playlist .m3u8
     const singlePlaylist = Object.values(subPlaylistItems)[0];
-    if (!singlePlaylist || !singlePlaylist.downloadUrl) {
+    if (!singlePlaylist || (!singlePlaylist.content && !singlePlaylist.downloadUrl)) {
       throw new Error('ไม่พบไฟล์ playlist (.m3u8) ในชุดสตรีม HLS');
     }
 
-    const singleBlobUrl = await rewriteSubPlaylistToBlobUrl(singlePlaylist.downloadUrl, segmentUrlMap, singlePlaylist.content);
+    const singleBlobUrl = await rewriteSubPlaylistToBlobUrl(
+      singlePlaylist.downloadUrl,
+      segmentUrlMap,
+      singlePlaylist.content,
+      fallbackBaseUrl
+    );
     createdBlobUrls.push(singleBlobUrl);
 
     return {
@@ -331,6 +370,9 @@ export async function resolveClientPlaybackSource(sourceData) {
       url: singleBlobUrl,
       blobUrls: createdBlobUrls,
       storyboardPromise,
+      segmentUrlMap,
+      partial: isPartial,
+      streamFolder,
     };
   }
 
@@ -346,7 +388,7 @@ const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 นาที
 
 export function fetchVideoSourceClient(
   videoId,
-  { forceFresh = false, lowPriority = false, showAdultPreviews = false, version = null } = {}
+  { forceFresh = false, lowPriority = false, showAdultPreviews = false, version = null, preferFull = false } = {}
 ) {
   const verKey = version != null && String(version).trim() !== '' ? String(version).trim() : 'default';
   const key = `${videoId}:v:${verKey}${showAdultPreviews ? ':previews' : ''}`;
@@ -356,13 +398,14 @@ export function fetchVideoSourceClient(
     clientSourceCache.delete(key);
   } else {
     const existing = clientSourceCache.get(key);
-    if (existing && existing.expiresAt > now) {
+    if (existing && existing.expiresAt > now && (!preferFull || !existing.isPartial)) {
       return existing.promise;
     }
   }
 
   const query = new URLSearchParams();
   if (forceFresh) query.set('fresh', '1');
+  if (preferFull) query.set('full', '1');
   if (showAdultPreviews) query.set('previews', '1');
   if (verKey !== 'default') query.set('v', verKey);
   const url = `/api/videos/${videoId}/source${query.size ? `?${query}` : ''}`;
@@ -378,18 +421,32 @@ export function fetchVideoSourceClient(
     return res.json();
   });
 
-  // ถ้ายิงล้มเหลว ให้ลบออกจาก cache ทันที ताकिครั้งถัดไปลองใหม่ได้
-  promise.catch(() => {
-    const cur = clientSourceCache.get(key);
-    if (cur && cur.promise === promise) {
-      clientSourceCache.delete(key);
-    }
-  });
-
-  clientSourceCache.set(key, {
+  const entry = {
     promise,
     expiresAt: now + CLIENT_CACHE_TTL_MS,
-  });
+    isPartial: !preferFull,
+  };
+
+  promise
+    .then((data) => {
+      const cur = clientSourceCache.get(key);
+      if (cur !== entry) return;
+      if (data?.partial) {
+        entry.isPartial = true;
+        entry.expiresAt = Date.now() + 2500;
+      } else {
+        entry.isPartial = false;
+        entry.expiresAt = Date.now() + CLIENT_CACHE_TTL_MS;
+      }
+    })
+    .catch(() => {
+      const cur = clientSourceCache.get(key);
+      if (cur && cur.promise === promise) {
+        clientSourceCache.delete(key);
+      }
+    });
+
+  clientSourceCache.set(key, entry);
 
   return promise;
 }

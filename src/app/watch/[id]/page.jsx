@@ -5,7 +5,7 @@ import { cookies } from 'next/headers';
 import { cache } from 'react';
 import { getDb } from '@/lib/db';
 import { parseTimestamp, isMusicVideo, decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
-import { prewarmVideoSourceServer } from '@/lib/videoSourceService';
+import { prewarmVideoSourceServer, getCachedVideoSourceSync } from '@/lib/videoSourceService';
 import {
   getVideoVersions,
   formatVersionSummary,
@@ -27,7 +27,10 @@ const getVideoById = cache(async (numericId) => {
         v.id, v.title, v.description, v.duration, v.file_size_bytes, v.resolution,
         v.fps, v.codec, v.bitrate, v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at,
         v.status, v.source_type, v.user_id, v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name,
-        v.subtitle_status, v.subtitle_srt, v.subtitle_vtt, v.subtitle_tracks, v.content_rating,
+        v.subtitle_status,
+        CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_srt, '') END AS subtitle_srt,
+        CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_vtt, '') END AS subtitle_vtt,
+        v.subtitle_tracks, v.content_rating,
         u.name AS author_name, u.picture AS author_picture
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id
@@ -218,7 +221,7 @@ export default async function WatchPage({ params, searchParams }) {
       readyVersions,
       requestedVersion || lastWatchedVersionId
     );
-    if (activeVersion && !requestedVersion) {
+    if (activeVersion && !requestedVersion && lastWatchedVersionId) {
       prewarmVideoSourceServer(numericId, { version: activeVersion.id });
     }
 
@@ -346,13 +349,19 @@ export default async function WatchPage({ params, searchParams }) {
 
   const isMusic = isMusicVideo(video);
   const resolvedTime = isMusic ? 0 : initialTime;
+  const showAdultPosters = Boolean(userId) && cookieStore.get(POSTER_PREFERENCE)?.value === '1';
+  const ssrWarmSource = getCachedVideoSourceSync(numericId, {
+    showAdultPreviews: showAdultPosters,
+    version: requestedVersion || video?.active_version?.versionKey || video?.active_version?.id || null,
+  });
 
   return (
     <WatchClient
       initialVideo={video}
-      initialShowAdultPosters={Boolean(userId) && cookieStore.get(POSTER_PREFERENCE)?.value === '1'}
+      initialShowAdultPosters={showAdultPosters}
       initialRelated={relatedVideos}
       initialTime={resolvedTime}
+      initialSource={ssrWarmSource}
     />
   );
 }

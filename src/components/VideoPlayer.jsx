@@ -68,8 +68,13 @@ export default function VideoPlayer({
   activeVersion = null,
   onSelectVersion = null,
   isSwitchingVersion = false,
+  partialSegmentMapRef = null,
 }) {
   const video = useRef(null);
+  const segmentMapRefProp = useRef(partialSegmentMapRef);
+  useEffect(() => {
+    segmentMapRefProp.current = partialSegmentMapRef;
+  }, [partialSegmentMapRef]);
   useEffect(() => {
     if (externalVideoRef) {
       externalVideoRef.current = video.current;
@@ -923,18 +928,45 @@ export default function VideoPlayer({
 
           const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-          const hls = new Hls({
-            startPosition: targetInitialTime > 0 ? targetInitialTime : -1,
+          // ⚡ Seamless Two-Phase Segment URL Upgrade:
+          // Swaps fallback /streams/{folder}/{seg}.ts URLs to direct CF Worker URLs in 0ms once background hydration finishes.
+          class SegmentHydrationLoader extends Hls.DefaultConfig.loader {
+            load(context, config, callbacks) {
+              const map = segmentMapRefProp.current?.current;
+              if (map && context?.url && context.url.includes('/streams/')) {
+                try {
+                  const cleanPath = context.url.split('?')[0];
+                  const match = cleanPath.match(/\/streams\/[^/]+\/(.+)$/);
+                  if (match && match[1]) {
+                    const relPath = decodeURIComponent(match[1]);
+                    const baseName = relPath.includes('/')
+                      ? relPath.slice(relPath.lastIndexOf('/') + 1)
+                      : relPath;
+                    const directUrl = map[relPath] || map[baseName];
+                    if (directUrl) {
+                      context.url = directUrl;
+                    }
+                  }
+                } catch (_) {}
+              }
+              super.load(context, config, callbacks);
+            }
+          }
 
-            // mobile: บังคับเริ่มที่ level 0 (ต่ำสุด = 144p) แล้วค่อย ramp-up
-            // desktop: ปล่อย ABR เลือกเอง (-1)
+          const hls = new Hls({
+            fLoader: SegmentHydrationLoader,
+            startPosition: targetInitialTime > 0 ? targetInitialTime : -1,
+            // Defer fragment load until MANIFEST_PARSED so we can pick the exact fast-start or saved level before chunk #0!
+            autoStartLoad: false,
+
+            // mobile: เริ่มระดับต่ำสุด, desktop: เลือก fast-start 360p/480p ใน MANIFEST_PARSED แล้วให้ ABR เด้ง 1080p/4K ทันทีใน chunk ถัดไป
             startLevel: isMobile ? 0 : -1,
 
-            // คุมระยะเวลาโหลดล่วงหน้า (บนมือถือเอาแค่ 10-15 วิ พอ ไม่ต้องตุนถึง 60 วิ)
+            // คุมระยะเวลาโหลดล่วงหน้า
             maxBufferLength: 60,
             maxMaxBufferLength: 120,
 
-            // ลดขนาดแคชสูงสุด (มือถือไม่เกิน 30MB, คอมไม่เกิน 60MB)
+            // ลดขนาดแคชสูงสุด
             maxBufferSize: (isMobile ? 120 : 240) * 1000 * 1000,
 
             // ป้องกันการลบ buffer ด้านหลังเร็วเกินไป (30s แทน 5s ป้องกัน Chrome MSE buffer decode stall)
@@ -949,10 +981,11 @@ export default function VideoPlayer({
             levelLoadingTimeOut: 15000,
             levelLoadingMaxRetry: 3,
 
-            testBandwidth: true,
+            // ปิด bandwidth probe ก่อนเริ่ม เพื่อไม่ให้เสียเวลาโหลด fragment แรกซ้ำซ้อน
+            testBandwidth: false,
 
-            // ปรับลดค่าประเมินเริ่มต้นเหลือ 1.5 - 3 Mbps
-            abrEwmaDefaultEstimate: isMobile ? 1500000 : 3500000,
+            // ค่าประเมินเริ่มต้นที่สมดุล เพื่อให้หลัง chunk แรก (360p/480p) จบ ABR กระโดดขึ้น 1080p/4K ทันที
+            abrEwmaDefaultEstimate: isMobile ? 1500000 : 5000000,
 
             // Anti-stall watchdog settings: ข้าม micro-gaps อัตโนมัติ ป้องกันวิดีโอหยุดเล่นเอง
             maxBufferHole: 0.5,
@@ -993,25 +1026,43 @@ export default function VideoPlayer({
                 };
               });
               setLevels(parsed);
-              setCurrentLevelIndex(hls.currentLevel);
 
-              // ✨ Quality Persistence: จับคู่ saved height กับ level index จริง
+              // ✨ Quality Persistence vs YouTube-style Fast-Start ABR
+              let appliedSaved = false;
               if (savedStartLevel > 0) {
                 const matchIdx = parsed.findIndex((l) => l.height === savedStartLevel);
                 if (matchIdx !== -1) {
+                  hls.startLevel = matchIdx;
+                  hls.currentLevel = matchIdx;
                   hls.nextLevel = matchIdx;
                   setCurrentLevelIndex(matchIdx);
                   setActiveLevelLabel(parsed[matchIdx].label);
+                  appliedSaved = true;
                 }
               }
 
+              if (!appliedSaved) {
+                if (parsed.length > 1) {
+                  const sortedByHeight = [...parsed].sort((a, b) => (a.height || 0) - (b.height || 0));
+                  const fastStart = isMobile
+                    ? sortedByHeight[0]
+                    : sortedByHeight.find((l) => l.height >= 360 && l.height <= 480) || sortedByHeight[0];
+                  if (fastStart) {
+                    // Load only chunk #0 from fast-start level (~150-250 KB) while keeping Auto ABR active for chunk #1+
+                    hls.startLevel = fastStart.index;
+                  }
+                }
+                setCurrentLevelIndex(-1);
+              }
+
               // Auto-detect aspect ratio from highest HLS level
-              const bestLevel = data.levels[0];
+              const bestLevel = data.levels[data.levels.length - 1] || data.levels[0];
               if (bestLevel?.width && bestLevel?.height) {
                 updateRatio(bestLevel.width / bestLevel.height);
               }
             }
 
+            hls.startLoad(targetInitialTime > 0 ? targetInitialTime : -1);
             attemptAutoPlay();
           });
 

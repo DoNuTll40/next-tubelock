@@ -17,8 +17,12 @@ export function wrapWithWorkerCache(name, downloadUrl) {
 // High-speed In-Memory Cache (Global across server restarts/HMR in dev)
 export const sourceCache =
   globalThis.__tubelock_source_cache || (globalThis.__tubelock_source_cache = new Map());
+export const partialCache =
+  globalThis.__tubelock_partial_cache || (globalThis.__tubelock_partial_cache = new Map());
 export const inFlightRequests =
   globalThis.__tubelock_inflight || (globalThis.__tubelock_inflight = new Map());
+const inFlightFullRefresh =
+  globalThis.__tubelock_inflight_full || (globalThis.__tubelock_inflight_full = new Map());
 export const assetCache =
   globalThis.__tubelock_asset_cache || (globalThis.__tubelock_asset_cache = new Map());
 
@@ -30,13 +34,15 @@ export function invalidateVideoCaches(videoId, versionId = null) {
   const idStr = String(videoId);
   if (versionId != null) {
     const verStr = String(versionId);
-    for (const key of sourceCache.keys()) {
-      if (key === idStr || key === `${idStr}:v:default` || key === `${idStr}:vid:${verStr}` || key.startsWith(`${idStr}:v:${verStr}`)) {
-        sourceCache.delete(key);
-      }
-      const cached = sourceCache.get(key);
-      if (cached?.data?.video?.active_version?.id === Number(versionId)) {
-        sourceCache.delete(key);
+    for (const map of [sourceCache, partialCache]) {
+      for (const key of map.keys()) {
+        if (key === idStr || key === `${idStr}:v:default` || key === `${idStr}:vid:${verStr}` || key.startsWith(`${idStr}:v:${verStr}`)) {
+          map.delete(key);
+        }
+        const cached = map.get(key);
+        if (cached?.data?.video?.active_version?.id === Number(versionId)) {
+          map.delete(key);
+        }
       }
     }
     const verPrefix = `stream_vid_${idStr}_v${verStr}/`;
@@ -48,10 +54,12 @@ export function invalidateVideoCaches(videoId, versionId = null) {
     return;
   }
 
-  sourceCache.delete(idStr);
-  for (const key of sourceCache.keys()) {
-    if (key.startsWith(`${idStr}:`)) {
-      sourceCache.delete(key);
+  for (const map of [sourceCache, partialCache]) {
+    map.delete(idStr);
+    for (const key of map.keys()) {
+      if (key.startsWith(`${idStr}:`)) {
+        map.delete(key);
+      }
     }
   }
   const prefix = `stream_vid_${idStr}/`;
@@ -107,11 +115,23 @@ function stripHeavyVideoFields(video) {
   const {
     source_cache,
     source_cache_br,
+    m3u8_cache_br,
     source_cache_items_count,
     source_cache_expires_at,
     ...cleanVideo
   } = video;
   return cleanVideo;
+}
+
+function extractM3u8Map(items) {
+  const map = {};
+  if (!Array.isArray(items)) return map;
+  for (const item of items) {
+    if (item?.name && item?.content && item.name.toLowerCase().endsWith('.m3u8')) {
+      map[item.name] = item.content;
+    }
+  }
+  return map;
 }
 
 // ดึงเนื้อหาไฟล์ .m3u8 ขนานกัน (ใช้เวลา ~400ms หรือ 0ms ถ้ามีใน cache เดิมแล้ว)
@@ -191,20 +211,131 @@ async function listHlsFolderItems(token, driveId, folderId, existingM3u8Map = {}
   return allItems;
 }
 
+const PLAYLIST_PRIORITY_PATTERNS = [
+  /360p/i,
+  /480p/i,
+  /720p/i,
+  /1080p/i,
+  /144p/i,
+  /1440p/i,
+  /2160p/i,
+];
+
+function getPlaylistPriority(name) {
+  const idx = PLAYLIST_PRIORITY_PATTERNS.findIndex((re) => re.test(name));
+  return idx === -1 ? PLAYLIST_PRIORITY_PATTERNS.length : idx;
+}
+
+// ดึงชื่อไฟล์ chunk แรกๆ (.ts) จาก m3u8_cache_br แบบ round-robin ทุกความละเอียด (สูงสุด 18 ไฟล์ เพื่อให้พอดีโควตา Graph $batch <= 20)
+function extractInitialSegmentNames(m3u8Map, maxTotal = 18) {
+  if (!m3u8Map || typeof m3u8Map !== 'object') return [];
+  const subEntries = Object.entries(m3u8Map)
+    .filter(([name, content]) => {
+      const lower = String(name || '').toLowerCase();
+      return lower.endsWith('.m3u8') && lower !== 'master.m3u8' && typeof content === 'string';
+    })
+    .sort(([a], [b]) => getPlaylistPriority(a) - getPlaylistPriority(b));
+
+  const perPlaylistSegments = subEntries.map(([, content]) => {
+    const segs = [];
+    for (const rawLine of content.split('\n')) {
+      const trimmed = rawLine.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const clean = trimmed.replace(/^\.?\//, '');
+      if (clean.toLowerCase().endsWith('.ts')) {
+        segs.push(clean);
+        if (segs.length >= 3) break;
+      }
+    }
+    return segs;
+  });
+
+  const picked = [];
+  const seen = new Set();
+  for (let pass = 0; pass < 3 && picked.length < maxTotal; pass++) {
+    for (const segs of perPlaylistSegments) {
+      if (picked.length >= maxTotal) break;
+      const name = segs[pass];
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        picked.push(name);
+      }
+    }
+  }
+  return picked;
+}
+
+// ยิง Microsoft Graph JSON $batch (1 HTTP request ขอ signed downloadUrl ได้สูงสุด 20 ไฟล์พร้อมกัน ~350-450ms แทนที่จะรอเซ็นทั้ง 465 ไฟล์ ~2,000ms!)
+async function fetchBatchDownloadUrls(token, driveId, folderId, fileNames) {
+  const batchNames = (fileNames || []).slice(0, 20);
+  if (batchNames.length === 0) return [];
+
+  const requests = batchNames.map((name, idx) => {
+    const clean = name.replace(/^\.?\//, '');
+    const encodedPath = clean.split('/').map(encodeURIComponent).join('/');
+    return {
+      id: String(idx + 1),
+      method: 'GET',
+      url: `/drives/${driveId}/items/${folderId}:/${encodedPath}:?select=id,name,@microsoft.graph.downloadUrl`,
+    };
+  });
+
+  const res = await fetch('https://graph.microsoft.com/v1.0/$batch', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requests }),
+  });
+
+  if (!res.ok) return [];
+  const data = await res.json();
+  if (!Array.isArray(data?.responses)) return [];
+
+  const results = [];
+  for (const r of data.responses) {
+    if (r?.status === 200 && r.body?.['@microsoft.graph.downloadUrl']) {
+      const idx = Number(r.id) - 1;
+      const reqName = batchNames[idx] || r.body.name;
+      if (reqName) {
+        results.push({
+          name: reqName,
+          downloadUrl: r.body['@microsoft.graph.downloadUrl'],
+        });
+      }
+    }
+  }
+  return results;
+}
+
+function resolveStreamFolderName(video, id, activeVersionId) {
+  const playlistPath = video?.master_playlist_path || '';
+  const match = playlistPath.match(/\/streams\/([^/]+)\//i);
+  if (match && match[1]) return match[1];
+  return activeVersionId ? `stream_vid_${id}_v${activeVersionId}` : `stream_vid_${id}`;
+}
+
 let columnsChecked = false;
 export async function ensureSourceCacheColumns(sql) {
   if (columnsChecked) return;
   try {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache JSONB;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_br TEXT;`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS m3u8_cache_br TEXT;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_items_count INTEGER DEFAULT 0;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_cache_expires_at BIGINT DEFAULT 0;`;
+    try {
+      await sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS m3u8_cache_br TEXT;`;
+    } catch (_) {}
     columnsChecked = true;
   } catch (_) {}
 }
 
 async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versionId = null) {
   const compressed = compressSourceCache(payloadObj);
+  const m3u8Map = extractM3u8Map(payloadObj?.items);
+  const m3u8Compressed = Object.keys(m3u8Map).length > 0 ? compressSourceCache(m3u8Map) : null;
   const itemsCount = Array.isArray(payloadObj?.items) ? payloadObj.items.length : 0;
 
   const runUpdate = () => {
@@ -213,12 +344,14 @@ async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versio
         ? sql`
             UPDATE video_versions
             SET source_cache_br = ${compressed},
+                m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
                 source_cache_items_count = ${itemsCount}
             WHERE id = ${versionId} AND video_id = ${id};
           `
         : sql`
             UPDATE video_versions
             SET source_cache_br = ${compressed},
+                m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
                 source_cache_items_count = ${itemsCount},
                 source_cache_expires_at = ${expiresAt}
             WHERE id = ${versionId} AND video_id = ${id};
@@ -228,6 +361,7 @@ async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versio
       ? sql`
           UPDATE videos
           SET source_cache_br = ${compressed},
+              m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
               source_cache_items_count = ${itemsCount},
               source_cache = NULL
           WHERE id = ${id};
@@ -235,6 +369,7 @@ async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versio
       : sql`
           UPDATE videos
           SET source_cache_br = ${compressed},
+              m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
               source_cache_items_count = ${itemsCount},
               source_cache = NULL,
               source_cache_expires_at = ${expiresAt}
@@ -296,7 +431,7 @@ export function formatSourceForClient(data, showAdultPreviews = false) {
  */
 export async function resolveVideoSourceServer(
   numericId,
-  { forceFresh = false, showAdultPreviews = false, version = null } = {}
+  { forceFresh = false, showAdultPreviews = false, version = null, preferFull = false } = {}
 ) {
   const id = Number(numericId);
   if (!id || isNaN(id)) {
@@ -305,12 +440,17 @@ export async function resolveVideoSourceServer(
 
   const reqVer = version != null && String(version).trim() !== '' ? String(version).trim() : null;
   const cacheKey = reqVer ? `${id}:v:${reqVer.toLowerCase()}` : `${id}:v:default`;
+  const inflightKey = preferFull ? `${cacheKey}:full` : cacheKey;
 
   if (forceFresh) {
     sourceCache.delete(cacheKey);
-    if (!reqVer) sourceCache.delete(String(id));
+    partialCache.delete(cacheKey);
+    if (!reqVer) {
+      sourceCache.delete(String(id));
+      partialCache.delete(String(id));
+    }
   } else {
-    // ⚡ 1. Ultra-fast Cache Hit (<1ms) with Token Expiry Validation
+    // ⚡ 1. Ultra-fast Full Cache Hit (<1ms) with Token Expiry Validation
     const cached = sourceCache.get(cacheKey);
     if (
       cached &&
@@ -325,11 +465,44 @@ export async function resolveVideoSourceServer(
         sourceCache.delete(cacheKey);
       }
     }
+
+    // ⚡ 1b. If caller wants full list (?full=1) and background full refresh is already running, join it (0 extra DB/Graph calls!)
+    if (preferFull && inFlightFullRefresh.has(cacheKey)) {
+      try {
+        const fullData = await inFlightFullRefresh.get(cacheKey);
+        if (fullData?.video && (fullData?.items?.length > 0 || fullData?.url)) {
+          return { data: formatSourceForClient(fullData, showAdultPreviews), path: 'inflight-full' };
+        }
+      } catch (_) {}
+    }
+
+    // ⚡ 1c. Ultra-fast Partial Batch Hit (<1ms) while full background refresh is still completing
+    if (!preferFull) {
+      const partialCached = partialCache.get(cacheKey);
+      if (
+        partialCached &&
+        partialCached.expiresAt > Date.now() &&
+        partialCached.data?.video &&
+        partialCached.data?.items?.length > 0
+      ) {
+        const sampleTsUrl = partialCached.data.items.find((i) =>
+          i.name?.toLowerCase().endsWith('.ts')
+        )?.downloadUrl;
+        if (sampleTsUrl && isTempauthValid(sampleTsUrl)) {
+          return {
+            data: formatSourceForClient(partialCached.data, showAdultPreviews),
+            path: 'cold-batch-hit',
+          };
+        } else {
+          partialCache.delete(cacheKey);
+        }
+      }
+    }
   }
 
   // ⚡ 2. In-Flight Request Deduplication
-  if (!forceFresh && inFlightRequests.has(cacheKey)) {
-    const data = await inFlightRequests.get(cacheKey);
+  if (!forceFresh && inFlightRequests.has(inflightKey)) {
+    const data = await inFlightRequests.get(inflightKey);
     if (data?.status && data.status !== 'READY' && !data.success) {
       return { data, path: 'inflight', notReady: true };
     }
@@ -348,6 +521,9 @@ export async function resolveVideoSourceServer(
 
     const reqVerNumeric = reqVer && /^\d+$/.test(reqVer) ? Number(reqVer) : null;
     const reqVerLower = reqVer ? reqVer.toLowerCase() : null;
+    // Skip pulling heavy (180–650 KB) source_cache_br from Neon when tempauth is already expired or forceFresh is set!
+    // Always fetch tiny m3u8_cache_br (~2–7 KB) so cold OneDrive refreshes skip downloading 5–6 .m3u8 files.
+    const cacheMinExpiry = forceFresh ? Number.MAX_SAFE_INTEGER : Date.now();
 
     const queryWithVersions = () => sql`
       SELECT
@@ -355,10 +531,10 @@ export async function resolveVideoSourceServer(
         v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status,
         v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
         v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
-        v.content_rating, v.user_id, v.source_cache_expires_at,
-        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0
+        v.content_rating, v.user_id, v.source_cache_expires_at, v.m3u8_cache_br,
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry}
           THEN v.source_cache_br ELSE NULL END AS source_cache_br,
-        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0 AND v.source_cache_br IS NULL
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry} AND v.source_cache_br IS NULL
           THEN v.source_cache ELSE NULL END AS source_cache,
         u.name AS author_name,
         u.picture AS author_picture,
@@ -387,7 +563,8 @@ export async function resolveVideoSourceServer(
         vv.error_message AS vv_error_message,
         vv.subtitle_tracks_override AS vv_subtitle_tracks_override,
         vv.source_cache_expires_at AS vv_source_cache_expires_at,
-        CASE WHEN vv.id IS NOT NULL AND (vv.status = 'READY' OR vv.status IS NULL) AND COALESCE(vv.source_cache_expires_at, 0) > 0
+        vv.m3u8_cache_br AS vv_m3u8_cache_br,
+        CASE WHEN vv.id IS NOT NULL AND (vv.status = 'READY' OR vv.status IS NULL) AND COALESCE(vv.source_cache_expires_at, 0) > ${cacheMinExpiry}
           THEN vv.source_cache_br ELSE NULL END AS vv_source_cache_br
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id
@@ -422,10 +599,10 @@ export async function resolveVideoSourceServer(
         v.thumbnail_url, v.tags, v.category, v.views_count, v.created_at, v.status,
         v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
         v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
-        v.content_rating, v.user_id, v.source_cache_expires_at,
-        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0
+        v.content_rating, v.user_id, v.source_cache_expires_at, v.m3u8_cache_br,
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry}
           THEN v.source_cache_br ELSE NULL END AS source_cache_br,
-        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > 0 AND v.source_cache_br IS NULL
+        CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry} AND v.source_cache_br IS NULL
           THEN v.source_cache ELSE NULL END AS source_cache,
         u.name AS author_name,
         u.picture AS author_picture
@@ -441,7 +618,7 @@ export async function resolveVideoSourceServer(
     } catch (err) {
       if (err?.code === '42P01') {
         rows = await queryLegacyRow();
-      } else if (err?.code === '42703' || /source_cache_br/i.test(err?.message || '')) {
+      } else if (err?.code === '42703' || /source_cache_br|m3u8_cache_br/i.test(err?.message || '')) {
         await ensureSourceCacheColumns(sql);
         try {
           rows = await queryWithVersions();
@@ -474,6 +651,12 @@ export async function resolveVideoSourceServer(
     const activeItemId = hasVersion ? rawRow.vv_onedrive_item_id : rawRow.onedrive_item_id;
     const activeFolderId = hasVersion ? rawRow.vv_onedrive_folder_id : rawRow.onedrive_folder_id;
     const activeCacheBr = hasVersion ? rawRow.vv_source_cache_br : rawRow.source_cache_br;
+    const activeM3u8CacheBr = hasVersion
+      ? rawRow.vv_m3u8_cache_br ||
+        (rawRow.vv_onedrive_folder_id && rawRow.vv_onedrive_folder_id === rawRow.onedrive_folder_id
+          ? rawRow.m3u8_cache_br
+          : null)
+      : rawRow.m3u8_cache_br;
     const activeCacheLegacy = hasVersion ? null : rawRow.source_cache;
     const activeCacheExp = Number((hasVersion ? rawRow.vv_source_cache_expires_at : rawRow.source_cache_expires_at) || 0);
 
@@ -483,7 +666,7 @@ export async function resolveVideoSourceServer(
       vv_master_playlist_path, vv_duration, vv_file_size_bytes, vv_resolution,
       vv_fps, vv_codec, vv_bitrate, vv_thumbnail_url, vv_status,
       vv_transcode_progress, vv_stage_detail, vv_error_message,
-      vv_subtitle_tracks_override, vv_source_cache_expires_at, vv_source_cache_br,
+      vv_subtitle_tracks_override, vv_source_cache_expires_at, vv_source_cache_br, vv_m3u8_cache_br,
       ...parentRawVideo
     } = rawRow;
 
@@ -524,6 +707,7 @@ export async function resolveVideoSourceServer(
 
     const storeInMemoryCache = (payloadData, expiresAt) => {
       sourceCache.set(cacheKey, { data: payloadData, expiresAt });
+      partialCache.delete(cacheKey);
       if (activeVersionId) {
         sourceCache.set(`${id}:vid:${activeVersionId}`, { data: payloadData, expiresAt });
       } else {
@@ -547,8 +731,19 @@ export async function resolveVideoSourceServer(
       };
     }
 
-    // เก็บเนื้อหา .m3u8 เดิมจาก DB cache (ถ้ามี) เพื่อไม่ต้องเสียเวลาโหลด .m3u8 ใหม่แม้ tempauth หมดอายุ
+    // เก็บเนื้อหา .m3u8 เดิมจากคอลัมน์เล็ก m3u8_cache_br (~2–7KB ไม่หมดอายุตาม tempauth) ก่อน
+    // ช่วยให้ Cold Miss ไม่ต้องดูด source_cache_br (180–650KB) จาก Neon และไม่ต้องโหลด .m3u8 จาก SharePoint ซ้ำ!
     const existingM3u8Map = {};
+    if (activeM3u8CacheBr) {
+      const parsedM3u8 = decompressSourceCache(activeM3u8CacheBr);
+      if (parsedM3u8 && typeof parsedM3u8 === 'object') {
+        for (const [name, content] of Object.entries(parsedM3u8)) {
+          if (name && typeof content === 'string' && content.includes('#EXTM3U')) {
+            existingM3u8Map[name] = content;
+          }
+        }
+      }
+    }
     let parsedCache = null;
     const isMigratingFromLegacy = Boolean(!activeCacheBr && activeCacheLegacy);
     if (activeCacheExp > 0) {
@@ -654,7 +849,7 @@ export async function resolveVideoSourceServer(
                       return entry;
                     });
                   if (freshValid.length > 0) {
-                    const newExp = Date.now() + 45 * 60 * 1000;
+                    const newExp = Date.now() + 50 * 60 * 1000;
                     storeInMemoryCache({ success: true, type: 'hls', video, items: freshValid }, newExp);
                     await saveSourceCacheToDb(
                       sql,
@@ -684,48 +879,113 @@ export async function resolveVideoSourceServer(
     // Case 1: HLS Stream Folder
     if (activeSourceType === 'hls' || activeFolderId) {
       const folderId = activeFolderId || activeItemId;
-      const allItems = await listHlsFolderItems(token, driveId, folderId, existingM3u8Map);
+      const isCompleted = Number(activeProgress || 0) >= 100;
 
-      const validItems = allItems
-        .filter((i) => i.name && i['@microsoft.graph.downloadUrl'])
-        .map((i) => {
-          const entry = {
-            name: i.name,
-            downloadUrl: i['@microsoft.graph.downloadUrl'],
-          };
-          if (existingM3u8Map[i.name]) {
-            entry.content = existingM3u8Map[i.name];
+      const startFullHlsFetch = () => {
+        if (!forceFresh && inFlightFullRefresh.has(cacheKey)) {
+          const existing = inFlightFullRefresh.get(cacheKey);
+          return { resultPromise: existing, donePromise: existing };
+        }
+        const m3u8Copy = { ...existingM3u8Map };
+        let fullExpiresAt = 0;
+        const resultPromise = (async () => {
+          const allItems = await listHlsFolderItems(token, driveId, folderId, m3u8Copy);
+          const validItems = allItems
+            .filter((i) => i.name && i['@microsoft.graph.downloadUrl'])
+            .map((i) => {
+              const entry = {
+                name: i.name,
+                downloadUrl: i['@microsoft.graph.downloadUrl'],
+              };
+              if (m3u8Copy[i.name]) {
+                entry.content = m3u8Copy[i.name];
+              }
+              return entry;
+            });
+
+          if (validItems.length === 0) {
+            throw new Error('ไม่พบไฟล์ที่พร้อมเล่นในโฟลเดอร์ HLS จาก OneDrive');
           }
-          return entry;
-        });
 
-      if (validItems.length === 0) {
-        throw new Error('ไม่พบไฟล์ที่พร้อมเล่นในโฟลเดอร์ HLS จาก OneDrive');
-      }
+          const fullResultData = {
+            success: true,
+            type: 'hls',
+            video,
+            items: validItems,
+          };
 
-      const resultData = {
-        success: true,
-        type: 'hls',
-        video,
-        items: validItems,
+          fullExpiresAt = Date.now() + (isCompleted ? 50 * 60 * 1000 : 15 * 1000);
+          storeInMemoryCache(fullResultData, fullExpiresAt);
+          return fullResultData;
+        })();
+
+        const donePromise = resultPromise.then((fullResultData) =>
+          saveSourceCacheToDb(
+            sql,
+            id,
+            { success: true, type: 'hls', items: fullResultData.items },
+            fullExpiresAt,
+            activeVersionId
+          ).then(() => fullResultData)
+        );
+
+        inFlightFullRefresh.set(cacheKey, resultPromise);
+        resultPromise
+          .finally(() => {
+            if (inFlightFullRefresh.get(cacheKey) === resultPromise) {
+              inFlightFullRefresh.delete(cacheKey);
+            }
+          })
+          .catch(() => {});
+
+        return { resultPromise, donePromise };
       };
 
-      const isCompleted = Number(activeProgress || 0) >= 100;
-      const expiresAt = Date.now() + (isCompleted ? 45 * 60 * 1000 : 15 * 1000);
+      // ⚡ Two-Phase $batch Fast Cold Start (~350-550ms instead of 2–15s signing 465–4,343 files!)
+      // Runs 12-file $batch FIRST with zero SharePoint contention, then kicks off full folder listing + Neon DB save in background via after().
+      const initialSegNames =
+        !forceFresh && !preferFull && isCompleted && existingM3u8Map['master.m3u8']
+          ? extractInitialSegmentNames(existingM3u8Map, 12)
+          : [];
 
-      storeInMemoryCache(resultData, expiresAt);
+      if (initialSegNames.length > 0) {
+        try {
+          const batchTsItems = await fetchBatchDownloadUrls(token, driveId, folderId, initialSegNames);
+          if (batchTsItems.length > 0) {
+            const { donePromise: bgDonePromise } = startFullHlsFetch();
+            scheduleAfterOrBackground(() => bgDonePromise.catch(() => {}));
 
-      scheduleAfterOrBackground(async () => {
-        await saveSourceCacheToDb(
-          sql,
-          id,
-          { success: true, type: 'hls', items: validItems },
-          expiresAt,
-          activeVersionId
-        );
-      });
+            const streamFolder = resolveStreamFolderName(video, id, activeVersionId);
+            const m3u8Items = Object.entries(existingM3u8Map).map(([name, content]) => ({
+              name,
+              downloadUrl: `/streams/${streamFolder}/${encodeURIComponent(name)}`,
+              content,
+            }));
+            const partialResultData = {
+              success: true,
+              type: 'hls',
+              partial: true,
+              streamFolder,
+              video,
+              items: [...m3u8Items, ...batchTsItems],
+            };
+            if (!sourceCache.has(cacheKey)) {
+              partialCache.set(cacheKey, {
+                data: partialResultData,
+                expiresAt: Date.now() + 45 * 1000,
+              });
+            }
+            hitPath = 'cold-batch';
+            return partialResultData;
+          }
+        } catch (batchErr) {
+          console.warn('[Graph $batch Fast-Start fallback]:', batchErr.message);
+        }
+      }
 
-      return resultData;
+      const { resultPromise, donePromise } = startFullHlsFetch();
+      scheduleAfterOrBackground(() => donePromise.catch(() => {}));
+      return await resultPromise;
     }
 
     // Case 2: Standalone Video File (MP4, MKV, etc.)
@@ -766,7 +1026,7 @@ export async function resolveVideoSourceServer(
     return resultData;
   })();
 
-  inFlightRequests.set(cacheKey, fetchPromise);
+  inFlightRequests.set(inflightKey, fetchPromise);
 
   try {
     const data = await fetchPromise;
@@ -775,8 +1035,48 @@ export async function resolveVideoSourceServer(
     }
     return { data: formatSourceForClient(data, showAdultPreviews), path: hitPath };
   } finally {
-    inFlightRequests.delete(cacheKey);
+    inFlightRequests.delete(inflightKey);
   }
+}
+
+/**
+ * Synchronous 0ms in-memory lookup (0 DB queries) for SSR handoff on /watch/[id]
+ */
+export function getCachedVideoSourceSync(
+  numericId,
+  { showAdultPreviews = false, version = null } = {}
+) {
+  const id = Number(numericId);
+  if (!id || isNaN(id)) return null;
+  const reqVer = version != null && String(version).trim() !== '' ? String(version).trim() : null;
+  const cacheKey = reqVer ? `${id}:v:${reqVer.toLowerCase()}` : `${id}:v:default`;
+  const cached = sourceCache.get(cacheKey);
+  if (
+    cached &&
+    cached.expiresAt > Date.now() &&
+    cached.data?.video &&
+    (cached.data?.items?.length > 0 || cached.data?.url)
+  ) {
+    const sampleUrl = cached.data.items?.[0]?.downloadUrl || cached.data.url;
+    if (isTempauthValid(sampleUrl)) {
+      return formatSourceForClient(cached.data, showAdultPreviews);
+    }
+  }
+  const partialCached = partialCache.get(cacheKey);
+  if (
+    partialCached &&
+    partialCached.expiresAt > Date.now() &&
+    partialCached.data?.video &&
+    partialCached.data?.items?.length > 0
+  ) {
+    const sampleTsUrl = partialCached.data.items.find((i) =>
+      i.name?.toLowerCase().endsWith('.ts')
+    )?.downloadUrl;
+    if (sampleTsUrl && isTempauthValid(sampleTsUrl)) {
+      return formatSourceForClient(partialCached.data, showAdultPreviews);
+    }
+  }
+  return null;
 }
 
 /**

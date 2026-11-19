@@ -23,7 +23,19 @@ import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, isMatureVideo, RE
 const DESKTOP_HEADER_OFFSET_PX = 105;
 const DESKTOP_PLAYER_MAX_HEIGHT = `calc(100vh - ${DESKTOP_HEADER_OFFSET_PX}px)`;
 
-export default function WatchClient({ initialVideo, initialRelated = [], initialTime = 0, initialShowAdultPosters = false }) {
+export default function WatchClient({
+  initialVideo,
+  initialRelated = [],
+  initialTime = 0,
+  initialShowAdultPosters = false,
+  initialSource = null,
+}) {
+  const initialSourceRef = useRef(initialSource);
+  const initialVideoIdRef = useRef(initialVideo?.id);
+  const initialVersionKeyRef = useRef(
+    initialVideo?.active_version?.versionKey ||
+    (initialVideo?.active_version?.id ? String(initialVideo.active_version.id) : null)
+  );
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlT = searchParams?.get('t');
@@ -138,6 +150,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   const playerWrapperRef = useRef(null);
   const [playerHeight, setPlayerHeight] = useState(0);
   const activeBlobUrlsRef = useRef([]);
+  const partialSegmentMapRef = useRef({});
   const loadedDetailIdRef = useRef(initialVideo?.id ?? null);
 
   // Compute effective video aspect ratio
@@ -275,6 +288,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    let hydrationTimer = null;
     const storyboardRequest = new AbortController();
 
     async function initStream() {
@@ -296,9 +310,19 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
               .catch(() => null)
           : Promise.resolve(null);
 
-        // ⚡ Step: Fetch Stream Source from OneDrive (uses client in-memory/in-flight cache if pre-warmed!)
+        // ⚡ Step: Fetch Stream Source from OneDrive (0ms if warm SSR initialSource matched, else client cache / API)
+        const canUseSsrSource =
+          initialSourceRef.current &&
+          id === initialVideoIdRef.current &&
+          (activeVersionKey || null) === (initialVersionKeyRef.current || null);
+        const ssrSource = canUseSsrSource ? initialSourceRef.current : null;
+        if (canUseSsrSource) {
+          initialSourceRef.current = null;
+        }
         let [sourceData, detailRes] = await Promise.all([
-          fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster, version: activeVersionKey }),
+          ssrSource
+            ? Promise.resolve(ssrSource)
+            : fetchVideoSourceClient(id, { showAdultPreviews: showAdultPoster, version: activeVersionKey }),
           metadataPromise,
         ]);
         if (cancelled) return;
@@ -371,6 +395,8 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           activeBlobUrlsRef.current = resolved.blobUrls;
         }
 
+        partialSegmentMapRef.current = resolved.segmentUrlMap ? { ...resolved.segmentUrlMap } : {};
+
         setStreamUrl(resolved.url);
         setIsSwitchingVideo(false);
         setIsSwitchingVersion(false);
@@ -381,6 +407,46 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         if (resolved.aspectRatio) {
           setDetectedRatio(resolved.aspectRatio);
         }
+
+        // ⚡ Two-Phase Cold-Batch Hydration:
+        // Video is already playing from initial $batch chunks (_000/_001/_002.ts).
+        // Quietly fetch full signed URL map ~2.2s later so chunks _002+ bypass /streams/ completely!
+        if (resolved.partial) {
+          hydrationTimer = setTimeout(() => {
+            if (cancelled) return;
+            fetchVideoSourceClient(id, {
+              preferFull: true,
+              lowPriority: true,
+              showAdultPreviews: showAdultPoster,
+              version: activeVersionKey,
+            })
+              .then((fullSource) => {
+                if (cancelled || !Array.isArray(fullSource?.items)) return;
+                const map = partialSegmentMapRef.current || {};
+                for (const item of fullSource.items) {
+                  if (item?.name && item.downloadUrl && item.name.toLowerCase().endsWith('.ts')) {
+                    const cleanName = item.name.replace(/^\.?\//, '');
+                    const baseName = cleanName.includes('/')
+                      ? cleanName.slice(cleanName.lastIndexOf('/') + 1)
+                      : cleanName;
+                    map[item.name] = item.downloadUrl;
+                    map[cleanName] = item.downloadUrl;
+                    map[baseName] = item.downloadUrl;
+                  }
+                }
+                partialSegmentMapRef.current = map;
+                if (!needsRestrictedStoryboard) {
+                  resolveStoryboard(fullSource.items)
+                    .then((sb) => {
+                      if (!cancelled && sb) setStoryboard(sb);
+                    })
+                    .catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }, 2200);
+        }
+
         if (needsRestrictedStoryboard) return;
         if (resolved.storyboard) {
           setStoryboard(resolved.storyboard);
@@ -408,6 +474,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
 
     return () => {
       cancelled = true;
+      if (hydrationTimer) clearTimeout(hydrationTimer);
       storyboardRequest.abort();
       for (const u of activeBlobUrlsRef.current) {
         try { URL.revokeObjectURL(u); } catch (_) { }
@@ -523,7 +590,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
   }
 
   return (
-    <div className="w-full max-w-[2560px] mx-auto px-0 sm:px-4 md:px-6 lg:px-3 pt-0 lg:pt-3 sm:py-5">
+    <div className="w-full max-w-[2560px] mx-auto px-0 sm:px-4 lg:px-5 pt-0 sm:pt-2 sm:pb-6 lg:pt-3">
       {/* ⚠️ Alert Banner */}
       {error && (
         <div className="bg-rose-500/10 border-b border-rose-500/20 px-4 py-3 text-rose-500 dark:text-rose-400 text-xs sm:text-sm flex items-center justify-between z-30 relative mb-3 rounded-xl">
@@ -540,12 +607,12 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         </div>
       )}
 
-      <div className="block lg:flex lg:flex-row lg:items-start lg:justify-center lg:gap-3 w-full">
+      <div className="block lg:flex lg:flex-row lg:items-start lg:justify-center lg:gap-4 w-full">
         {/* Left Column: Player + Details (YouTube Standard Full-Width Layout) */}
-        {/* On mobile (< lg): 'contents' unwraps the column so sticky player & chips track full-page scrolling */}
-        {/* On desktop (lg+): standard flex column alongside the related videos sidebar */}
+        {/* On mobile (< md): 'contents' unwraps the column so sticky player & chips track full-page scrolling */}
+        {/* On tablet/desktop (md+): Navbar is visible, so player is static in flow alongside/above related videos */}
         <div
-          className="contents lg:flex lg:flex-col lg:flex-1 lg:min-w-0"
+          className="contents md:flex md:flex-col md:w-full md:mx-auto lg:mx-0 lg:flex-1 lg:min-w-0"
           style={{
             maxWidth: (videoRatio && videoRatio >= 0.98)
               ? `min(100%, calc((${DESKTOP_PLAYER_MAX_HEIGHT}) * ${videoRatio}))`
@@ -554,10 +621,10 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                 : '100%',
           }}
         >
-          {/* 🎯 Video Player: Sticky on mobile across entire page / Static in Left Col on desktop */}
+          {/* 🎯 Video Player: Sticky on mobile (< md) / Static in flow on tablet & desktop (md+) so Navbar never overlaps */}
           <div
             ref={playerWrapperRef}
-            className={`sticky top-0 z-30 w-full bg-black lg:bg-transparent lg:relative lg:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] lg:h-auto flex justify-center items-center lg:block' : ''
+            className={`sticky top-0 z-30 w-full bg-black md:bg-transparent md:relative md:z-0 ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] md:h-auto flex justify-center items-center md:block' : ''
               }`}
           >
             {/* YouTube-style Storyboard Ambient Mode Light */}
@@ -574,6 +641,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
               {streamUrl ? (
                 <VideoPlayer
                   src={streamUrl}
+                  partialSegmentMapRef={partialSegmentMapRef}
                   poster={watchPoster}
                   storyboard={storyboard}
                   keepScrubPreviewOnLoad={matureVideo && !showAdultPoster}
@@ -615,7 +683,7 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
                 /* Instant Player Shell: Thumbnail + Center Glowing Spinner */
                 <div
                   className={`relative bg-zinc-950 sm:rounded-2xl overflow-hidden flex items-center justify-center select-none ${videoRatio < 0.98
-                    ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video'
+                    ? 'w-full h-[min(48vh,380px)] md:h-auto md:aspect-video'
                     : 'w-full h-auto'
                     }`}
                   style={{
@@ -657,17 +725,17 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
           </div>
 
           {/* 📱 YouTube-Style Video Details Section (SSR Rendered Immediately!) */}
-          <div className="w-full flex flex-col gap-3 p-3.5 sm:px-0 sm:pt-3.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] transition-colors">
+          <div className="relative z-10 w-full flex flex-col gap-3 p-3.5 sm:px-0 sm:pt-3.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] sm:bg-transparent dark:sm:bg-transparent transition-colors">
             {/* 1. Title */}
             <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-snug tracking-tight">
               {video?.title || ''}
             </h1>
 
-            {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) in Single Line on Desktop */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-1">
+            {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) with graceful wrap on tablet/split-screen */}
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 py-1">
               {/* Channel Info & Subscribe Button */}
-              <div className="flex justify-between items-center">
-                <div className='flex gap-3 items-center'>
+              <div className="flex justify-between items-center min-w-0">
+                <div className='flex gap-3 items-center min-w-0'>
                   {video?.author_picture && !avatarError ? (
                     <img
                       src={video.author_picture}
@@ -760,13 +828,13 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
         </div>
 
         {/* Right / Sidebar: Related Videos Column (YouTube Desktop Standard ~400px) */}
-        <div className="w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pb-10">
-          {/* 🏷️ YouTube Recommendation Filter Chips: Sticky directly under video player on mobile! */}
+        <div className="w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pt-2 lg:pt-0 pb-10">
+          {/* 🏷️ YouTube Recommendation Filter Chips: Sticky directly under video player on mobile (< md) only */}
           <div
             style={{
               top: playerHeight ? `${playerHeight}px` : '56.25vw',
             }}
-            className="sticky z-20 -mx-3.5 px-3.5 py-2.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] border-b border-[#EFECE6]/80 dark:border-white/10 sm:mx-0 sm:px-0 lg:static lg:py-0.5 lg:border-none lg:bg-transparent lg:dark:bg-transparent"
+            className="sticky z-20 -mx-3.5 px-3.5 py-2.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] border-b border-[#EFECE6]/80 dark:border-white/10 sm:mx-0 sm:px-0 md:static md:py-0.5 md:border-none md:bg-transparent md:dark:bg-transparent"
           >
             <div className="flex items-center gap-1.5 overflow-x-auto overscroll-x-contain scrollbar-none py-0.5 select-none">
               {[
@@ -814,15 +882,15 @@ export default function WatchClient({ initialVideo, initialRelated = [], initial
             </div>
           ) : (
             <>
-              {/* Mobile: Full-width feed cards (YouTube mobile app experience) */}
-              <div className="isolate flex flex-col gap-4 sm:hidden">
+              {/* Mobile (< sm) & Tablet (sm–md): Vertical feed cards (1 col mobile, 2 cols tablet) */}
+              <div className="isolate grid grid-cols-1 sm:grid-cols-2 gap-4 lg:hidden">
                 {filteredRelated.map((item) => (
                   <VideoCard key={`mob-${item.id}`} video={item} replace={true} compact={false} />
                 ))}
               </div>
 
-              {/* Desktop / Tablet: Compact sidebar cards (YouTube standard) */}
-              <div className="isolate hidden sm:flex flex-col gap-2.5">
+              {/* Desktop (lg+): Compact horizontal sidebar cards (YouTube standard) */}
+              <div className="isolate hidden lg:flex flex-col gap-2.5">
                 {filteredRelated.map((item) => (
                   <div key={`desk-wrap-${item.id}`}>
                     <VideoCard

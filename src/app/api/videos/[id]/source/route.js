@@ -7,6 +7,7 @@ import { protectSourcePreviews, resolveVideoSourceServer } from '@/lib/videoSour
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const maxDuration = 60;
 
 // Prevent Vercel CDN from caching expiring OneDrive tempauth tokens
 const EDGE_CACHE_HEADERS = {
@@ -36,6 +37,7 @@ export async function GET(request, context) {
 
     const { searchParams } = new URL(request.url);
     const forceFresh = searchParams.get('fresh') === '1' || searchParams.get('refresh') === '1';
+    const preferFull = searchParams.get('full') === '1';
     const requestedVersion = searchParams.get('v') || searchParams.get('versionId') || null;
     const sql = getDb();
     const wantsAdultPreviews = searchParams.get('previews') === '1' &&
@@ -46,6 +48,7 @@ export async function GET(request, context) {
       forceFresh,
       showAdultPreviews,
       version: requestedVersion,
+      preferFull,
     });
 
     const rating = data?.video;

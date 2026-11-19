@@ -95,6 +95,8 @@ export default async function RootLayout({ children }) {
     <html lang="th" className="h-full antialiased" suppressHydrationWarning>
       <head>
         <link rel="icon" href="/images/TubeLock.png" type="image/png" />
+        <link rel="preconnect" href={process.env.CF_WORKER_URL || 'https://tubelock-cache.iinter731.workers.dev'} crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href={process.env.CF_WORKER_URL || 'https://tubelock-cache.iinter731.workers.dev'} />
         <script
           dangerouslySetInnerHTML={{
             __html: `

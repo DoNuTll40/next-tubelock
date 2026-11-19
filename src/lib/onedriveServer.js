@@ -8,15 +8,22 @@ function getEnvConfig() {
   const tenantId = (process.env.AZURE_TENANT_ID || process.env.NEXT_AZURE_TENANT_ID || '').replace(/['"]/g, '').trim();
   const clientId = (process.env.AZURE_CLIENT_ID || process.env.NEXT_AZURE_CLIENT_ID || '').replace(/['"]/g, '').trim();
   const clientSecret = (process.env.AZURE_CLIENT_SECRET || process.env.NEXT_AZURE_CLIENT_SECRET || '').replace(/['"]/g, '').trim();
+  const driveId = (process.env.ONEDRIVE_DRIVE_ID || process.env.NEXT_ONEDRIVE_DRIVE_ID || '').replace(/['"]/g, '').trim();
   let userId = (process.env.ONEDRIVE_USER_ID || process.env.NEXT_ONEDRIVE_USER_ID || '').replace(/['"]/g, '').trim();
   userId = userId.replace('@donuttll40.', '@donutll40.');
 
-  return { tenantId, clientId, clientSecret, userId };
+  return { tenantId, clientId, clientSecret, userId, driveId };
 }
 
-let cachedToken = null;
-let tokenExpiresAt = 0;
-let inFlightTokenPromise = null;
+const graphState =
+  globalThis.__tubelock_graph_state ||
+  (globalThis.__tubelock_graph_state = {
+    cachedToken: null,
+    tokenExpiresAt: 0,
+    inFlightTokenPromise: null,
+    cachedDriveId: null,
+    inFlightDriveIdPromise: null,
+  });
 
 /**
  * Get Microsoft Graph Access Token using OAuth 2.0 Client Credentials Grant
@@ -24,11 +31,11 @@ let inFlightTokenPromise = null;
  */
 export async function getGraphToken(forceRefresh = false) {
   const now = Date.now();
-  if (!forceRefresh && cachedToken && tokenExpiresAt > now + 60000) {
-    return cachedToken;
+  if (!forceRefresh && graphState.cachedToken && graphState.tokenExpiresAt > now + 60000) {
+    return graphState.cachedToken;
   }
-  if (!forceRefresh && inFlightTokenPromise) {
-    return inFlightTokenPromise;
+  if (!forceRefresh && graphState.inFlightTokenPromise) {
+    return graphState.inFlightTokenPromise;
   }
 
   const { tenantId, clientId, clientSecret } = getEnvConfig();
@@ -55,38 +62,36 @@ export async function getGraphToken(forceRefresh = false) {
 
     if (!tokenRes.ok) {
       const err = await tokenRes.text();
-      cachedToken = null;
-      tokenExpiresAt = 0;
+      graphState.cachedToken = null;
+      graphState.tokenExpiresAt = 0;
       console.error(`[Azure Token Authentication Error] Status: ${tokenRes.status}, Body: ${err}`);
       throw new Error(`Failed to authenticate with Microsoft Graph (${tokenRes.status}): ${err}`);
     }
 
     const data = await tokenRes.json();
-    cachedToken = data.access_token;
-    tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
-    return cachedToken;
+    graphState.cachedToken = data.access_token;
+    graphState.tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
+    return graphState.cachedToken;
   })();
 
-  inFlightTokenPromise = promise;
+  graphState.inFlightTokenPromise = promise;
   try {
     return await promise;
   } finally {
-    if (inFlightTokenPromise === promise) {
-      inFlightTokenPromise = null;
+    if (graphState.inFlightTokenPromise === promise) {
+      graphState.inFlightTokenPromise = null;
     }
   }
 }
 
-let cachedDriveId = null;
-let inFlightDriveIdPromise = null;
-
 /**
- * Get user's OneDrive Drive ID
+ * Get user's OneDrive Drive ID (0ms via ONEDRIVE_DRIVE_ID env var or globalThis cache)
  */
 export async function getUserDriveId(token) {
-  if (cachedDriveId) return cachedDriveId;
-  if (inFlightDriveIdPromise) return inFlightDriveIdPromise;
-  const { userId } = getEnvConfig();
+  const { userId, driveId: envDriveId } = getEnvConfig();
+  if (envDriveId) return envDriveId;
+  if (graphState.cachedDriveId) return graphState.cachedDriveId;
+  if (graphState.inFlightDriveIdPromise) return graphState.inFlightDriveIdPromise;
 
   const promise = (async () => {
     const driveRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userId)}/drive`, {
@@ -99,16 +104,16 @@ export async function getUserDriveId(token) {
     }
 
     const data = await driveRes.json();
-    cachedDriveId = data.id;
-    return cachedDriveId;
+    graphState.cachedDriveId = data.id;
+    return graphState.cachedDriveId;
   })();
 
-  inFlightDriveIdPromise = promise;
+  graphState.inFlightDriveIdPromise = promise;
   try {
     return await promise;
   } finally {
-    if (inFlightDriveIdPromise === promise) {
-      inFlightDriveIdPromise = null;
+    if (graphState.inFlightDriveIdPromise === promise) {
+      graphState.inFlightDriveIdPromise = null;
     }
   }
 }

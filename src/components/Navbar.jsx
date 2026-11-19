@@ -155,9 +155,9 @@ export default function Navbar({ session }) {
         : 'bg-[#FBF9F5]/95 dark:bg-[#0F0F0F]/95 backdrop-blur-md border-b border-[#EFECE6] dark:border-white/10'
         }`}
     >
-      <div className="w-full flex items-center justify-between gap-4">
+      <div className="w-full flex items-center justify-between gap-2 sm:gap-3 lg:gap-4">
         {/* Left: Hamburger & Logo */}
-        <div className="flex items-center gap-3 shrink-0 z-10">
+        <div className="flex items-center gap-2 lg:gap-3 shrink-0 z-10">
           <button
             type="button"
             onClick={() => {
@@ -188,17 +188,17 @@ export default function Navbar({ session }) {
           </Link>
         </div>
 
-        {/* Center: Search Bar (True 50% Viewport Center - YouTube PC Style) */}
+        {/* Center: Search Bar (Flex-responsive on md–lg to prevent overlap; true viewport center on xl+) */}
         {isDesktop && (
-          <div className="absolute left-1/2 -translate-x-1/2 w-full max-w-[500px] lg:max-w-[580px] xl:max-w-[640px] px-4 flex items-center justify-center z-20 pointer-events-none">
-            <div ref={searchContainerRef} className="relative flex items-center justify-center w-full pointer-events-auto">
-              <div className="relative flex-1">
-                <form onSubmit={handleSearch} className="flex items-center w-full h-10">
+          <div className="flex-1 min-w-0 max-w-[440px] lg:max-w-[520px] mx-auto xl:mx-0 xl:absolute xl:left-1/2 xl:-translate-x-1/2 xl:w-full xl:max-w-[560px] 2xl:max-w-[640px] xl:px-4 flex items-center justify-center z-20 xl:pointer-events-none">
+            <div ref={searchContainerRef} className="relative flex items-center justify-center w-full xl:pointer-events-auto">
+              <div className="relative flex-1 min-w-0">
+                <form onSubmit={handleSearch} className="flex items-center w-full h-9 lg:h-10">
                   <div
-                    className={`h-10 flex items-center flex-1 relative rounded-l-full border bg-white dark:bg-[#121212] overflow-hidden shadow-2xs transition-all duration-200 ${
+                    className={`h-9 lg:h-10 flex items-center flex-1 min-w-0 relative rounded-l-full border bg-white dark:bg-[#121212] overflow-hidden shadow-2xs transition-all duration-200 ${
                       isSearchFocused
                         ? 'border-[#FF7A00] pl-3.5 z-10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]'
-                        : 'border-[#EFECE6] dark:border-white/15 pl-4'
+                        : 'border-[#EFECE6] dark:border-white/15 pl-3.5 lg:pl-4'
                     }`}
                   >
                     {/* Search Icon inside input when focused (YouTube Style) */}
@@ -219,7 +219,7 @@ export default function Navbar({ session }) {
                         }
                       }}
                       placeholder="ค้นหาใน TubeLock"
-                      className="w-full h-full pr-2 text-md text-[#212529] dark:text-[#F1F1F1] placeholder:text-[#8C857B] dark:placeholder:text-[#777777] focus:outline-none bg-transparent"
+                      className="w-full min-w-0 h-full pr-2 text-sm lg:text-md text-[#212529] dark:text-[#F1F1F1] placeholder:text-[#8C857B] dark:placeholder:text-[#777777] focus:outline-none bg-transparent"
                     />
 
                     {/* Clear "X" button when input has text */}
@@ -239,10 +239,10 @@ export default function Navbar({ session }) {
                   </div>
                   <button
                     type="submit"
-                    className="h-10 px-6 rounded-r-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] border-y border-r border-[#EFECE6] dark:border-white/15 -ml-[1px] text-[#212529] dark:text-[#F1F1F1] flex items-center justify-center cursor-pointer transition active:bg-[#E5E0D8] shrink-0"
+                    className="h-9 lg:h-10 px-4 lg:px-6 rounded-r-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] border-y border-r border-[#EFECE6] dark:border-white/15 -ml-[1px] text-[#212529] dark:text-[#F1F1F1] flex items-center justify-center cursor-pointer transition active:bg-[#E5E0D8] shrink-0"
                     title="ค้นหา"
                   >
-                    <Search className="w-4.5 h-4.5" />
+                    <Search className="w-4 h-4 lg:w-4.5 lg:h-4.5" />
                   </button>
                 </form>
 
@@ -256,10 +256,10 @@ export default function Navbar({ session }) {
                 />
               </div>
 
-              {/* Voice Search Button */}
+              {/* Voice Search Button (lg+ to avoid crowding tablet/split-screen header) */}
               <button
                 type="button"
-                className="ml-3 w-10 h-10 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] flex items-center justify-center text-[#212529] dark:text-[#F1F1F1] transition cursor-pointer shrink-0"
+                className="hidden lg:flex ml-2.5 xl:ml-3 w-10 h-10 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] items-center justify-center text-[#212529] dark:text-[#F1F1F1] transition cursor-pointer shrink-0"
                 title="ค้นหาด้วยเสียง"
               >
                 <Mic className="w-4.5 h-4.5" />
@@ -269,7 +269,7 @@ export default function Navbar({ session }) {
         )}
 
         {/* Right: Actions & Gravatar Avatar */}
-        <div className="flex items-center gap-2 sm:gap-0.5 ml-auto shrink-0 z-10">
+        <div className="flex items-center gap-1.5 lg:gap-2 ml-auto xl:ml-auto shrink-0 z-10">
           {/* Mobile Search Icon */}
           {!isDesktop && (
             <button
@@ -280,15 +280,15 @@ export default function Navbar({ session }) {
             </button>
           )}
 
-          {/* Create / Upload button (Desktop) */}
+          {/* Create / Upload button (Desktop: icon-only on md, icon+label on lg+) */}
           {isDesktop && (
             <Link
               href="/upload"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] transition active:scale-95"
+              className="flex items-center justify-center gap-1.5 h-9 px-2.5 lg:px-3.5 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] transition active:scale-95 shrink-0"
               title="อัปโหลดวิดีโอ"
             >
-              <Plus className="w-4 h-4 text-[#FF7A00]" />
-              <span>สร้าง</span>
+              <Plus className="w-4 h-4 text-[#FF7A00] shrink-0" />
+              <span className="hidden lg:inline">สร้าง</span>
             </Link>
           )}
 
@@ -296,25 +296,27 @@ export default function Navbar({ session }) {
           {isDesktop && (
             <button
               type="button"
-              className="flex p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1] transition"
+              className="flex p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1] transition shrink-0"
               title="การแจ้งเตือน"
             >
               <Bell className="w-5 h-5" />
             </button>
           )}
 
-          {/* Gravatar Avatar */}
+          {/* Gravatar Avatar (Avatar-only below xl to keep navbar spacious; full name/email pill on xl+) */}
           <Link
             href="/settings"
-            className={`${session && isDesktop && ''} relative group flex justify-center items-end p-0.5 pl-4 bg-transparent ${session && "border"} border-[#EFECE6] dark:border-white/10 rounded-full transition gap-2`}
-            title="ตั้งค่าระบบ"
+            className={`relative group flex justify-center items-center p-0.5 bg-transparent rounded-full transition gap-2 shrink-0 ${
+              session ? 'xl:pl-3.5 xl:border xl:border-[#EFECE6] xl:dark:border-white/10' : ''
+            }`}
+            title={session?.name ? `${session.name}${session.email ? ` (${session.email})` : ''}` : 'ตั้งค่าระบบ'}
           >
-            {session &&
-              <div className='flex flex-col min-w-0 max-w-[120px] sm:max-w-[160px]'>
-                <p className='text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] truncate'>{session?.name}</p>
-                <p className='text-[10px] text-[#8C857B] dark:text-[#AAAAAA] truncate'>{session?.email}</p>
+            {session && (
+              <div className="hidden xl:flex flex-col min-w-0 max-w-[130px] 2xl:max-w-[165px] leading-tight">
+                <p className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] truncate">{session?.name}</p>
+                <p className="text-[10px] text-[#8C857B] dark:text-[#AAAAAA] truncate">{session?.email}</p>
               </div>
-            }
+            )}
             <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center">
               {avatarUrl && !imgError ? (
                 <img

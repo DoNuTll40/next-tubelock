@@ -45,11 +45,59 @@ export async function GET(request, context) {
     }
     assetCache.delete(cacheKey);
 
-    const sql = getDb();
-
-    // ⚡ 2. Locate video (or specific version) metadata in Neon DB (slim projection — never fetch source_cache!)
+    // ⚡ 2. Check in-memory sourceCache BEFORE hitting Neon DB (<1ms, 0 DB queries, 0 Graph calls!)
     const matchVersioned = folderName.match(/^stream_vid_(\d+)_v(\d+)$/i);
     const matchId = !matchVersioned ? folderName.match(/^stream_vid_(\d+)$/i) : null;
+    const tryServeFromSourceCache = (videoId, versionId = null, knownMature = null) => {
+      const candidateKeys = versionId
+        ? [`${videoId}:vid:${versionId}`, `${videoId}:v:${versionId}`]
+        : [`${videoId}:v:default`, String(videoId), `${videoId}:v:legacy`];
+      for (const key of candidateKeys) {
+        const memSource = sourceCache.get(key);
+        if (!memSource || memSource.expiresAt <= Date.now() || !Array.isArray(memSource.data?.items)) {
+          continue;
+        }
+        const matureFlag = knownMature !== null ? knownMature : isMatureVideo(memSource.data?.video);
+        if (isPreview && matureFlag) {
+          assetCache.set(cacheKey, {
+            url: null,
+            isMature: true,
+            expiresAt: Date.now() + 15 * 60 * 1000,
+          });
+          return redirectAsset(new URL(RESTRICTED_POSTER, request.url), false);
+        }
+        const foundItem = memSource.data.items.find(
+          (i) => i.name?.toLowerCase() === fileName.toLowerCase()
+        );
+        if (foundItem?.downloadUrl && isTempauthValid(foundItem.downloadUrl)) {
+          assetCache.set(cacheKey, {
+            url: foundItem.downloadUrl,
+            isMature: matureFlag,
+            expiresAt: Date.now() + (isPreview ? 15 : 40) * 60 * 1000,
+          });
+          return redirectAsset(
+            wrapWithWorkerCache(fileName, foundItem.downloadUrl),
+            isPreview && !matureFlag
+          );
+        }
+      }
+      return null;
+    };
+
+    if (matchVersioned) {
+      const earlyHit = tryServeFromSourceCache(
+        parseInt(matchVersioned[1], 10),
+        parseInt(matchVersioned[2], 10)
+      );
+      if (earlyHit) return earlyHit;
+    } else if (matchId) {
+      const earlyHit = tryServeFromSourceCache(parseInt(matchId[1], 10));
+      if (earlyHit) return earlyHit;
+    }
+
+    const sql = getDb();
+
+    // ⚡ 3. Locate video (or specific version) metadata in Neon DB (slim projection — never fetch source_cache!)
     let rows = [];
     let resolvedVersionId = null;
 
@@ -107,24 +155,9 @@ export async function GET(request, context) {
       return new NextResponse('OneDrive folder ID not found for video', { status: 404 });
     }
 
-    // ⚡ 3. Check in-memory sourceCache from videoSourceService (0 Neon egress, 0 Graph calls!)
-    const sourceCacheKey = resolvedVersionId
-      ? `${video.id}:v:${resolvedVersionId}`
-      : String(video.id);
-    const memSource = sourceCache.get(sourceCacheKey) || sourceCache.get(`${video.id}:v:legacy`);
-    if (memSource && memSource.expiresAt > Date.now() && Array.isArray(memSource.data?.items)) {
-      const foundItem = memSource.data.items.find(
-        (i) => i.name?.toLowerCase() === fileName.toLowerCase()
-      );
-      if (foundItem?.downloadUrl && isTempauthValid(foundItem.downloadUrl)) {
-        assetCache.set(cacheKey, {
-          url: foundItem.downloadUrl,
-          isMature: mature,
-          expiresAt: Date.now() + (isPreview ? 15 : 40) * 60 * 1000,
-        });
-        return redirectAsset(wrapWithWorkerCache(fileName, foundItem.downloadUrl), isPreview && !mature);
-      }
-    }
+    // ⚡ 4. Fallback in-memory sourceCache check (covers non-standard folder names matched via LIKE above)
+    const fallbackSourceHit = tryServeFromSourceCache(video.id, resolvedVersionId, mature);
+    if (fallbackSourceHit) return fallbackSourceHit;
 
     // ⚡ 4. Fetch direct download link for this single asset from OneDrive via Microsoft Graph
     const token = await getGraphToken();

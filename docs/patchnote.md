@@ -2,12 +2,46 @@
 title: บันทึกการอัปเดต (Patch Notes)
 group: ข้อมูลระบบและการอัปเดต
 order: 4
-updated: 17 พฤศจิกายน 2026
+updated: 19 พฤศจิกายน 2026
 ---
 
 # บันทึกการอัปเดตระบบ (Patch Notes & Changelog)
 
 > **สาระสำคัญ:** รายละเอียดการพัฒนา การปรับปรุงความเสถียร และการแก้ไขข้อผิดพลาดของระบบ TubeLock อย่างเป็นทางการ
+
+---
+
+## เวอร์ชัน 1.2.6 (Build 1.2.6.20261119 — 19 พฤศจิกายน 2026) — เร่งความเร็ว TTFF สตรีม HLS, ประหยัด Neon Free Tier, บังคับระบุภาษาซับ และปรับ Responsive UI
+
+### 1. เร่งความเร็วการเปิดวิดีโอ (TTFF Optimization) ภายใต้ Free Tier ($0)
+- **Two-Phase Microsoft Graph `$batch` Cold Start (`videoSourceService.js`, `playbackResolver.js`, `WatchClient.jsx`, `VideoPlayer.jsx`):**
+  - สำหรับคลิปที่ไม่เคยเปิดหรือแคชหมดอายุ (โดยเฉพาะคลิปยาวที่มี 500–4,300+ ไฟล์) ระบบจะขอเซ็นลิงก์เฉพาะ 12 chunk แรกครบทุกความละเอียดใน 1 คำขอ `$batch` (~400–600 ms แทนการรอเซ็นครบทั้งโฟลเดอร์ 2–16 วินาที) เพื่อให้วิดีโอเริ่มเล่นเฟรมแรกทันที
+  - โหลดรายการลิงก์เต็มทั้งโฟลเดอร์พร้อมบันทึกลงแคช Neon DB ในเบื้องหลังผ่าน `after()` (`maxDuration = 60`) แล้วสลับลิงก์ตรงเข้าสู่ `hls.js` แบบไร้รอยต่อด้วย custom `fLoader` (`SegmentHydrationLoader`) โดยไม่รบกวนผู้ใช้
+- **Fast-Start ABR บน Player (`VideoPlayer.jsx`):**
+  - ตั้งค่า `autoStartLoad: false` และ `testBandwidth: false` เพื่อเริ่มโหลด chunk แรกที่ระดับ 360p/480p (ไฟล์เล็ก โหลดและถอดรหัสเฟรมแรกไวมาก) จากนั้นให้ Auto ABR ดันขึ้น 1080p/4K อัตโนมัติตั้งแต่ chunk ถัดไป (ยังคงเคารพความละเอียดที่ผู้ใช้เลือกค้างไว้ใน `localStorage`)
+- **แยกคอลัมน์ `m3u8_cache_br` & SSR Warm Handoff (`videoSourceService.js`, `watch/[id]/page.jsx`):**
+  - เก็บเนื้อหา `.m3u8` ขนาดเล็กมาก (~1–7 KB) แยกต่างหากใน `videos` และ `video_versions` ทำให้ไม่ต้องโหลด `.m3u8` จาก SharePoint ซ้ำตอน Cold Miss และฝั่งเบราว์เซอร์สร้าง Blob URL ได้ภายใน ~6–11 ms
+  - ส่งข้อมูล source ที่อุ่นอยู่ใน RAM จาก SSR เข้า `WatchClient` ทันที และเพิ่ม `<link rel="preconnect">` ไปยัง Cloudflare Worker ใน `layout.jsx`
+  - รองรับตัวแปร `ONEDRIVE_DRIVE_ID` ใน environment (`onedriveServer.js`) เพื่อตัดคำขอ `/users/.../drive` ตอน Cold Start (~500 ms)
+- **แคช Session ใน Middleware และ `/streams/` แบบ Cache-First (`proxy.js`, `logout/route.js`, `streams/[...path]/route.js`):**
+  - แคชผลการตรวจ `user_sessions` ในหน่วยความจำ 60 วินาที (และล้างทันทีตอนออกจากระบบ) ลดเวลา `proxy.ts` จาก 250–1,364 ms เหลือ ~4–6 ms และลดจำนวน query ไป Neon DB ลง ~95%
+  - ปรับ `/streams/[...path]` ให้ตรวจสอบ `sourceCache` ก่อนเชื่อมต่อ Neon DB ทำให้ redirect ไฟล์ได้ใน `< 1 ms` โดยไม่ยิง DB
+
+### 2. ลดปริมาณ Neon DB Network Transfer (Egress)
+- **ข้ามการดึง `source_cache_br` ที่หมดอายุตอน Cold Miss:** ลดข้อมูลที่ส่งออกจาก Neon DB จาก 180–653 KB เหลือเฉพาะ `m3u8_cache_br` (~1–7 KB หรือลดลง ~98%) พร้อมขยายอายุแคช HLS ที่แปลงเสร็จแล้วเป็น 50 นาที
+- **ตัดการส่งซับไตเติลซ้ำซ้อน (`watch/[id]/page.jsx`, `api/videos/[id]/route.js`):** เมื่อวิดีโอมีข้อมูล `subtitle_tracks` แล้ว จะไม่ส่ง `subtitle_srt` และ `subtitle_vtt` รุ่นเก่าซ้ำอีก ช่วยลด Neon Egress ฝั่งซับลง ~50%
+
+### 3. ซับไตเติล AI, ภาษาต้นฉบับวิดีโอ และระบบหลายเวอร์ชัน
+- **บังคับระบุภาษาต้นฉบับของวิดีโอ (`source_language`):** เพิ่มตัวเลือกภาษาต้นฉบับในขั้นตอนอัปโหลด (Upload Studio) และหน้าแก้ไขวิดีโอ เพื่อส่งให้ Worker ถอดเสียงได้ตรงภาษาจริง ไม่หลุดไปภาษาอื่น
+- **อัปเกรด Subtitle Worker เป็น Parallel Gemini 3.8 Flash (`scripts/audio-subtitle-worker.js`, `scripts/gemini-transcribe.js`):** ประมวลผลช่วงเสียงแบบขนาน (ลดเวลาถอดเสียงลงมาก) พร้อมระบบกู้คืนเฉพาะช่วงที่ถอดผิดภาษาด้วย `gemini-3.5-transcribe` และปรับการเว้นวรรคภาษาไทย/CJK ให้สะอาดขึ้น
+- **ระบบวิดีโอหลายเวอร์ชัน (Multi-Version Videos):** รองรับการสลับเวอร์ชันวิดีโอภายในเมนูตั้งค่า Player พร้อมพรีเซ็ต `Remove Mosaics` และจัดการเวอร์ชันในหน้า Studio
+
+### 4. Responsive UI/UX และ Benchmark Lab
+- **ปรับเลย์เอาต์หน้าจอแท็บเล็ตและ Split-screen (`Navbar.jsx`, `WatchClient.jsx`):**
+  - เปลี่ยนช่องค้นหาบน Navbar เป็น Flexbox ไม่ทับซ้อนปุ่มด้านขวาในความกว้าง `768px–1279px` และยุบป้ายชื่อผู้ใช้เป็น Avatar อัตโนมัติเมื่อจอแคบ
+  - จัดแนว breakpoint ของ sticky player ให้ตรงกับ Navbar (`md:`), ปรับ AmbientLight ให้ไล่แสงเนียนขึ้น และแสดงรายการวิดีโอแนะนำบนแท็บเล็ตเป็นกริด 2 คอลัมน์
+- **ปรับปรุง Benchmark Lab (`/benchmark`):**
+  - แสดง `Server-Timing` แยกเวลาฝั่งเซิร์ฟเวอร์และสถานะแคช (`cold-batch`, `memory-hit`, `db-hit`, `X-TubeLock-Cache`), ไม่ดาวน์โหลด chunk แรกซ้ำซ้อนในขั้น MSE Decode และป้องกันหน้าเว็บ crash เมื่อ Neon DB timeout ชั่วคราว
 
 ---
 
