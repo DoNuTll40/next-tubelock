@@ -18,6 +18,7 @@ export default function PlayerBottomBar({
   isScrubbing,
   isMobileView,
   isFullscreen,
+  isNativeFullscreen = isFullscreen,
   timeDisplayRef,
   togglePlay,
   toggleMute,
@@ -478,7 +479,7 @@ export default function PlayerBottomBar({
               onClick={toggleFullscreen}
               className="p-2 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
             >
-              <Minimize className="w-5.5 h-5.5" />
+              {isNativeFullscreen ? <Minimize className="w-5.5 h-5.5" /> : <Maximize className="w-5.5 h-5.5" />}
             </button>
           </div>
         </div>

@@ -318,20 +318,46 @@ export default function VideoPlayer({
 
   // Responsive device view & popup placement
   const [isMobileView, setIsMobileView] = useState(false);
+  const [isMobileLandscape, setIsMobileLandscape] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [settingsPlacement, setSettingsPlacement] = useState('bottom'); // 'bottom' | 'top'
 
   useEffect(() => {
     const checkIsMobile = () => {
-      const isTouch = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
-      const isSmall = typeof window !== 'undefined' && window.innerWidth < 768;
-      const isMediumTouch = isTouch && typeof window !== 'undefined' && window.innerWidth < 1024;
-      setIsMobileView(isSmall || isMediumTouch);
+      if (typeof window === 'undefined') return;
+      const isTouchOrMobileUA =
+        'ontouchstart' in window ||
+        navigator.maxTouchPoints > 0 ||
+        window.matchMedia?.('(pointer: coarse)')?.matches ||
+        window.matchMedia?.('(hover: none)')?.matches ||
+        /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent);
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const isLandscapePhone = Boolean(isTouchOrMobileUA && vw > vh && vh <= 520 && vw <= 1024);
+      const isSmall = vw < 768;
+      const isMediumTouch = Boolean(isTouchOrMobileUA && vw < 1024);
+      setIsMobileView(isSmall || isMediumTouch || isLandscapePhone);
+      setIsMobileLandscape(isLandscapePhone);
     };
     checkIsMobile();
     window.addEventListener('resize', checkIsMobile);
-    return () => window.removeEventListener('resize', checkIsMobile);
+    window.addEventListener('orientationchange', checkIsMobile);
+    return () => {
+      window.removeEventListener('resize', checkIsMobile);
+      window.removeEventListener('orientationchange', checkIsMobile);
+    };
   }, []);
+
+  const effectiveFullscreen = isFullscreen || isMobileLandscape;
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || !isActive || !isMobileLandscape) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isActive, isMobileLandscape]);
 
   // Measure actual rendered player box so subtitles stay inside the video frame on tall screens
   useEffect(() => {
@@ -366,7 +392,7 @@ export default function VideoPlayer({
       window.removeEventListener('resize', measure);
       if (observer) observer.disconnect();
     };
-  }, [isFullscreen, videoRatio, isMobileView]);
+  }, [effectiveFullscreen, videoRatio, isMobileView]);
 
   // YouTube Mobile UI states & Subtitles (Direct from DB)
   const session = useSession();
@@ -2401,7 +2427,7 @@ export default function VideoPlayer({
         bufferBarRef.current.style.width = `${bufPct}%`;
       }
     }
-  }, [isMobileView, isFullscreen, isSwitchingVideo, duration, src, targetInitialTime]);
+  }, [isMobileView, effectiveFullscreen, isSwitchingVideo, duration, src, targetInitialTime]);
 
   const controlsVisible = showControls || (!isMobileView && !isPlaying);
   const upNextVideo = useMemo(
@@ -2426,6 +2452,7 @@ export default function VideoPlayer({
   return (
     <div
       ref={containerRef}
+      data-player-fullscreen={effectiveFullscreen ? 'true' : undefined}
       onContextMenu={handleContextMenu}
       onClick={() => { if (contextMenu) setContextMenu(null); }}
       onMouseMove={(e) => {
@@ -2433,27 +2460,27 @@ export default function VideoPlayer({
         if (e?.nativeEvent?.pointerType === 'touch') return;
         resetControlsTimer();
       }}
-      className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
+      className={`relative bg-black select-none overflow-hidden group/player ${effectiveFullscreen
         ? 'fixed inset-0 z-50 h-dvh w-dvw border-0 rounded-none [--player-safe-top:env(safe-area-inset-top,0px)] [--player-safe-bottom:env(safe-area-inset-bottom,0px)]'
         : (videoRatio && videoRatio < 0.98)
           ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
           : 'w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border-0 sm:border-black/10 shadow-none sm:shadow-none'
         } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
       style={{
-        aspectRatio: isFullscreen
+        aspectRatio: effectiveFullscreen
           ? undefined
           : (videoRatio && videoRatio < 0.98)
             ? (isMobileView ? undefined : '16/9')
             // Mobile + cinematic → clamp to 16/9; desktop → keep true ratio
             : (isMobileView && isCinematic) ? '16/9' : `${videoRatio}`,
-        maxWidth: isFullscreen
+        maxWidth: effectiveFullscreen
           ? undefined
           : (videoRatio && videoRatio < 0.98)
             ? undefined
             : (isMobileView && isCinematic)
               ? undefined
               : `calc((${desktopMaxHeight}) * ${videoRatio})`,
-        maxHeight: isFullscreen
+        maxHeight: effectiveFullscreen
           ? undefined
           : (videoRatio && videoRatio < 0.98)
             ? (isMobileView ? 'min(48vh, 380px)' : desktopMaxHeight)
@@ -2777,7 +2804,7 @@ export default function VideoPlayer({
       {/* Top Bar: Fullscreen / Mobile */}
       <PlayerTopBar
         showControls={controlsVisible && !isMobileEndPromptOpen}
-        isFullscreen={isFullscreen}
+        isFullscreen={effectiveFullscreen}
         isMobileView={isMobileView}
         isEnded={isEnded}
         upNextVideo={upNextVideo}
@@ -2827,7 +2854,7 @@ export default function VideoPlayer({
       {(isEnded && !isLooping && !isSwitchingVideo && (!isMobileView || !isMobileEndScreenDismissed)) && (
         <PlayerEndScreen
           isVisible={true}
-          isFullscreen={isFullscreen}
+          isFullscreen={effectiveFullscreen}
           isMobileView={isMobileView}
           currentVideo={currentVideo || { id: videoId, title, category: videoCategory, author_name: channelName }}
           relatedVideos={relatedVideos}
@@ -2883,7 +2910,7 @@ export default function VideoPlayer({
           settingsMenuRef={settingsMenuRef}
           settingsPlacement={settingsPlacement}
           isMobileView={isMobileView}
-          isFullscreen={isFullscreen}
+          isFullscreen={effectiveFullscreen}
           activeMenuTab={activeMenuTab}
           setActiveMenuTab={setActiveMenuTab}
           levels={levels}
@@ -2959,7 +2986,8 @@ export default function VideoPlayer({
         isEnded={isEnded}
         isScrubbing={isScrubbing}
         isMobileView={isMobileView}
-        isFullscreen={isFullscreen}
+        isFullscreen={effectiveFullscreen}
+        isNativeFullscreen={isFullscreen}
         timeDisplayRef={timeDisplayRef}
         togglePlay={togglePlay}
         toggleMute={toggleMute}
