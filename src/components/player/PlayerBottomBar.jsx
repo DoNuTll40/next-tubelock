@@ -371,6 +371,20 @@ export default function PlayerBottomBar({
               0:00 / 0:00
             </span>
 
+            <button
+              type="button"
+              onClick={toggleMute}
+              aria-label={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
+              title={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
+              className={`p-1.5 rounded-full border backdrop-blur-md transition active:scale-90 cursor-pointer shadow-sm shrink-0 flex items-center justify-center ${
+                isMuted || volume === 0
+                  ? 'bg-[#FF7A00]/90 border-[#FF7A00] text-white'
+                  : 'bg-[#1f1f1f]/70 hover:bg-white/15 border-white/15 text-white/95'
+              }`}
+            >
+              {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+
             {/* <button
               type="button"
               onClick={() => {
@@ -473,12 +487,28 @@ export default function PlayerBottomBar({
         /* MOBILE PORTRAIT BOTTOM BAR                                   */
         /* ============================================================ */
         <div className="flex items-center justify-between text-white text-xs pt-1">
-          <span
-            ref={timeDisplayRef}
-            className="px-2.5 py-1 rounded-full bg-black/25 border border-white/15 backdrop-blur-md text-[11.5px] sm:text-xs font-mono font-semibold text-white/95 shadow-sm select-none"
-          >
-            0:00 / 0:00
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span
+              ref={timeDisplayRef}
+              className="px-2.5 py-1 rounded-full bg-black/25 border border-white/15 backdrop-blur-md text-[11.5px] sm:text-xs font-mono font-semibold text-white/95 shadow-sm select-none"
+            >
+              0:00 / 0:00
+            </span>
+
+            <button
+              type="button"
+              onClick={toggleMute}
+              aria-label={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
+              title={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
+              className={`p-1.5 rounded-full border backdrop-blur-md transition active:scale-90 cursor-pointer shadow-xs shrink-0 flex items-center justify-center ${
+                isMuted || volume === 0
+                  ? 'bg-[#FF7A00]/90 border-[#FF7A00] text-white'
+                  : 'bg-black/25 hover:bg-white/15 border-white/15 text-white/95'
+              }`}
+            >
+              {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            </button>
+          </div>
 
           <div className="flex items-center gap-1.5">
             {toggleOrientation && (

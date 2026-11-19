@@ -154,6 +154,10 @@ export default function VideoPlayer({
     isEndedRef.current = false;
     setIsEnded(false);
     isUserPausedRef.current = false;
+    if (!isUserMutedRef.current) {
+      if (video.current) video.current.muted = false;
+      setIsMuted(false);
+    }
     setShowPoster(true);
     const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
     lastReportedSecondRef.current = Math.floor(startSec);
@@ -289,6 +293,7 @@ export default function VideoPlayer({
   const [isSeeking, setIsSeeking] = useState(false);
   const [volume, setVolume] = useState(defaultVolume);
   const [isMuted, setIsMuted] = useState(false);
+  const isUserMutedRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
 
@@ -954,7 +959,8 @@ export default function VideoPlayer({
         setIsEnded(false);
       }).catch((err) => {
         // Browser Autoplay Policy: if unmuted autoplay is blocked, mute and play immediately!
-        if (v && (err.name === 'NotAllowedError' || err.name === 'AbortError')) {
+        // Ignore AbortError caused by source switching or transient load interruptions.
+        if (v && err.name === 'NotAllowedError') {
           v.muted = true;
           setIsMuted(true);
           v.play()
@@ -982,6 +988,10 @@ export default function VideoPlayer({
     hlsRetryCountRef.current = 0;
 
     isUserPausedRef.current = false;
+    if (!isUserMutedRef.current) {
+      v.muted = false;
+      setIsMuted(false);
+    }
     if (hlsInstanceRef.current) {
       hlsInstanceRef.current.destroy();
       hlsInstanceRef.current = null;
@@ -1143,7 +1153,9 @@ export default function VideoPlayer({
             }
 
             hls.startLoad(targetInitialTime > 0 ? targetInitialTime : -1);
-            attemptAutoPlay();
+            if (v && v.readyState >= 2) {
+              attemptAutoPlay();
+            }
           });
 
           hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
@@ -1341,6 +1353,7 @@ export default function VideoPlayer({
   const handleVolumeChange = (e) => {
     const val = parseFloat(e.target.value);
     setVolume(val);
+    isUserMutedRef.current = val === 0;
     if (video.current) {
       video.current.volume = val;
       video.current.muted = val === 0;
@@ -1352,6 +1365,7 @@ export default function VideoPlayer({
   const toggleMute = () => {
     if (!video.current) return;
     const nextMuted = !isMuted;
+    isUserMutedRef.current = nextMuted;
     video.current.muted = nextMuted;
     setIsMuted(nextMuted);
     if (!nextMuted && volume === 0) {
@@ -1359,6 +1373,7 @@ export default function VideoPlayer({
       video.current.volume = 0.5;
     }
     showToast(nextMuted ? 'ปิดเสียง' : `ระดับเสียง: ${Math.round((nextMuted ? 0 : volume) * 100)}%`);
+    resetControlsTimer();
   };
 
   // 1. วาง updateStoryboardThumbnail ไว้ก่อน (ข้างบน)
