@@ -12,6 +12,7 @@ import {
   formatVersionSummary,
   resolveRequestedVersion,
 } from '@/lib/videoVersions';
+import { rankRelatedVideos } from '@/lib/recommendationEngine';
 import WatchClient from './WatchClient';
 
 export const dynamic = 'force-dynamic';
@@ -182,12 +183,13 @@ export default async function WatchPage({ params, searchParams }) {
     // ⚡ Performance Optimization:
     // 1. getVideoById is deduplicated via React cache() (0 extra DB hit)
     // 2. relatedRows runs in parallel with video + versions lookup & omits heavy v.description
-    // 3. LIMIT 12 reduces initial SSR payload to < 100 KB
+    // 3. LIMIT 48 feeds the multi-signal recommendation scorer on SSR cleanly
     const relatedQueryPromise = (userId
       ? sql`
           SELECT 
-            v.id, v.title, v.duration, v.resolution, v.thumbnail_url, v.category, v.content_rating, v.views_count, v.created_at,
-            v.status,
+            v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec,
+            v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at,
+            v.status, v.source_type, v.user_id,
             h.last_position_seconds,
             (h.id IS NOT NULL) AS has_watched,
             u.name AS author_name, u.picture AS author_picture
@@ -196,12 +198,13 @@ export default async function WatchPage({ params, searchParams }) {
           LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
           WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
           ORDER BY v.created_at DESC
-          LIMIT 12;
+          LIMIT 48;
         `
       : sql`
           SELECT 
-            v.id, v.title, v.duration, v.resolution, v.thumbnail_url, v.category, v.content_rating, v.views_count, v.created_at,
-            v.status,
+            v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec,
+            v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at,
+            v.status, v.source_type, v.user_id,
             NULL AS last_position_seconds,
             FALSE AS has_watched,
             u.name AS author_name, u.picture AS author_picture
@@ -209,7 +212,7 @@ export default async function WatchPage({ params, searchParams }) {
           LEFT JOIN users u ON v.user_id = u.id
           WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
           ORDER BY v.created_at DESC
-          LIMIT 12;
+          LIMIT 48;
         `).catch((relErr) => {
           console.warn('[WatchPage] Related videos query failed gracefully:', relErr?.message);
           return [];
@@ -301,7 +304,7 @@ export default async function WatchPage({ params, searchParams }) {
       }
     }
 
-    relatedVideos = relatedRows.map((row) => {
+    const mappedRelated = relatedRows.map((row) => {
       const item = protectVideoPoster(row);
       const isItemMusic = isMusicVideo(item);
       const hasWatched = Boolean(item.has_watched || (item.last_position_seconds !== null && item.last_position_seconds !== undefined));
@@ -319,6 +322,8 @@ export default async function WatchPage({ params, searchParams }) {
         views_count: Number(item.views_count || 0),
       };
     });
+
+    relatedVideos = rankRelatedVideos(video, mappedRelated, { limit: 48 });
   } catch (err) {
     // Re-throw Next.js redirect or notFound
     if (

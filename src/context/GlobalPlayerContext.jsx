@@ -29,6 +29,7 @@ import {
   isMusicVideo,
   RESTRICTED_POSTER,
 } from '@/lib/videoUtils';
+import { rankRelatedVideos } from '@/lib/recommendationEngine';
 
 export const DESKTOP_HEADER_OFFSET_PX = 105;
 export const DESKTOP_PLAYER_MAX_HEIGHT = `calc(100vh - ${DESKTOP_HEADER_OFFSET_PX}px)`;
@@ -82,6 +83,50 @@ export function primeGlobalWatchVideo(
   }
 }
 
+function compactCandidateForPool(item) {
+  if (!item || !item.id || item.id === 'undefined') return null;
+  const {
+    description: _d,
+    subtitle_srt: _srt,
+    subtitle_vtt: _vtt,
+    subtitle_tracks: _tracks,
+    versions: _vers,
+    ...compact
+  } = item;
+  return compact;
+}
+
+function upsertCandidatesToPool(poolMap, items = [], extraItem = null) {
+  if (!poolMap) return;
+  const upsertOne = (raw) => {
+    const compact = compactCandidateForPool(raw);
+    if (!compact) return;
+    const key = String(compact.id);
+    const existing = poolMap.get(key);
+    poolMap.set(key, existing ? { ...existing, ...compact } : compact);
+    if (poolMap.size > 200) {
+      const oldestKey = poolMap.keys().next().value;
+      if (oldestKey !== undefined && oldestKey !== key) {
+        poolMap.delete(oldestKey);
+      }
+    }
+  };
+  if (Array.isArray(items)) {
+    for (let i = 0; i < items.length; i++) {
+      upsertOne(items[i]);
+    }
+  }
+  if (extraItem) {
+    upsertOne(extraItem);
+  }
+}
+
+function getVideoMetaRankKey(v) {
+  if (!v?.id) return '';
+  const tagsKey = Array.isArray(v.tags) ? v.tags.join(',') : String(v.tags || '');
+  return `${v.id}|${v.category || ''}|${v.content_rating || ''}|${tagsKey}`;
+}
+
 function readStoredPlayerConfig() {
   if (typeof window === 'undefined') return null;
   try {
@@ -113,6 +158,10 @@ export function GlobalPlayerProvider({ children }) {
   const loadedDetailIdRef = useRef(null);
   const primedInfoRef = useRef(null);
   const lastHydratedInitialVideoRef = useRef(null);
+  const candidatePoolRef = useRef(new Map());
+  const sessionWatchedIdsRef = useRef(new Set());
+  const rankedMetaKeyRef = useRef('');
+  const rankedSeedRef = useRef(0);
 
   const [isDockedInWatch, setIsDockedInWatch] = useState(false);
   const [selection, setSelection] = useState({ id: null, startTime: 0 });
@@ -324,6 +373,26 @@ export function GlobalPlayerProvider({ children }) {
       latestSourceTypeRef.current = newVideo?.source_type;
       currentVideoRef.current = newVideo;
 
+      upsertCandidatesToPool(candidatePoolRef.current, [newVideo], prevVideo);
+      if (prevVideo?.id) {
+        sessionWatchedIdsRef.current.add(String(prevVideo.id));
+      }
+      sessionWatchedIdsRef.current.add(String(newVideo.id));
+
+      const nextSeed = Date.now();
+      rankedSeedRef.current = nextSeed;
+      rankedMetaKeyRef.current = getVideoMetaRankKey(newVideo);
+      const rankedRelated = rankRelatedVideos(
+        newVideo,
+        Array.from(candidatePoolRef.current.values()),
+        {
+          sessionWatchedIds: sessionWatchedIdsRef.current,
+          lastVideoId: prevVideo?.id ?? null,
+          seed: nextSeed,
+          limit: 48,
+        }
+      );
+
       setError(null);
       setStoryboard(null);
       setDetectedRatio(null);
@@ -332,27 +401,7 @@ export function GlobalPlayerProvider({ children }) {
       setIsSwitchingVideo(Boolean(streamUrlRef.current));
       setSelection({ id: newVideo.id, startTime: Number(resumeTime) || 0 });
       setVideo(newVideo);
-      setRelatedVideos((prevList) => {
-        const filtered = (Array.isArray(prevList) ? prevList : []).filter(
-          (item) => String(item.id) !== String(newVideo.id)
-        );
-        if (
-          prevVideo?.id &&
-          String(prevVideo.id) !== String(newVideo.id) &&
-          !filtered.some((item) => String(item.id) === String(prevVideo.id))
-        ) {
-          const {
-            description: _d,
-            subtitle_srt: _srt,
-            subtitle_vtt: _vtt,
-            subtitle_tracks: _tracks,
-            versions: _vers,
-            ...compactPrev
-          } = prevVideo;
-          return [compactPrev, ...filtered].slice(0, 16);
-        }
-        return filtered;
-      });
+      setRelatedVideos(rankedRelated);
       setStreamAttemptSeq((s) => s + 1);
     },
     [silenceAndPauseCurrentVideo]
@@ -465,7 +514,21 @@ export function GlobalPlayerProvider({ children }) {
 
       setSsrShowAdultPosters(Boolean(initialShowAdultPosters));
       loadedDetailIdRef.current = initialVideo.id;
-      setRelatedVideos(Array.isArray(initialRelated) ? initialRelated : []);
+
+      upsertCandidatesToPool(candidatePoolRef.current, initialRelated, initialVideo);
+      sessionWatchedIdsRef.current.add(String(initialVideo.id));
+      rankedSeedRef.current = 0;
+      rankedMetaKeyRef.current = getVideoMetaRankKey(initialVideo);
+      const rankedRelated = rankRelatedVideos(
+        initialVideo,
+        Array.from(candidatePoolRef.current.values()),
+        {
+          sessionWatchedIds: sessionWatchedIdsRef.current,
+          seed: 0,
+          limit: 48,
+        }
+      );
+      setRelatedVideos(rankedRelated);
 
       const targetVersionKey = requestedVersion ? String(requestedVersion) : null;
       const isSameActiveVideo =
@@ -664,6 +727,26 @@ export function GlobalPlayerProvider({ children }) {
           preloadHlsModule().catch(() => {});
         }
 
+        const maybeReRankWithEnrichedVideo = (mergedVideo) => {
+          if (!mergedVideo?.id) return;
+          upsertCandidatesToPool(candidatePoolRef.current, null, mergedVideo);
+          const nextKey = getVideoMetaRankKey(mergedVideo);
+          if (
+            nextKey !== rankedMetaKeyRef.current &&
+            candidatePoolRef.current.size > 0 &&
+            (mergedVideo.tags || mergedVideo.category || mergedVideo.content_rating)
+          ) {
+            rankedMetaKeyRef.current = nextKey;
+            setRelatedVideos(
+              rankRelatedVideos(mergedVideo, Array.from(candidatePoolRef.current.values()), {
+                sessionWatchedIds: sessionWatchedIdsRef.current,
+                seed: rankedSeedRef.current,
+                limit: 48,
+              })
+            );
+          }
+        };
+
         // Only fetch detail metadata in background for in-place switches (not awaiting it on TTFF path!)
         const isPrimedForId = primedInfoRef.current?.id === String(id);
         const needsMetadataDetail = loadedDetailIdRef.current !== id && !isPrimedForId;
@@ -675,6 +758,8 @@ export function GlobalPlayerProvider({ children }) {
               if (cancelled || !detailRes?.video) return;
               loadedDetailIdRef.current = id;
               const dv = detailRes.video;
+              const mergedForRank = { ...(currentVideoRef.current || {}), ...dv };
+              maybeReRankWithEnrichedVideo(mergedForRank);
               setVideo((prev) => ({
                 ...prev,
                 ...dv,
@@ -732,6 +817,8 @@ export function GlobalPlayerProvider({ children }) {
 
         if (sourceData.video) {
           const sv = sourceData.video;
+          const mergedForRank = { ...(currentVideoRef.current || {}), ...sv };
+          maybeReRankWithEnrichedVideo(mergedForRank);
           setVideo((prev) => ({
             ...prev,
             ...sv,

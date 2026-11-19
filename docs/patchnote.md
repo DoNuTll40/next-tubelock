@@ -36,6 +36,15 @@ updated: 19 พฤศจิกายน 2026
   - ถอด attribute `autoPlay` ออกจากแท็ก `<video>`, คุมระดับเสียงเป็น `v.volume = 0` + `v.muted = true` (`silenceAndPauseCurrentVideo()`) ตลอดช่วงเปลี่ยนสตรีม/รื้อ `hls.js` และเลื่อนการคืนเสียงไปยัง `restoreAudioAfterTransition()` ใน `attemptAutoPlay()` / `togglePlay()` / `onPlaying` พร้อมตัด `v.currentTime = 0` ที่ซ้ำซ้อน
 - **แก้ไข Lint Error เดิมใน `ResultsClient.jsx`:** ลบการเรียก `setLoading(true)` ซ้ำซ้อนใน `useEffect`, ย้ายฐานเวลา `Date.now()` ออกจากการ render และ escape อัญประกาศใน JSX ให้ผ่าน `eslint` ด้วย 0 errors
 
+### 4. ระบบแนะนำวิดีโอแบบหลายสัญญาณ & YouTube-Style Mobile End Screen / Fullscreen UI
+- **Multi-Signal YouTube-Grade Recommendation Engine (`src/lib/recommendationEngine.js`, `src/app/watch/[id]/page.jsx`, `src/context/GlobalPlayerContext.jsx`, `src/app/watch/[id]/WatchClient.jsx`, `src/components/player/PlayerEndScreen.jsx`):**
+  - สร้างเอนจินจัดอันดับคลิปแนะนำ `extractVideoSignals()` + `rankRelatedVideos()` (พร้อม bounded signal cache 400 รายการ) ประมวลผลเร็วระดับ O(N log N) ให้ลื่นไหลทุกอุปกรณ์ โดยแยกขอบเขตเนื้อหา 18+ อย่างชัดเจน, คำนวณความใกล้เคียงด้านหมวดหมู่/ดนตรี/ศิลปิน/คำสำคัญ/Bigram ภาษาไทย, สัดส่วนความยาวคลิป, สถานะการรับชม, ป้องกันคลิปซ้ำในเซสชัน (`sessionWatchedIds`) และลดอันดับคลิปก่อนหน้า (`lastVideoId` `-160` คะแนน)
+  - ขยายคลัง SSR ใน `/watch/[id]` จาก 12 เป็น 48 คลิป, สะสมรายการใน `candidatePoolRef` (สูงสุด 200 รายการ) ภายใน `GlobalPlayerContext.jsx`, จัดอันดับใหม่ทันทีเมื่อสลับคลิปแบบ in-place หรือเมื่อ metadata เสริมโหลดเสร็จ และแสดงผลด้านขวาที่ 20 รายการเพื่อรักษาความเบาของ DOM
+- **YouTube-Style Mobile End Screen (`"วิดีโอแนะนำ"` / `"รายการถัดไป"`) & Symmetric Fullscreen UI (`PlayerEndScreen.jsx`, `PlayerCenterControls.jsx`, `PlayerTopBar.jsx`, `PlayerBottomBar.jsx`, `VideoPlayer.jsx`):**
+  - เพิ่มหน้าจอจบคลิปเฉพาะโหมดมือถือ/PWA (`isMobileView`) แบบโปร่งสบายตาแสดง `"วิดีโอแนะนำ"` 1 คลิปเด่นพร้อมปุ่ม `"ปิด"` / `"เล่นเลย"` และปุ่ม `X` โดยคงหน้าจอจบ 3 การ์ดบน PC Desktop ไว้เหมือนเดิมทั้งหมด
+  - เมื่อผู้ใช้ปิด `"วิดีโอแนะนำ"` บนมือถือ จะสลับไปแสดงปุ่มควบคุมกลางจอ (`SkipBack` / `RotateCcw` เล่นซ้ำ / `SkipForward` คลิปถัดไป) และการ์ด `"รายการถัดไป"` มุมซ้ายบนในโหมด Fullscreen
+  - นำ `--player-safe-left` / `--player-safe-right` ออกจากกรอบ Fullscreen ใน `VideoPlayer.jsx` และปรับ `PlayerTopBar.jsx` / `PlayerBottomBar.jsx` เป็น `px-2.5 sm:px-6` สมมาตรทั้งซ้าย-ขวา เพื่อให้แถบควบคุมยืดชิดขอบเต็มจอพอดีกับวิดีโอแม้บนหน้าจอ PWA ที่มี dot camera cutout
+
 ---
 
 ## เวอร์ชัน 1.2.7 (Build 1.2.7.20261119 — 19 พฤศจิกายน 2026) — ปรับแต่งประสิทธิภาพการ Render, SSR Cache, Bundle Splitting และ GPU Compositing ของหน้า `/watch/[id]`

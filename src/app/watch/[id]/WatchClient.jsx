@@ -228,26 +228,25 @@ export default function WatchClient({
       : 0;
   const viewsDisplay = `${viewsCount.toLocaleString()} ครั้ง`;
 
-  // Filter recommendations
+  // Filter recommendations across the ranked pool, keeping DOM compact at max 20 cards
   const currentVideoCategory = video?.category;
   const filteredRelated = useMemo(() => {
     if (!relatedVideos) return [];
+    let result = relatedVideos;
     if (activeFilter === 'cloud') {
-      return relatedVideos.filter((v) => v.source_type === 'hls' || v.onedrive_folder_id);
-    }
-    if (activeFilter === '4k') {
-      return relatedVideos.filter((v) => {
+      result = relatedVideos.filter((v) => v.source_type === 'hls' || v.onedrive_folder_id);
+    } else if (activeFilter === '4k') {
+      result = relatedVideos.filter((v) => {
         const r = (v.resolution || '').toLowerCase();
         return r.includes('4k') || r.includes('2160') || (v.width && v.width >= 3840);
       });
-    }
-    if (activeFilter === 'related') {
-      return relatedVideos.filter((v) => {
+    } else if (activeFilter === 'related') {
+      result = relatedVideos.filter((v) => {
         if (!currentVideoCategory || !v.category) return true;
         return v.category === currentVideoCategory;
       });
     }
-    return relatedVideos;
+    return result.slice(0, 20);
   }, [relatedVideos, activeFilter, currentVideoCategory]);
 
   if (error && !video) {

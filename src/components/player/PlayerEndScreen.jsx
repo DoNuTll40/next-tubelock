@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Link from 'next/link';
-import { Play, RotateCcw, Loader2, LockKeyhole } from 'lucide-react';
+import { Play, RotateCcw, Loader2, LockKeyhole, X } from 'lucide-react';
 import { encodeVideoSlug, getVideoResumeTime, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
+import { rankRelatedVideos } from '@/lib/recommendationEngine';
 import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { useSession } from '@/context/SessionContext';
@@ -66,86 +67,10 @@ export function formatThaiTimeAgo(dateInput) {
 }
 
 /**
- * Extract keywords from text
- */
-function extractKeywords(text) {
-  if (!text || typeof text !== 'string') return new Set();
-  const cleaned = text
-    .toLowerCase()
-    .replace(/[^\u0E00-\u0E7Fa-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 2);
-  return new Set(cleaned);
-}
-
-/**
  * YouTube-style Dynamic Recommendation Scorer & Weighted Sampler
  */
 export function getDynamicRecommendations(currentVideo, allVideos = [], count = 3) {
-  if (!allVideos || allVideos.length === 0) return [];
-
-  const currentId = currentVideo?.id ? String(currentVideo.id) : null;
-  const currentCategory = currentVideo?.category?.toLowerCase() || '';
-  const currentAuthor = currentVideo?.author_name || '';
-  const currentUserId = currentVideo?.user_id;
-  const currentTokens = extractKeywords(`${currentVideo?.title || ''} ${currentVideo?.tags || ''}`);
-
-  // 1. Filter out current video and invalid items
-  const candidates = allVideos.filter((v) => {
-    if (!v || !v.id) return false;
-    if (currentId && String(v.id) === currentId) return false;
-    if (v.status && v.status !== 'READY') return false;
-    return true;
-  });
-
-  if (candidates.length <= count) {
-    return candidates;
-  }
-
-  // 2. Score candidates with dynamic weighting
-  const scored = candidates.map((v) => {
-    let score = 0;
-
-    // A. Category match (high relevance)
-    const vCat = (v.category || '').toLowerCase();
-    if (currentCategory && vCat && currentCategory === vCat) {
-      score += 48;
-    }
-
-    // B. Channel / Author match
-    if (currentAuthor && v.author_name && currentAuthor === v.author_name) {
-      score += 35;
-    }
-    if (currentUserId && v.user_id && currentUserId === v.user_id) {
-      score += 35;
-    }
-
-    // C. Keyword / Tag overlap
-    const vTokens = extractKeywords(`${v.title || ''} ${v.tags || ''}`);
-    let matchCount = 0;
-    for (const token of currentTokens) {
-      if (vTokens.has(token)) {
-        matchCount++;
-      }
-    }
-    score += Math.min(matchCount * 14, 42);
-
-    // D. Popularity boost
-    const views = Number(v.views_count) || 0;
-    if (views > 0) {
-      score += Math.min(Math.log10(views + 1) * 3, 12);
-    }
-
-    // E. Dynamic Jitter (+0 to +25) - ensures fresh, dynamic recommendation mix
-    score += Math.random() * 25;
-
-    return { video: v, score };
-  });
-
-  // 3. Sort by highest dynamic score and slice target count
-  scored.sort((a, b) => b.score - a.score);
-
-  return scored.slice(0, count).map((item) => item.video);
+  return rankRelatedVideos(currentVideo, allVideos, { limit: count, seed: 7 });
 }
 
 /**
@@ -330,30 +255,210 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
   );
 }
 
+/**
+ * MobileEndScreenPrompt: YouTube-style single featured recommendation prompt ("วิดีโอแนะนำ") for mobile viewports
+ */
+function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSelectVideo = null, onDismiss = null }) {
+  const videoSlug = encodeVideoSlug(v.id, v.category) || v.id;
+  const durationStr = formatBadgeDuration(v.duration);
+  const isMature = isMatureVideo(v);
+  const isLoggedIn = Boolean(useSession());
+  const showAdultPoster = usePosterPreference(isMature);
+  const { poster, revealPoster } = usePosterReveal(isMature ? v.id : null, !showAdultPoster);
+  const showRestriction = isMature && !showAdultPoster && poster?.status !== 'ready';
+  const canRevealPoster = showRestriction && isLoggedIn;
+  const { isMusic, pos, progressPct } = useVideoWatchProgress(v);
+  const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, v.duration);
+  const watchUrl = `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}`;
+  const thumbnail = isMature
+    ? (showAdultPoster ? `/api/videos/${v.id}/poster` : poster?.url || RESTRICTED_POSTER)
+    : v.thumbnail_url || (v.id ? `/streams/stream_vid_${v.id}/poster.jpg` : null);
+
+  useEffect(() => {
+    if (v?.id) onPreWarm?.(v.id);
+  }, [v?.id, onPreWarm]);
+
+  const handlePlay = (e) => {
+    e?.stopPropagation?.();
+    if (onSelectVideo && !e?.metaKey && !e?.ctrlKey && !e?.shiftKey && !e?.altKey) {
+      e?.preventDefault?.();
+      onSelectVideo(v, resumeTime);
+    } else if (
+      isFullscreen ||
+      (typeof document !== 'undefined' && (document.fullscreenElement || document.webkitFullscreenElement))
+    ) {
+      try {
+        sessionStorage.setItem('tubelock_keep_fullscreen', '1');
+      } catch (_) {}
+    }
+  };
+
+  return (
+    <div
+      className={`absolute inset-0 z-40 flex flex-col justify-between bg-black text-white select-none pointer-events-auto animate-fadeIn ${
+        isFullscreen
+          ? 'px-6 sm:px-10 pt-[calc(0.875rem+var(--player-safe-top,0px))] pb-[calc(1rem+var(--player-safe-bottom,0px))]'
+          : 'px-3.5 py-2.5'
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between shrink-0">
+        <span className={`font-medium text-white/95 ${isFullscreen ? 'text-sm sm:text-base' : 'text-xs'}`}>
+          วิดีโอแนะนำ
+        </span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss?.();
+          }}
+          aria-label="ปิดวิดีโอแนะนำ"
+          className="p-1 -mr-1 rounded-full text-white/90 hover:text-white active:bg-white/15 transition cursor-pointer"
+        >
+          <X className={isFullscreen ? 'w-6 h-6' : 'w-5 h-5'} />
+        </button>
+      </div>
+
+      {/* Single Featured Video Row */}
+      <div className={`flex items-center w-full max-w-3xl mx-auto my-auto min-h-0 ${isFullscreen ? 'gap-5 sm:gap-7' : 'gap-3.5'}`}>
+        <div
+          className={`relative aspect-video rounded-xl overflow-hidden bg-zinc-900 border border-white/15 shrink-0 shadow-2xl ${
+            isFullscreen ? 'w-[45%] max-w-[330px]' : 'w-[44%] max-w-[172px]'
+          }`}
+        >
+          {!canRevealPoster && (
+            <Link
+              href={watchUrl}
+              onClick={handlePlay}
+              aria-label={v.title || 'เล่นวิดีโอ'}
+              className="absolute inset-0 z-10 rounded-xl"
+            />
+          )}
+
+          {thumbnail ? (
+            <img
+              src={thumbnail}
+              alt={v.title || 'Recommended video'}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-zinc-800 text-zinc-500">
+              <Play className="w-8 h-8 fill-zinc-600 opacity-60" />
+            </div>
+          )}
+
+          {showRestriction && (isLoggedIn ? (
+            <button
+              type="button"
+              disabled={poster?.status === 'loading'}
+              aria-busy={poster?.status === 'loading'}
+              onClick={(e) => {
+                e.stopPropagation();
+                void revealPoster(poster?.status === 'failed');
+              }}
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1 text-white cursor-pointer disabled:cursor-wait"
+            >
+              <span className="flex items-center gap-1 text-[11px] font-semibold">
+                <LockKeyhole aria-hidden="true" className="size-3 text-[#FF9A40]" />
+                18+
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-[#FF7A00]/35 bg-[#21160f] px-2 py-0.5 text-[10px] font-medium">
+                {poster?.status === 'loading' ? (
+                  <><Loader2 aria-hidden="true" className="size-2.5 animate-spin" />กำลังโหลด</>
+                ) : poster?.status === 'failed' ? 'ลองอีกครั้ง' : 'แสดงภาพปก'}
+              </span>
+            </button>
+          ) : (
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center text-white pointer-events-none"
+            >
+              <span className="flex items-center gap-1 text-[11px] font-semibold">
+                <LockKeyhole aria-hidden="true" className="size-3 text-[#FF9A40]" />
+                18+
+              </span>
+            </div>
+          ))}
+
+          {progressPct > 0 && (
+            <div
+              role="progressbar"
+              aria-label="ความคืบหน้าการรับชม"
+              aria-valuenow={Math.round(progressPct)}
+              className="absolute inset-x-0 bottom-0 h-1 bg-black/40 pointer-events-none"
+            >
+              <div className="h-full bg-[#FF7A00]" style={{ width: `${progressPct}%` }} />
+            </div>
+          )}
+
+          {v.duration > 0 && (
+            <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 text-[10px] sm:text-xs bg-black/85 text-white font-mono font-semibold rounded pointer-events-none">
+              {durationStr}
+            </span>
+          )}
+        </div>
+
+        <Link
+          href={watchUrl}
+          onClick={handlePlay}
+          className="flex flex-col justify-center min-w-0 flex-1 text-left cursor-pointer"
+        >
+          <h4 className={`text-white font-bold leading-snug ${isFullscreen ? 'text-base sm:text-xl line-clamp-3' : 'text-[13px] line-clamp-2'}`}>
+            {v.title}
+          </h4>
+          <span className={`text-zinc-400 truncate ${isFullscreen ? 'text-xs sm:text-sm mt-1.5' : 'text-[11px] mt-0.5'}`}>
+            {v.author_name || 'TubeLock'}
+          </span>
+        </Link>
+      </div>
+
+      {/* Bottom Action Pills */}
+      <div className={`grid grid-cols-2 w-full max-w-3xl mx-auto shrink-0 ${isFullscreen ? 'gap-3.5 sm:gap-4' : 'gap-2.5'}`}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss?.();
+          }}
+          className={`rounded-full bg-[#272727] hover:bg-[#383838] active:bg-[#444444] active:scale-[0.98] text-white font-semibold flex items-center justify-center transition cursor-pointer ${
+            isFullscreen ? 'h-10 sm:h-11 text-xs sm:text-sm' : 'h-8.5 text-xs'
+          }`}
+        >
+          ปิด
+        </button>
+
+        <Link
+          href={watchUrl}
+          onClick={handlePlay}
+          className={`rounded-full bg-white hover:bg-zinc-200 active:bg-zinc-300 active:scale-[0.98] text-[#0F0F0F] font-bold flex items-center justify-center transition cursor-pointer ${
+            isFullscreen ? 'h-10 sm:h-11 text-xs sm:text-sm' : 'h-8.5 text-xs'
+          }`}
+        >
+          เล่นเลย
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export default function PlayerEndScreen({
   isVisible = false,
   isFullscreen = false,
+  isMobileView = false,
   currentVideo = null,
   relatedVideos = [],
   onReplay = null,
   onSelectVideo = null,
+  onDismiss = null,
 }) {
-  const [recommendations, setRecommendations] = useState([]);
-  const hasSampledRef = useRef(false);
-
-  // Compute dynamic recommendations whenever isVisible becomes true
-  useEffect(() => {
-    if (isVisible) {
-      const recs = getDynamicRecommendations(currentVideo, relatedVideos, 3);
-      setRecommendations(recs);
-      hasSampledRef.current = true;
-    } else {
-      hasSampledRef.current = false;
-    }
-  }, [isVisible, currentVideo, relatedVideos]);
+  const recommendations = useMemo(
+    () => (isVisible ? getDynamicRecommendations(currentVideo, relatedVideos, 3) : []),
+    [isVisible, currentVideo, relatedVideos]
+  );
 
   // Pre-warm video on card hover for instant playback
-  const handlePreWarm = (vidId) => {
+  const handlePreWarm = useCallback((vidId) => {
     if (!vidId || preWarmedIds.has(vidId)) return;
     preWarmedIds.add(vidId);
     fetch(`/api/videos/${vidId}/source`, {
@@ -363,10 +468,22 @@ export default function PlayerEndScreen({
     }).catch(() => {
       preWarmedIds.delete(vidId);
     });
-  };
+  }, []);
 
   if (!isVisible || recommendations.length === 0) {
     return null;
+  }
+
+  if (isMobileView) {
+    return (
+      <MobileEndScreenPrompt
+        video={recommendations[0]}
+        isFullscreen={isFullscreen}
+        onPreWarm={handlePreWarm}
+        onSelectVideo={onSelectVideo}
+        onDismiss={onDismiss}
+      />
+    );
   }
 
   const containerMaxWidth = isFullscreen

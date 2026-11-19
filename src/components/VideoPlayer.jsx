@@ -135,6 +135,7 @@ export default function VideoPlayer({
       setIsBuffering(true);
       isEndedRef.current = false;
       setIsEnded(false);
+      setIsMobileEndScreenDismissed(false);
       isUserPausedRef.current = false;
       setShowPoster(true);
 
@@ -168,6 +169,7 @@ export default function VideoPlayer({
     initialSeekDoneRef.current = false;
     isEndedRef.current = false;
     setIsEnded(false);
+    setIsMobileEndScreenDismissed(false);
     isUserPausedRef.current = false;
     setIsMuted(isUserMutedRef.current);
     setShowPoster(true);
@@ -299,6 +301,7 @@ export default function VideoPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isEnded, setIsEnded] = useState(false);
   const isEndedRef = useRef(false);
+  const [isMobileEndScreenDismissed, setIsMobileEndScreenDismissed] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [showPoster, setShowPoster] = useState(true);
   const [duration, setDuration] = useState(0);
@@ -996,6 +999,7 @@ export default function VideoPlayer({
         setIsPlaying(true);
         isEndedRef.current = false;
         setIsEnded(false);
+        setIsMobileEndScreenDismissed(false);
       }).catch((err) => {
         // Browser Autoplay Policy: if unmuted autoplay is blocked, mute and play immediately!
         // Ignore AbortError caused by source switching or transient load interruptions.
@@ -1007,6 +1011,7 @@ export default function VideoPlayer({
               setIsPlaying(true);
               isEndedRef.current = false;
               setIsEnded(false);
+              setIsMobileEndScreenDismissed(false);
             })
             .catch(() => { });
         }
@@ -1134,6 +1139,7 @@ export default function VideoPlayer({
             setIsBuffering(false);
             isEndedRef.current = false;
             setIsEnded(false);
+            setIsMobileEndScreenDismissed(false);
             const startSec = targetInitialTime > 0 ? targetInitialTime : 0;
             if (startSec > 0 && v) {
               try {
@@ -1365,6 +1371,7 @@ export default function VideoPlayer({
       video.current.currentTime = 0;
       isEndedRef.current = false;
       setIsEnded(false);
+      setIsMobileEndScreenDismissed(false);
       isUserPausedRef.current = false;
       restoreAudioAfterTransition();
       if (fadeBlackOverlayRef.current) {
@@ -1814,7 +1821,7 @@ export default function VideoPlayer({
     }
     if (!containerRef.current) return;
 
-    if (isEnded) {
+    if (isEnded && !isMobileView) {
       togglePlay();
       return;
     }
@@ -2397,6 +2404,13 @@ export default function VideoPlayer({
   }, [isMobileView, isFullscreen, isSwitchingVideo, duration, src, targetInitialTime]);
 
   const controlsVisible = showControls || (!isMobileView && !isPlaying);
+  const upNextVideo = useMemo(
+    () => (Array.isArray(relatedVideos) && relatedVideos.length > 0 ? relatedVideos[0] : null),
+    [relatedVideos]
+  );
+  const isMobileEndPromptOpen = Boolean(
+    isMobileView && isEnded && !isLooping && !isSwitchingVideo && !isMobileEndScreenDismissed && upNextVideo
+  );
   const subtitleLayout = useMemo(
     () => computeSubtitleBoxLayout({
       containerWidth: containerSize.width,
@@ -2420,7 +2434,7 @@ export default function VideoPlayer({
         resetControlsTimer();
       }}
       className={`relative bg-black select-none overflow-hidden group/player ${isFullscreen
-        ? 'fixed inset-0 z-50 h-dvh w-dvw border-0 rounded-none [--player-safe-top:env(safe-area-inset-top,0px)] [--player-safe-right:env(safe-area-inset-right,0px)] [--player-safe-bottom:env(safe-area-inset-bottom,0px)] [--player-safe-left:env(safe-area-inset-left,0px)]'
+        ? 'fixed inset-0 z-50 h-dvh w-dvw border-0 rounded-none [--player-safe-top:env(safe-area-inset-top,0px)] [--player-safe-bottom:env(safe-area-inset-bottom,0px)]'
         : (videoRatio && videoRatio < 0.98)
           ? 'w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
           : 'w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border-0 sm:border-black/10 shadow-none sm:shadow-none'
@@ -2474,6 +2488,7 @@ export default function VideoPlayer({
           setShowPoster(false);
           isEndedRef.current = false;
           setIsEnded(false);
+          setIsMobileEndScreenDismissed(false);
           isUserPausedRef.current = false;
           checkAndUpdateRatio();
           lastTickTimeRef.current = performance.now();
@@ -2492,9 +2507,13 @@ export default function VideoPlayer({
           const isAtEnd = v && (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current);
 
           if (isAtEnd) {
+            const wasEnded = isEndedRef.current;
             // จบวิดีโอตามปกติ: อัปเดตสถานะจบ, ค้างจอดำ และแสดง End Screen (ไม่วนเล่นซ้ำถ้าไม่ได้เปิด loop)
             isEndedRef.current = true;
             setIsEnded(true);
+            if (!wasEnded) {
+              setIsMobileEndScreenDismissed(false);
+            }
             setIsPlaying(false);
             lastTickTimeRef.current = null;
             if (fadeBlackOverlayRef.current) {
@@ -2590,8 +2609,12 @@ export default function VideoPlayer({
         }}
         onEnded={(event) => {
           if (isSwitchingVideo || !event.currentTarget.ended) return;
+          const wasEnded = isEndedRef.current;
           isEndedRef.current = true;
           setIsEnded(true);
+          if (!wasEnded) {
+            setIsMobileEndScreenDismissed(false);
+          }
           setIsPlaying(false);
           if (fadeBlackOverlayRef.current) {
             fadeBlackOverlayRef.current.style.transition = 'opacity 200ms ease-out';
@@ -2611,6 +2634,7 @@ export default function VideoPlayer({
           lastTickTimeRef.current = null;
           isEndedRef.current = false;
           setIsEnded(false);
+          setIsMobileEndScreenDismissed(false);
           if (fadeBlackOverlayRef.current) {
             fadeBlackOverlayRef.current.style.transition = 'none';
             fadeBlackOverlayRef.current.style.opacity = '0';
@@ -2630,6 +2654,7 @@ export default function VideoPlayer({
             if (vDur - v.currentTime > 1.0) {
               isEndedRef.current = false;
               setIsEnded(false);
+              setIsMobileEndScreenDismissed(false);
             }
             if (vDur > 0) {
               const pct = Math.min(100, Math.max(0, (v.currentTime / vDur) * 100));
@@ -2751,9 +2776,12 @@ export default function VideoPlayer({
 
       {/* Top Bar: Fullscreen / Mobile */}
       <PlayerTopBar
-        showControls={controlsVisible}
+        showControls={controlsVisible && !isMobileEndPromptOpen}
         isFullscreen={isFullscreen}
         isMobileView={isMobileView}
+        isEnded={isEnded}
+        upNextVideo={upNextVideo}
+        onSelectVideo={onSelectVideo}
         title={title}
         channelName={channelName}
         onBack={onBack}
@@ -2779,7 +2807,7 @@ export default function VideoPlayer({
         centerRipple={centerRipple}
         doubleTapSide={doubleTapSide}
         accumulatedSeconds={accumulatedSeconds}
-        showControls={controlsVisible}
+        showControls={controlsVisible && !isMobileEndPromptOpen}
         isPlaying={isPlaying}
         isEnded={isEnded}
         isBuffering={isBuffering || isSwitchingVideo || isSwitchingVersion}
@@ -2792,17 +2820,23 @@ export default function VideoPlayer({
         duration={duration}
         showToast={showToast}
         resetControlsTimer={resetControlsTimer}
+        onPlayNext={upNextVideo && onSelectVideo ? () => onSelectVideo(upNextVideo, 0) : null}
       />
 
       {/* 🎬 YouTube-style End Screen Overlay (Lazy-loaded via next/dynamic only when ended) */}
-      {(isEnded && !isLooping && !isSwitchingVideo) && (
+      {(isEnded && !isLooping && !isSwitchingVideo && (!isMobileView || !isMobileEndScreenDismissed)) && (
         <PlayerEndScreen
           isVisible={true}
           isFullscreen={isFullscreen}
+          isMobileView={isMobileView}
           currentVideo={currentVideo || { id: videoId, title, category: videoCategory, author_name: channelName }}
           relatedVideos={relatedVideos}
           onReplay={togglePlay}
           onSelectVideo={onSelectVideo}
+          onDismiss={() => {
+            setIsMobileEndScreenDismissed(true);
+            setShowControls(true);
+          }}
         />
       )}
 
@@ -2920,7 +2954,7 @@ export default function VideoPlayer({
 
       {/* Modern High-Performance Bottom Controls Bar */}
       <PlayerBottomBar
-        showControls={controlsVisible}
+        showControls={controlsVisible && !isMobileEndPromptOpen}
         isPlaying={isPlaying}
         isEnded={isEnded}
         isScrubbing={isScrubbing}

@@ -1,15 +1,19 @@
 'use client';
 
 import {
-  ChevronRight, ArrowLeft, Play, Pause, Cast, Settings, Layers
+  ChevronRight, ArrowLeft, Play, Pause, Cast, Settings, Layers, LockKeyhole
 } from 'lucide-react';
 import CcSubtitleIcon from '../icons/CcSubtitleIcon';
-import { getGearBadge } from '@/lib/videoUtils';
+import { getGearBadge, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
+import { formatBadgeDuration } from './PlayerEndScreen';
 
 export default function PlayerTopBar({
   showControls,
   isFullscreen,
   isMobileView,
+  isEnded = false,
+  upNextVideo = null,
+  onSelectVideo = null,
   title,
   channelName,
   onBack,
@@ -36,48 +40,97 @@ export default function PlayerTopBar({
     ? versions.filter((v) => !v?.status || ['READY', 'COMPLETED'].includes(String(v.status).toUpperCase()))
     : [];
   const hasMultipleVersions = playableVersions.length > 1;
+  const upNextMature = upNextVideo ? isMatureVideo(upNextVideo) : false;
+  const upNextThumb = upNextVideo
+    ? (upNextMature
+      ? RESTRICTED_POSTER
+      : (upNextVideo.thumbnail_url || (upNextVideo.id ? `/streams/stream_vid_${upNextVideo.id}/poster.jpg` : null)))
+    : null;
+  const upNextDuration = upNextVideo ? formatBadgeDuration(upNextVideo.duration) : '00:00';
 
   return (
     <div
-      className={`absolute top-0 left-0 right-0 [--bar-x:0.625rem] sm:[--bar-x:1.5rem] [--bar-top:0.625rem] sm:[--bar-top:1rem] pl-[calc(var(--bar-x)+var(--player-safe-left,0px))] pr-[calc(var(--bar-x)+var(--player-safe-right,0px))] pt-[calc(var(--bar-top)+var(--player-safe-top,0px))] pb-6 sm:pb-8 bg-gradient-to-b from-black/40 via-black/10 to-transparent flex items-center justify-between z-30 transition-opacity duration-150 ${isMobileView ? 'pointer-events-none [&_button]:pointer-events-auto' : ''}`}
+      className={`absolute top-0 left-0 right-0 px-2.5 sm:px-6 [--bar-top:0.625rem] sm:[--bar-top:1rem] pt-[calc(var(--bar-top)+var(--player-safe-top,0px))] pb-6 sm:pb-8 bg-gradient-to-b from-black/40 via-black/10 to-transparent flex items-center justify-between z-30 transition-opacity duration-150 ${isMobileView ? 'pointer-events-none [&_button]:pointer-events-auto' : ''}`}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Top-Left: Title in Fullscreen, or Back Button in Mobile Portrait */}
+      {/* Top-Left: "รายการถัดไป" card or Title in Fullscreen, or Back Button in Mobile Portrait */}
       {isFullscreen ? (
-        <div className="flex items-center gap-2 max-w-[75%] min-w-0">
-          <div className="flex flex-col min-w-0 text-left">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-white text-xs sm:text-base font-medium truncate drop-shadow-sm select-none">
-                {title || 'วิดีโอ TubeLock'}
-              </span>
-              {hasMultipleVersions && activeVersion && (
-                <button
-                  type="button"
-                  data-settings-btn="true"
-                  onClick={() => {
-                    setSettingsPlacement?.(isMobileView ? 'top' : 'bottom');
-                    setActiveMenuTab?.('version');
-                    setShowSettingsMenu?.(true);
-                    resetControlsTimer?.();
-                  }}
-                  className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF7A00]/20 hover:bg-[#FF7A00]/35 border border-[#FF7A00]/45 text-[#FFB36B] text-[10px] sm:text-[11px] font-bold tracking-wide transition cursor-pointer"
-                  title="สลับเวอร์ชันวิดีโอ"
-                >
-                  <Layers className="w-3 h-3 shrink-0" />
-                  <span className="truncate max-w-[110px]">
-                    {activeVersion.badge || activeVersion.label}
-                  </span>
-                </button>
+        isMobileView && isEnded && upNextVideo ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectVideo?.(upNextVideo, 0);
+            }}
+            className="flex items-center gap-2.5 p-1.5 pr-3.5 rounded-xl bg-black/75 hover:bg-black/85 border border-white/20 backdrop-blur-md max-w-[68%] sm:max-w-[360px] text-left transition active:scale-[0.98] cursor-pointer shadow-lg"
+          >
+            <div className="relative w-20 sm:w-24 aspect-video rounded-lg overflow-hidden bg-zinc-900 shrink-0 border border-white/10">
+              {upNextThumb && (
+                <img
+                  src={upNextThumb}
+                  alt={upNextVideo.title || 'รายการถัดไป'}
+                  className="w-full h-full object-cover"
+                />
               )}
-              {isMobileView && <ChevronRight className="w-3.5 h-3.5 text-zinc-400 shrink-0" />}
+              {upNextMature && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                  <LockKeyhole className="w-3.5 h-3.5 text-[#FF9A40]" />
+                </div>
+              )}
+              {upNextVideo.duration > 0 && (
+                <span className="absolute right-1 bottom-1 px-1 py-0.2 bg-black/85 text-white font-mono font-semibold text-[9px] sm:text-[10px] rounded leading-tight">
+                  {upNextDuration}
+                </span>
+              )}
             </div>
-            {isMobileView && (
-              <span className="text-[10px] sm:text-[11px] text-zinc-400 truncate select-none">
-                {channelName || 'TubeLock'} • Cloud Stream
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-[10px] sm:text-[11px] text-zinc-400 font-normal leading-tight">
+                รายการถัดไป
               </span>
-            )}
+              <span className="text-xs sm:text-sm text-white font-bold truncate leading-snug mt-0.5">
+                {upNextVideo.title}
+              </span>
+              <span className="text-[10px] sm:text-xs text-zinc-400 truncate leading-tight mt-0.5">
+                {upNextVideo.author_name || 'TubeLock'}
+              </span>
+            </div>
+          </button>
+        ) : (
+          <div className="flex items-center gap-2 max-w-[75%] min-w-0">
+            <div className="flex flex-col min-w-0 text-left">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-white text-xs sm:text-base font-medium truncate drop-shadow-sm select-none">
+                  {title || 'วิดีโอ TubeLock'}
+                </span>
+                {hasMultipleVersions && activeVersion && (
+                  <button
+                    type="button"
+                    data-settings-btn="true"
+                    onClick={() => {
+                      setSettingsPlacement?.(isMobileView ? 'top' : 'bottom');
+                      setActiveMenuTab?.('version');
+                      setShowSettingsMenu?.(true);
+                      resetControlsTimer?.();
+                    }}
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#FF7A00]/20 hover:bg-[#FF7A00]/35 border border-[#FF7A00]/45 text-[#FFB36B] text-[10px] sm:text-[11px] font-bold tracking-wide transition cursor-pointer"
+                    title="สลับเวอร์ชันวิดีโอ"
+                  >
+                    <Layers className="w-3 h-3 shrink-0" />
+                    <span className="truncate max-w-[110px]">
+                      {activeVersion.badge || activeVersion.label}
+                    </span>
+                  </button>
+                )}
+                {isMobileView && <ChevronRight className="w-3.5 h-3.5 text-zinc-400 shrink-0" />}
+              </div>
+              {isMobileView && (
+                <span className="text-[10px] sm:text-[11px] text-zinc-400 truncate select-none">
+                  {channelName || 'TubeLock'} • Cloud Stream
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )
       ) : isMobileView && onBack ? (
         <button
           type="button"
