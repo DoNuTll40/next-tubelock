@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import Link from 'next/link';
 import { Play, RotateCcw, Loader2, LockKeyhole, X } from 'lucide-react';
 import { encodeVideoSlug, getVideoResumeTime, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
-import { rankRelatedVideos } from '@/lib/recommendationEngine';
 import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { useSession } from '@/context/SessionContext';
@@ -70,7 +69,21 @@ export function formatThaiTimeAgo(dateInput) {
  * YouTube-style Dynamic Recommendation Scorer & Weighted Sampler
  */
 export function getDynamicRecommendations(currentVideo, allVideos = [], count = 3) {
-  return rankRelatedVideos(currentVideo, allVideos, { limit: count, seed: 7 });
+  if (!Array.isArray(allVideos) || allVideos.length === 0) return [];
+  const curId = currentVideo?.id ? String(currentVideo.id) : null;
+  const seen = new Set();
+  const filtered = [];
+  for (let i = 0; i < allVideos.length; i++) {
+    const v = allVideos[i];
+    if (!v || !v.id) continue;
+    const id = String(v.id);
+    if (curId && id === curId) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    filtered.push(v);
+    if (filtered.length >= count) break;
+  }
+  return filtered;
 }
 
 /**
@@ -295,7 +308,7 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
 
   return (
     <div
-      className={`absolute inset-0 z-40 flex flex-col justify-between bg-black text-white select-none pointer-events-auto animate-fadeIn ${
+      className={`absolute inset-0 z-40 flex flex-col justify-between bg-[#0F0F0F]/95 backdrop-blur-md text-white select-none pointer-events-auto animate-fadeIn ${
         isFullscreen
           ? 'px-6 sm:px-10 pt-[calc(0.875rem+var(--player-safe-top,0px))] pb-[calc(1rem+var(--player-safe-bottom,0px))]'
           : 'px-3.5 py-2.5'
@@ -304,9 +317,12 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
     >
       {/* Header */}
       <div className="flex items-center justify-between shrink-0">
-        <span className={`font-medium text-white/95 ${isFullscreen ? 'text-sm sm:text-base' : 'text-xs'}`}>
-          วิดีโอแนะนำ
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#FF7A00] shadow-[0_0_8px_#FF7A00]" />
+          <span className={`font-semibold text-white/95 ${isFullscreen ? 'text-sm sm:text-base' : 'text-xs'}`}>
+            วิดีโอแนะนำ
+          </span>
+        </div>
         <button
           type="button"
           onClick={(e) => {
@@ -314,9 +330,9 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
             onDismiss?.();
           }}
           aria-label="ปิดวิดีโอแนะนำ"
-          className="p-1 -mr-1 rounded-full text-white/90 hover:text-white active:bg-white/15 transition cursor-pointer"
+          className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25 border border-white/15 backdrop-blur-md text-white/90 hover:text-white active:scale-90 transition cursor-pointer"
         >
-          <X className={isFullscreen ? 'w-6 h-6' : 'w-5 h-5'} />
+          <X className={isFullscreen ? 'w-5 h-5' : 'w-4 h-4'} />
         </button>
       </div>
 
@@ -404,6 +420,9 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
           onClick={handlePlay}
           className="flex flex-col justify-center min-w-0 flex-1 text-left cursor-pointer"
         >
+          <span className={`font-semibold text-[#FF7A00] ${isFullscreen ? 'text-xs mb-1' : 'text-[10px] mb-0.5'}`}>
+            รายการถัดไป
+          </span>
           <h4 className={`text-white font-bold leading-snug ${isFullscreen ? 'text-base sm:text-xl line-clamp-3' : 'text-[13px] line-clamp-2'}`}>
             {v.title}
           </h4>
@@ -421,7 +440,7 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
             e.stopPropagation();
             onDismiss?.();
           }}
-          className={`rounded-full bg-[#272727] hover:bg-[#383838] active:bg-[#444444] active:scale-[0.98] text-white font-semibold flex items-center justify-center transition cursor-pointer ${
+          className={`rounded-full bg-white/10 hover:bg-white/15 active:bg-white/20 border border-white/15 backdrop-blur-md active:scale-[0.98] text-white/95 font-semibold flex items-center justify-center transition cursor-pointer ${
             isFullscreen ? 'h-10 sm:h-11 text-xs sm:text-sm' : 'h-8.5 text-xs'
           }`}
         >
@@ -431,11 +450,12 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
         <Link
           href={watchUrl}
           onClick={handlePlay}
-          className={`rounded-full bg-white hover:bg-zinc-200 active:bg-zinc-300 active:scale-[0.98] text-[#0F0F0F] font-bold flex items-center justify-center transition cursor-pointer ${
+          className={`rounded-full bg-[#FF7A00] hover:bg-[#FF8C1A] active:bg-[#E56E00] border border-[#FF9A40]/40 active:scale-[0.98] text-white font-bold flex items-center justify-center gap-1.5 shadow-[0_4px_20px_rgba(255,122,0,0.35)] transition cursor-pointer ${
             isFullscreen ? 'h-10 sm:h-11 text-xs sm:text-sm' : 'h-8.5 text-xs'
           }`}
         >
-          เล่นเลย
+          <Play className={isFullscreen ? 'w-4 h-4 fill-white text-white' : 'w-3.5 h-3.5 fill-white text-white'} />
+          <span>เล่นเลย</span>
         </Link>
       </div>
     </div>

@@ -74,14 +74,14 @@ export default function PlayerCenterControls({
         ) : (
           showControls && !doubleTapSide && (
             isMobileView && isEnded ? (
-              <div className="flex items-center gap-7 sm:gap-14 [&_button]:pointer-events-auto select-none [animation:fadein_0.15s_ease-out]">
+              <div className="flex items-center gap-6 sm:gap-14 [&_button]:pointer-events-auto select-none [animation:fadein_0.15s_ease-out]">
                 <button
                   type="button"
                   disabled
                   aria-label="วิดีโอก่อนหน้า"
-                  className="w-12 h-12 sm:w-14 sm:h-14 rounded-full text-white/35 flex items-center justify-center cursor-default"
+                  className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/40 border border-white/10 text-white/35 flex items-center justify-center shadow-2xl cursor-default"
                 >
-                  <SkipBack className="w-6 h-6 sm:w-7 sm:h-7 fill-current" />
+                  <SkipBack className="w-5.5 h-5.5 fill-current" />
                 </button>
 
                 <button
@@ -91,9 +91,9 @@ export default function PlayerCenterControls({
                     e.stopPropagation();
                     togglePlay();
                   }}
-                  className="w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-black/45 active:bg-white/20 active:scale-90 text-white flex items-center justify-center transition-[transform,background-color] duration-100 cursor-pointer"
+                  className="w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-black/50 active:bg-[#FF7A00] active:scale-90 border border-white/20 text-white flex items-center justify-center transition-[transform,background-color] duration-100 shadow-[0_8px_32px_rgba(0,0,0,0.7)] cursor-pointer"
                 >
-                  <RotateCcw className="w-8 h-8 sm:w-9 sm:h-9 text-white" />
+                  <RotateCcw className="w-7 h-7 sm:w-8 sm:h-8 text-white" />
                 </button>
 
                 <button
@@ -104,11 +104,11 @@ export default function PlayerCenterControls({
                     e.stopPropagation();
                     onPlayNext?.();
                   }}
-                  className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center transition active:scale-90 ${
-                    onPlayNext ? 'text-white active:bg-white/15 cursor-pointer' : 'text-white/35 cursor-default'
+                  className={`w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/50 border border-white/15 flex items-center justify-center transition-[transform,background-color] duration-100 shadow-2xl ${
+                    onPlayNext ? 'text-white active:bg-[#FF7A00] active:scale-90 cursor-pointer' : 'text-white/35 cursor-default'
                   }`}
                 >
-                  <SkipForward className="w-6 h-6 sm:w-7 sm:h-7 fill-current" />
+                  <SkipForward className="w-5.5 h-5.5 fill-current" />
                 </button>
               </div>
             ) : !isEnded ? (

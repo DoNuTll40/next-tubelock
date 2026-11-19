@@ -62,7 +62,7 @@ export default function PlayerTopBar({
               e.stopPropagation();
               onSelectVideo?.(upNextVideo, 0);
             }}
-            className="flex items-center gap-2.5 p-1.5 pr-3.5 rounded-xl bg-black/75 hover:bg-black/85 border border-white/20 backdrop-blur-md max-w-[68%] sm:max-w-[360px] text-left transition active:scale-[0.98] cursor-pointer shadow-lg"
+            className="flex items-center gap-2.5 p-1.5 pr-3.5 rounded-xl bg-[#141414]/80 hover:bg-[#1f1f1f]/90 border border-white/15 backdrop-blur-md max-w-[68%] sm:max-w-[360px] text-left transition active:scale-[0.98] cursor-pointer shadow-lg"
           >
             <div className="relative w-20 sm:w-24 aspect-video rounded-lg overflow-hidden bg-zinc-900 shrink-0 border border-white/10">
               {upNextThumb && (
@@ -84,7 +84,7 @@ export default function PlayerTopBar({
               )}
             </div>
             <div className="flex flex-col min-w-0 flex-1">
-              <span className="text-[10px] sm:text-[11px] text-zinc-400 font-normal leading-tight">
+              <span className="text-[10px] sm:text-[11px] text-[#FF7A00] font-semibold leading-tight">
                 รายการถัดไป
               </span>
               <span className="text-xs sm:text-sm text-white font-bold truncate leading-snug mt-0.5">
