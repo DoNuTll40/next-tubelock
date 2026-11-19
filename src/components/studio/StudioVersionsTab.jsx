@@ -44,6 +44,14 @@ const VERSION_PRESETS = [
     description: 'เวอร์ชันปรับปรุงความคมชัดด้วย AI',
   },
   {
+    id: 'remove-mosaics',
+    name: 'Remove Mosaics',
+    label: 'Remove Mosaics',
+    badge: 'UNCEN',
+    aspectLabel: '',
+    description: 'เวอร์ชัน AI ลบโมเสก / คืนรายละเอียดภาพ',
+  },
+  {
     id: 'uncut',
     name: 'Uncut',
     label: 'Uncut / Extended',

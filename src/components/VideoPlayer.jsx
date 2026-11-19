@@ -2679,8 +2679,6 @@ export default function VideoPlayer({
         setSettingsPlacement={setSettingsPlacement}
         setActiveMenuTab={setActiveMenuTab}
         activeLevelLabel={activeLevelLabel}
-        versions={versions}
-        activeVersion={activeVersion}
         togglePiP={togglePiP}
         aspectMode={aspectMode}
         cycleAspectMode={cycleAspectMode}
