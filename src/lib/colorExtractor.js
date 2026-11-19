@@ -115,16 +115,37 @@ export function extractDominantColor(imgElement) {
     const hsl = rgbToHsl(targetR, targetG, targetB);
     const isLowSat = hsl.s < 10;
 
-    // Dark Mode: ใช้ค่า Hue ของวิดีโอคู่กับความสว่าง 60-65% และ Alpha 0.16
+    // Dark Mode: ใช้ค่า Hue ของวิดีโอคู่กับความสว่าง 60-65% และ Alpha 0.22
     // ทำให้สีโปร่งแสง ไม่ทับพื้นหลังทึบ แต่แสดงเฉดสีของคลิปนั้นอย่างมีมิติ
+    const satBg = Math.max(45, Math.min(hsl.s, 85));
     const darkAlphaBg = isLowSat
       ? 'rgba(255, 255, 255, 0.08)'
-      : `hsla(${hsl.h}, ${Math.max(45, Math.min(hsl.s, 85))}%, 62%, 0.22)`;
+      : `hsla(${hsl.h}, ${satBg}%, 62%, 0.22)`;
 
     // Light Mode: ใช้ค่า Hue ของวิดีโอคู่กับ Alpha 0.09 ให้สีพาสเทลโปร่งแสงนุ่มนวล
     const lightAlphaBg = isLowSat
       ? 'rgba(0, 0, 0, 0.05)'
-      : `hsla(${hsl.h}, ${Math.max(45, Math.min(hsl.s, 85))}%, 38%, 0.09)`;
+      : `hsla(${hsl.h}, ${satBg}%, 38%, 0.09)`;
+
+    // Playlist Panel Header wash, Accent & Border (derived from the exact same hue)
+    const headerDarkBg = isLowSat
+      ? 'rgba(255, 255, 255, 0.035)'
+      : `hsla(${hsl.h}, ${satBg}%, 62%, 0.11)`;
+    const headerLightBg = isLowSat
+      ? 'rgba(0, 0, 0, 0.025)'
+      : `hsla(${hsl.h}, ${satBg}%, 38%, 0.05)`;
+    const accentDark = isLowSat
+      ? '#F1F1F1'
+      : `hsl(${hsl.h}, ${Math.max(55, Math.min(hsl.s, 90))}%, 68%)`;
+    const accentLight = isLowSat
+      ? '#212529'
+      : `hsl(${hsl.h}, ${Math.max(55, Math.min(hsl.s, 88))}%, 42%)`;
+    const borderDark = isLowSat
+      ? 'rgba(255, 255, 255, 0.14)'
+      : `hsla(${hsl.h}, ${satBg}%, 62%, 0.28)`;
+    const borderLight = isLowSat
+      ? 'rgba(0, 0, 0, 0.10)'
+      : `hsla(${hsl.h}, ${satBg}%, 38%, 0.20)`;
 
     // Stacked Playlist Layers (YouTube-style 2-layer cover-tinted bars above playlist thumbnails)
     const stackSatDark = isLowSat ? 0 : Math.min(Math.max(Math.round(hsl.s * 0.48), 16), 44);
@@ -143,6 +164,12 @@ export function extractDominantColor(imgElement) {
       lightBg: lightAlphaBg,
       darkAlphaBg,
       lightAlphaBg,
+      headerDarkBg,
+      headerLightBg,
+      accentDark,
+      accentLight,
+      borderDark,
+      borderLight,
       rgbaDark: `rgba(${targetR}, ${targetG}, ${targetB}, 0.22)`,
       rgbaLight: `rgba(${targetR}, ${targetG}, ${targetB}, 0.09)`,
       stackTopDark,

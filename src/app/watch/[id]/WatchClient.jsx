@@ -364,12 +364,13 @@ export default function WatchClient({
         </div>
 
         {/* Right / Sidebar: Related Videos Column */}
-        <div className="w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pt-2 lg:pt-0 pb-10">
+        <div className={`w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pt-2 lg:pt-0 ${playlistState ? 'pb-24 lg:pb-10' : 'pb-10'}`}>
           {playlistState && (
             <WatchPlaylistPanel
               key={playlistState.listKey}
               state={playlistState}
               nextVideo={playlistNextVideo}
+              playerHeight={playerHeight}
               onSelect={selectPlaylistVideo}
               onToggleShuffle={togglePlaylistShuffle}
               onCycleLoop={cyclePlaylistLoop}
@@ -427,29 +428,19 @@ export default function WatchClient({
             </div>
           ) : isDesktopLg === false ? (
             <div className="isolate grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filteredRelated.map((item, idx) => (
-                <div
-                  key={`mob-${item.id}`}
-                  style={idx >= 4 ? { contentVisibility: 'auto', containIntrinsicSize: '0 260px' } : undefined}
-                >
-                  <VideoCard video={item} replace={true} compact={false} />
-                </div>
+              {filteredRelated.map((item) => (
+                <VideoCard key={`mob-${item.id}`} video={item} replace={true} compact={false} />
               ))}
             </div>
           ) : (
             <div className={`isolate ${isDesktopLg === null ? 'hidden lg:flex' : 'flex'} flex-col gap-2.5`}>
-              {filteredRelated.map((item, idx) => (
-                <div
-                  key={`desk-wrap-${item.id}`}
-                  style={idx >= 4 ? { contentVisibility: 'auto', containIntrinsicSize: '0 116px' } : undefined}
-                >
-                  <VideoCard
-                    key={`desk-${item.id}`}
-                    video={item}
-                    replace={true}
-                    half={true}
-                  />
-                </div>
+              {filteredRelated.map((item) => (
+                <VideoCard
+                  key={`desk-${item.id}`}
+                  video={item}
+                  replace={true}
+                  half={true}
+                />
               ))}
             </div>
           )}

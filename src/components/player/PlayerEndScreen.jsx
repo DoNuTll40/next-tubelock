@@ -471,6 +471,308 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
   );
 }
 
+/**
+ * DesktopCountdownEndScreen: YouTube Desktop-style single focused "Up Next" countdown card
+ * with continuous SVG circular progress ring, cover-extracted ambient glow & TubeLock pill controls.
+ * Clicking "ยกเลิก" smoothly transitions to the standard 3-card recommendation end screen.
+ */
+function DesktopCountdownEndScreen({
+  video: v,
+  seconds,
+  isFullscreen = false,
+  onPreWarm,
+  onPlayNext,
+  onCancel,
+  onReplay = null,
+}) {
+  const [dominantColor, setDominantColor] = useState(null);
+  const [failedCorsSrc, setFailedCorsSrc] = useState(null);
+  const imgRef = useRef(null);
+
+  const durationStr = formatBadgeDuration(v.duration);
+  const viewsStr = formatThaiViews(v.views_count);
+  const timeAgoStr = formatThaiTimeAgo(v.created_at);
+  const isMature = isMatureVideo(v);
+  const isLoggedIn = Boolean(useSession());
+  const showAdultPoster = usePosterPreference(isMature);
+  const { poster, revealPoster } = usePosterReveal(isMature ? v.id : null, !showAdultPoster);
+  const showRestriction = isMature && !showAdultPoster && poster?.status !== 'ready';
+  const canRevealPoster = showRestriction && isLoggedIn;
+  const { progressPct } = useVideoWatchProgress(v);
+  const thumbnail = isMature
+    ? (showAdultPoster ? `/api/videos/${v.id}/poster` : poster?.url || RESTRICTED_POSTER)
+    : v.thumbnail_url || (v.id ? `/streams/stream_vid_${v.id}/poster.jpg` : null);
+  const canSample = Boolean(!isMature && thumbnail && failedCorsSrc !== thumbnail);
+
+  useEffect(() => {
+    if (v?.id) onPreWarm?.(v.id);
+  }, [v?.id, onPreWarm]);
+
+  const sampleFromElement = useCallback((el) => {
+    if (!el || !el.complete || !el.naturalWidth) return;
+    const color = extractDominantColor(el);
+    if (color) setDominantColor(color);
+  }, []);
+
+  useEffect(() => {
+    if (!canSample) return;
+    const raf = requestAnimationFrame(() => sampleFromElement(imgRef.current));
+    return () => cancelAnimationFrame(raf);
+  }, [canSample, thumbnail, sampleFromElement]);
+
+  const accentColor = !isMature && dominantColor?.accentDark
+    ? dominantColor.accentDark
+    : '#FF9E40';
+  const ambientGlow = !isMature && dominantColor?.darkBg
+    ? dominantColor.darkBg
+    : 'hsla(28, 85%, 58%, 0.18)';
+  const ringBorder = !isMature && dominantColor?.borderDark
+    ? dominantColor.borderDark
+    : 'rgba(255, 255, 255, 0.16)';
+
+  return (
+    <div
+      className={`absolute inset-0 z-20 flex flex-col items-center justify-center overflow-hidden bg-[#0B0B0B]/95 text-white backdrop-blur-md select-none pointer-events-auto animate-fadeIn ${
+        isFullscreen ? 'px-8 pt-10 pb-24' : 'px-6 pt-5 pb-16'
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Cover-extracted ambient radial glow */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+        style={{
+          background: `radial-gradient(ellipse 68% 58% at 50% 45%, ${ambientGlow}, transparent 76%)`,
+        }}
+      />
+
+      <div
+        className={`relative z-10 flex w-full flex-col items-center text-center ${
+          isFullscreen ? 'max-w-[480px] xl:max-w-[540px]' : 'max-w-[332px] md:max-w-[368px]'
+        }`}
+      >
+        {/* Top Countdown Status */}
+        <div className={`flex items-center gap-2 ${isFullscreen ? 'mb-3.5 text-sm sm:text-base' : 'mb-2.5 text-xs sm:text-[13px]'}`}>
+          <span
+            className="size-2 rounded-full animate-pulse"
+            style={{ backgroundColor: accentColor, boxShadow: `0 0 10px ${accentColor}` }}
+          />
+          <span className="font-medium text-white/85">
+            รายการถัดไปใน{' '}
+            <span className="font-bold tabular-nums" style={{ color: accentColor }}>
+              {seconds}
+            </span>{' '}
+            วินาที
+          </span>
+        </div>
+
+        {/* Hero 16:9 Thumbnail + Continuous SVG Countdown Ring */}
+        <div
+          className="group/next relative aspect-video w-full overflow-hidden rounded-2xl bg-zinc-900 shadow-[0_24px_64px_rgba(0,0,0,0.65)] transition-shadow duration-300"
+          style={{ boxShadow: `0 22px 60px rgba(0, 0, 0, 0.65), 0 0 0 1px ${ringBorder}` }}
+        >
+          {!canRevealPoster && (
+            <button
+              type="button"
+              onClick={onPlayNext}
+              aria-label={`เล่น ${v.title || 'รายการถัดไป'} ทันที`}
+              className="absolute inset-0 z-10 cursor-pointer rounded-2xl focus-visible:outline-2 focus-visible:outline-[#FF7A00]"
+            />
+          )}
+
+          {thumbnail ? (
+            <img
+              ref={imgRef}
+              key={canSample ? `sample-${thumbnail}` : `display-${thumbnail}`}
+              src={thumbnail}
+              alt={v.title || 'Next video'}
+              crossOrigin={canSample ? 'anonymous' : undefined}
+              onLoad={canSample ? (e) => sampleFromElement(e.currentTarget) : undefined}
+              onError={canSample ? () => setFailedCorsSrc(thumbnail) : undefined}
+              className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover/next:scale-[1.03]"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-zinc-800 text-zinc-500">
+              <Play className="size-10 fill-zinc-600 opacity-60" />
+            </div>
+          )}
+
+          {/* Subtle center vignette + SVG Countdown Play Medallion */}
+          {!showRestriction && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 transition-colors duration-300 group-hover/next:bg-black/25">
+              <div
+                className={`relative grid place-items-center rounded-full bg-black/60 backdrop-blur-md shadow-2xl transition-transform duration-200 group-hover/next:scale-110 group-active/next:scale-95 ${
+                  isFullscreen ? 'size-20' : 'size-16'
+                }`}
+              >
+                <svg
+                  viewBox="0 0 64 64"
+                  aria-hidden="true"
+                  className="absolute inset-0 size-full -rotate-90"
+                >
+                  <circle
+                    cx="32"
+                    cy="32"
+                    r="28"
+                    fill="none"
+                    stroke="rgba(255, 255, 255, 0.2)"
+                    strokeWidth="3.2"
+                  />
+                  <circle
+                    cx="32"
+                    cy="32"
+                    r="28"
+                    fill="none"
+                    stroke={accentColor}
+                    strokeWidth="3.2"
+                    strokeLinecap="round"
+                    className="animate-endscreen-countdown"
+                    style={{
+                      animationDuration: `${PLAYLIST_COUNTDOWN_SECONDS}s`,
+                      filter: `drop-shadow(0 0 6px ${accentColor})`,
+                    }}
+                  />
+                </svg>
+                <Play
+                  className={`translate-x-0.5 fill-white text-white ${isFullscreen ? 'size-8' : 'size-6'}`}
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+          )}
+
+          {showRestriction && (isLoggedIn ? (
+            <button
+              type="button"
+              disabled={poster?.status === 'loading'}
+              aria-busy={poster?.status === 'loading'}
+              onClick={() => void revealPoster(poster?.status === 'failed')}
+              className="absolute inset-0 z-20 flex cursor-pointer flex-col items-center justify-center gap-1.5 text-white disabled:cursor-wait focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-[#FF7A00]"
+            >
+              <span className="flex items-center gap-1 text-xs font-semibold">
+                <LockKeyhole aria-hidden="true" className="size-3.5 text-[#FF9A40]" />
+                เนื้อหาจำกัดอายุ 18+
+              </span>
+              <span aria-live="polite" className="inline-flex items-center gap-1.5 rounded-full border border-[#FF7A00]/35 bg-[#21160f] px-3 py-1 text-[11px] font-medium">
+                {poster?.status === 'loading' ? (
+                  <><Loader2 aria-hidden="true" className="size-3 animate-spin" />กำลังโหลดภาพปก</>
+                ) : poster?.status === 'failed' ? 'ลองโหลดภาพปกอีกครั้ง' : 'แสดงภาพปก'}
+              </span>
+            </button>
+          ) : (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center text-white"
+            >
+              <span className="flex items-center gap-1 text-xs font-semibold">
+                <LockKeyhole aria-hidden="true" className="size-3.5 text-[#FF9A40]" />
+                เนื้อหาจำกัดอายุ 18+
+              </span>
+            </div>
+          ))}
+
+          {progressPct > 0 && (
+            <div
+              role="progressbar"
+              aria-label="ความคืบหน้าการรับชม"
+              aria-valuenow={Math.round(progressPct)}
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/40"
+            >
+              <div className="h-full bg-[#FF7A00]" style={{ width: `${progressPct}%` }} />
+            </div>
+          )}
+
+          {v.duration > 0 && (
+            <div
+              className={`pointer-events-none absolute rounded bg-black/85 font-mono font-semibold text-white shadow-md backdrop-blur-xs ${
+                isFullscreen ? 'right-2.5 bottom-2.5 px-2 py-0.5 text-xs' : 'right-2 bottom-2 px-1.5 py-0.5 text-[11px]'
+              }`}
+            >
+              {durationStr}
+            </div>
+          )}
+        </div>
+
+        {/* Video Title & Channel Meta */}
+        <button
+          type="button"
+          onClick={onPlayNext}
+          className={`group/title w-full cursor-pointer text-center ${isFullscreen ? 'mt-4' : 'mt-2.5'}`}
+        >
+          <h4
+            className={`line-clamp-2 font-bold leading-snug text-white transition-colors group-hover/title:text-[#FF9E40] ${
+              isFullscreen ? 'text-lg sm:text-xl' : 'text-sm sm:text-[15px]'
+            }`}
+          >
+            {v.title}
+          </h4>
+        </button>
+
+        <div className={`flex max-w-full items-center justify-center gap-1.5 text-zinc-400 ${isFullscreen ? 'mt-2 text-xs sm:text-sm' : 'mt-1 text-[11px] sm:text-xs'}`}>
+          {v.author_picture && (
+            <img
+              src={v.author_picture}
+              alt={v.author_name || 'Channel'}
+              className={`shrink-0 rounded-full object-cover ring-1 ring-white/15 ${isFullscreen ? 'size-5' : 'size-4'}`}
+              referrerPolicy="no-referrer"
+            />
+          )}
+          <span className="truncate font-medium text-zinc-300">{v.author_name || 'TubeLock'}</span>
+          {viewsStr && (
+            <>
+              <span aria-hidden="true">•</span>
+              <span className="shrink-0">{viewsStr}</span>
+            </>
+          )}
+          {timeAgoStr && (
+            <>
+              <span aria-hidden="true">•</span>
+              <span className="shrink-0">{timeAgoStr}</span>
+            </>
+          )}
+        </div>
+
+        {/* Clean Action Pill Row */}
+        <div className={`flex flex-wrap items-center justify-center gap-2.5 ${isFullscreen ? 'mt-5' : 'mt-3.5'}`}>
+          <button
+            type="button"
+            onClick={onCancel}
+            className={`cursor-pointer rounded-full border border-white/15 bg-white/10 font-semibold text-white/95 backdrop-blur-md transition hover:bg-white/20 active:scale-95 ${
+              isFullscreen ? 'h-10 px-5 text-sm' : 'h-9 px-4 text-xs'
+            }`}
+          >
+            ยกเลิก
+          </button>
+
+          <button
+            type="button"
+            onClick={onPlayNext}
+            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[#FF9A40]/40 bg-[#FF7A00] font-bold text-white shadow-[0_4px_20px_rgba(255,122,0,0.35)] transition hover:bg-[#FF8C1A] active:scale-95 ${
+              isFullscreen ? 'h-10 px-6 text-sm' : 'h-9 px-5 text-xs'
+            }`}
+          >
+            <Play className={isFullscreen ? 'size-4 fill-white text-white' : 'size-3.5 fill-white text-white'} aria-hidden="true" />
+            <span>เล่นเลย</span>
+          </button>
+
+          {onReplay && (
+            <button
+              type="button"
+              onClick={onReplay}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-white/10 font-semibold text-white/90 backdrop-blur-md transition hover:bg-white/20 hover:text-white active:scale-95 ${
+                isFullscreen ? 'h-10 px-4 text-sm' : 'h-9 px-3.5 text-xs'
+              }`}
+            >
+              <RotateCcw className={isFullscreen ? 'size-4' : 'size-3.5'} aria-hidden="true" />
+              <span>เล่นซ้ำ</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PlayerEndScreen({
   isVisible = false,
   isFullscreen = false,
@@ -553,6 +855,23 @@ export default function PlayerEndScreen({
     );
   }
 
+  if (showCountdown && playlistNextVideo) {
+    return (
+      <DesktopCountdownEndScreen
+        video={playlistNextVideo}
+        seconds={seconds}
+        isFullscreen={isFullscreen}
+        onPreWarm={handlePreWarm}
+        onPlayNext={playPlaylistNext}
+        onCancel={stopCountdown}
+        onReplay={onReplay ? () => {
+          stopCountdown();
+          onReplay();
+        } : null}
+      />
+    );
+  }
+
   const containerMaxWidth = isFullscreen
     ? 'max-w-[92vw] xl:max-w-[1440px] 2xl:max-w-[1680px]'
     : 'max-w-5xl';
@@ -560,7 +879,7 @@ export default function PlayerEndScreen({
   return (
     <div
       className={`absolute inset-0 z-20 flex flex-col justify-center items-center pointer-events-auto bg-black transition-all duration-300 animate-fadeIn select-none ${isFullscreen
-        ? 'px-4 px-8 pb-20 pt-10'
+        ? 'px-8 pb-20 pt-10'
         : 'px-3 sm:px-6 md:px-8 pb-16 pt-8'
         }`}
       onClick={(e) => {
@@ -582,18 +901,6 @@ export default function PlayerEndScreen({
           >
             <RotateCcw className={isFullscreen ? "w-4 h-4" : "w-3.5 h-3.5"} />
             <span>เล่นซ้ำ</span>
-          </button>
-        </div>
-      )}
-
-      {showCountdown && (
-        <div className="mb-3 flex max-w-full flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-xl border border-white/15 bg-white/10 px-3 py-1.5 text-xs text-white sm:mb-4">
-          <span>กำลังเล่นรายการถัดไปใน <span className="font-semibold tabular-nums text-[#FF9A40]">{seconds}</span> วินาที</span>
-          <button type="button" onClick={stopCountdown} className="cursor-pointer rounded-full px-2.5 py-1 hover:bg-white/15">
-            ยกเลิก
-          </button>
-          <button type="button" onClick={playPlaylistNext} className="cursor-pointer rounded-full bg-[#FF7A00] px-2.5 py-1 font-semibold text-[#212529] hover:bg-[#FF9A40]">
-            เล่นเลย
           </button>
         </div>
       )}
