@@ -17,6 +17,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { neon } from '@neondatabase/serverless';
 import { SUBTITLE_THAI_TRANSLATE_PROMPT } from '../src/lib/subtitlePrompts.js';
+import { getVideoLanguage, normalizeVideoLanguageCode } from '../src/lib/videoLanguages.js';
 import { transcribeAudio, TRANSCRIBE_MODEL } from './gemini-transcribe.js';
 import {
   cuesToSrt,
@@ -32,7 +33,9 @@ import {
 } from './worker-utils.js';
 
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
-const AI_MODEL = 'gemini-3.8-flash';
+const TRANSCRIBE_LLM_MODEL = 'gemini-3.8-flash';
+const TRANSLATE_MODEL = 'gemini-3.8-flash';
+const SOURCE_LANGUAGE_ENV = normalizeVideoLanguageCode(process.env.SOURCE_LANGUAGE || '');
 const CUSTOM_PROMPT = (process.env.CUSTOM_PROMPT || '').trim();
 
 const DATABASE_URL = (process.env.DATABASE_URL || '').trim();
@@ -69,6 +72,7 @@ async function ensureAudioSubtitleColumns() {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_tracks JSONB DEFAULT '[]'::jsonb;`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_model VARCHAR(100) DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_language VARCHAR(20) DEFAULT '';`;
     await ensureWorkerLogsColumn(sql);
   } catch (err) {
     console.warn('[Schema check warning]:', err.message);
@@ -312,29 +316,31 @@ function countScriptChars(text) {
   };
 }
 
-function normalizeModelCandidates(rawModel) {
-  const cleaned = String(rawModel || 'gemini-3.5-flash-lite')
+function normalizeModelCandidates(rawModel, { purpose = 'translate' } = {}) {
+  const cleaned = String(rawModel || (purpose === 'transcribe' ? TRANSCRIBE_LLM_MODEL : TRANSLATE_MODEL))
     .replace(/^models\//i, '')
     .replace(/flesh/gi, 'flash')
     .trim();
 
-  // Prioritize 500-RPD fast tier first; reserve 20-RPD stronger models (2.5-flash / 3-flash / 3.8-flash) strictly for fallback rescues
-  const highQuotaTier = [
-    'gemini-3.5-flash-lite',
-    'gemini-flash-lite-latest',
-    'gemini-3.1-flash-lite',
-  ];
-  const rescueTier = [
-    'gemini-2.5-flash',
-    'gemini-3-flash-preview',
-    'gemini-3.8-flash',
-    'gemini-3.6-flash',
-    'gemini-flash-latest',
-  ];
+  const tierList =
+    purpose === 'transcribe'
+      ? [
+          'gemini-3.8-flash',
+          'gemini-3.5-flash-lite',
+          'gemini-3.5-flash',
+          'gemini-3.1-flash-lite',
+          'gemini-2.5-flash',
+        ]
+      : [
+          'gemini-3.8-flash',
+          'gemini-3.5-flash-lite',
+          'gemini-3.1-flash-lite',
+          'gemini-3.5-flash',
+          'gemini-2.5-flash',
+        ];
+
   const isLegacyOrDeprecated = !cleaned || cleaned === 'gemini-2.5-flash-lite' || cleaned.startsWith('gemini-2.0-');
-  const candidates = isLegacyOrDeprecated
-    ? [...highQuotaTier, ...rescueTier, cleaned]
-    : [cleaned, ...highQuotaTier, ...rescueTier];
+  const candidates = isLegacyOrDeprecated ? [...tierList, cleaned] : [cleaned, ...tierList];
 
   return Array.from(new Set(candidates.filter(Boolean)));
 }
@@ -356,6 +362,10 @@ async function discoverAvailableGeminiModels(excludeSet = new Set()) {
           !name.includes('image') &&
           !name.includes('tts') &&
           !name.includes('live') &&
+          !name.includes('transcribe') &&
+          !name.includes('omni') &&
+          !name.includes('robotics') &&
+          !name.includes('computer-use') &&
           !excludeSet.has(name)
         );
       })
@@ -382,21 +392,31 @@ function parseJsonResponseSafe(rawText) {
   return { rawFallbackText: cleaned };
 }
 
-const GEMINI_REQUEST_TIMEOUT_MS = 95000; // 95s per model attempt so slow fallback thinking never stalls 5–10m silently
-// Leave headroom under the project's 10,000 input tokens per minute.
-const AUDIO_CHUNK_SECONDS = 240;
-const TRANSCRIBE_REQUEST_INTERVAL_MS = 62000;
+const GEMINI_REQUEST_TIMEOUT_MS = 120000;
+const AUDIO_CHUNK_SECONDS = 180; // 3-minute chunks for tight timestamps + high parallel throughput
+const TRANSCRIBE_CONCURRENCY = 5;
+const TRANSLATE_CONCURRENCY = 4;
+// Safety-fallback ASR (gemini-3.5-transcribe) is capped at ~10k input TPM on Tier 1; pace from request start when used.
+const TRANSCRIBE_FALLBACK_INTERVAL_MS = 60500;
 
 function buildRequestBodyForModel(rawBodyStr, modelName, allowThinkingTune = true) {
   if (!allowThinkingTune) return rawBodyStr;
   const lower = String(modelName || '').toLowerCase();
-  const isThinkingCapable = (lower.startsWith('gemini-2.5-') || lower.startsWith('gemini-3')) && !lower.includes('lite');
+  const isGemini4 = lower.startsWith('gemini-4-');
+  const isThinkingCapable =
+    isGemini4 || ((lower.startsWith('gemini-2.5-') || lower.startsWith('gemini-3')) && !lower.includes('lite'));
   if (!isThinkingCapable) return rawBodyStr;
 
   try {
     const payload = JSON.parse(rawBodyStr);
     const genCfg = { ...(payload.generationConfig || {}) };
-    if (!genCfg.thinkingConfig) {
+    if (isGemini4) {
+      if (!genCfg.thinkingConfig) {
+        genCfg.thinkingConfig = { thinkingLevel: 'low' };
+      }
+      // Gemini 4 models use server-managed sampling defaults.
+      delete genCfg.temperature;
+    } else if (!genCfg.thinkingConfig) {
       if (lower.startsWith('gemini-2.5-')) {
         genCfg.thinkingConfig = { thinkingBudget: lower.includes('pro') ? 128 : 0 };
       } else {
@@ -411,8 +431,14 @@ function buildRequestBodyForModel(rawBodyStr, modelName, allowThinkingTune = tru
   }
 }
 
-async function callGeminiWithFallback(requestBody, preferredModelName, logger = null, stepLabel = 'Gemini', { validateText = null } = {}) {
-  const candidates = normalizeModelCandidates(preferredModelName);
+async function callGeminiWithFallback(
+  requestBody,
+  preferredModelName,
+  logger = null,
+  stepLabel = 'Gemini',
+  { validateText = null, purpose = 'translate' } = {}
+) {
+  const candidates = normalizeModelCandidates(preferredModelName, { purpose });
   let lastErrorText = '';
   let lastStatus = 0;
   let lastEmptyReason = '';
@@ -628,6 +654,7 @@ async function translateCuesToThaiWithGemini(
   const { text } = await callGeminiWithFallback(
     requestBody, modelName, logger, chunkInfo ? `แปลไทย ${chunkInfo}` : 'แปลไทย',
     {
+      purpose: 'translate',
       validateText: (value) => {
         const byId = readTranslations(value);
         if (!byId) return 'คำแปลมี id ขาด ซ้ำ ข้อความว่าง หรือจำนวนบรรทัดไม่ตรงกับป้ายผู้พูด';
@@ -692,7 +719,7 @@ async function buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDur
 
   const totalChunks = Math.ceil(audioDurationSec / AUDIO_CHUNK_SECONDS);
   await logger.log(
-    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — แบ่งเสียงออกเป็น ${totalChunks} ช่วง (ช่วงละไม่เกิน ${AUDIO_CHUNK_SECONDS / 60} นาที) เพื่อคุมโควตา Gemini`,
+    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — แบ่งเสียงออกเป็น ${totalChunks} ช่วง (ช่วงละไม่เกิน ${AUDIO_CHUNK_SECONDS / 60} นาที • ประมวลผลขนาน ${Math.min(TRANSCRIBE_CONCURRENCY, totalChunks)} ช่วงพร้อมกัน)`,
     { toDb: true }
   );
 
@@ -721,53 +748,235 @@ async function buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDur
   return chunks;
 }
 
-async function splitSubChunkAudio(seekAudioPath, tempDir, startSec, lenSec, labelSlug) {
-  const outPath = path.join(tempDir, `sub_${labelSlug}.mp3`);
-  return sliceAudioToMp3Chunk(seekAudioPath, startSec, lenSec, outPath, { logIntervalMs: 10000 });
+async function runWithConcurrency(items, concurrency, workerFn) {
+  const results = new Array(items.length);
+  const limit = Math.max(1, Math.min(concurrency, items.length || 1));
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: limit }, async () => {
+      while (true) {
+        const index = cursor++;
+        if (index >= items.length) break;
+        results[index] = await workerFn(items[index], index);
+      }
+    })
+  );
+  return results;
 }
 
-async function detectSubtitleLanguage(audioPath, seekAudioPath, tempDir, duration, modelName, logger) {
-  const parts = [];
-  const sampleLength = 20;
-  if (duration > sampleLength * 3) {
-    for (const [index, fraction] of [0.15, 0.5, 0.85].entries()) {
-      const samplePath = await splitSubChunkAudio(
-        seekAudioPath, tempDir, Math.min(duration - sampleLength, duration * fraction),
-        sampleLength, `language_${index}`
-      );
-      try {
-        parts.push({ inlineData: { mimeType: 'audio/mp3', data: (await fs.promises.readFile(samplePath)).toString('base64') } });
-      } finally {
-        await fs.promises.rm(samplePath, { force: true });
+function stripSpeakerTags(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(SOURCE_SPEAKER_PREFIX, '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function localizeThaiSpeakerTags(text) {
+  return applyOriginalSpeakerLabels(text, text) || stripSpeakerTags(text);
+}
+
+function parseAndValidateLlmChunkCues(rawText, chunk, sourceLangMeta) {
+  const parsed = parseJsonResponseSafe(rawText);
+  if (!parsed || !Array.isArray(parsed.cues)) {
+    return { error: 'โครงสร้าง JSON cues ไม่ถูกต้อง' };
+  }
+
+  const chunkDurationSec = Math.max(0.5, Number(chunk.endSec - chunk.startSec) || AUDIO_CHUNK_SECONDS);
+  const offsetMs = Math.round(chunk.startSec * 1000);
+  const maxChunkMs = Math.round(chunkDurationSec * 1000);
+  const rawCues = [];
+
+  for (const item of parsed.cues) {
+    if (!item || typeof item !== 'object') continue;
+    const rawStart = Number(item.start_sec);
+    const rawEnd = Number(item.end_sec);
+    const cleanBody = sanitizeCueText(String(item.text || '').replace(/\s*\n+\s*/g, ' ').trim());
+    if (!cleanBody) continue;
+    if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) continue;
+    if (rawStart < -0.5 || rawStart > chunkDurationSec + 1.5) continue;
+
+    const clampedStartMs = Math.max(0, Math.min(maxChunkMs - 50, Math.round(rawStart * 1000)));
+    const clampedEndMs = Math.min(maxChunkMs, Math.max(clampedStartMs + 150, Math.round(rawEnd * 1000)));
+    const speakerRaw = String(item.speaker || '').trim().toUpperCase();
+    const validSpeaker = /^(M[12]?|F[12]?)$/.test(speakerRaw) ? speakerRaw : '';
+    const textWithSpeaker =
+      validSpeaker && !SOURCE_SPEAKER_PREFIX.test(cleanBody)
+        ? `[${validSpeaker}] ${cleanBody}`
+        : cleanBody;
+
+    rawCues.push({
+      startMs: offsetMs + clampedStartMs,
+      endMs: offsetMs + clampedEndMs,
+      text: textWithSpeaker,
+    });
+  }
+
+  rawCues.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+  const cues = [];
+  for (const cue of rawCues) {
+    const prev = cues[cues.length - 1];
+    if (prev && cue.startMs < prev.endMs) {
+      if (cue.startMs > prev.startMs + 120) {
+        prev.endMs = cue.startMs;
+      } else {
+        cue.startMs = prev.endMs;
+        cue.endMs = Math.max(cue.startMs + 150, cue.endMs);
       }
     }
-  } else {
-    parts.push({ inlineData: { mimeType: 'audio/mp3', data: (await fs.promises.readFile(audioPath)).toString('base64') } });
+    cues.push(cue);
   }
-  parts.push({ text: 'Listen to the speech in these audio samples. Identify the primary spoken language. Ignore music, names, and incidental words. Do not transcribe or translate. Return only a JSON object with the keys language_code (BCP 47) and language_name. Use "und" if speech cannot be identified.' });
-  const readLanguage = (text) => {
-    const result = parseJsonResponseSafe(text);
-    const code = String(result?.language_code || '').trim();
-    const name = String(result?.language_name || '').trim();
-    if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(code) || /^und$/i.test(code) || !name) return null;
-    return { code, name, isThai: /^th(?:-|$)/i.test(code) };
+
+  // Script sanity guard when user explicitly locked the source spoken language
+  if (sourceLangMeta && cues.length > 0) {
+    const sampleText = cues.map((c) => stripSpeakerTags(c.text)).join(' ');
+    const sc = countScriptChars(sampleText);
+    const nonLatinForeign = sc.cjkCount + sc.kanaCount + sc.hangulCount;
+
+    if (sourceLangMeta.isThai) {
+      if (nonLatinForeign >= 8 && sc.thaiCount === 0) {
+        return { error: 'ผลถอดเสียงเป็นภาษาต่างประเทศทั้งที่ตั้งค่าภาษาไทย' };
+      }
+    } else if (sc.thaiCount >= 10 && sc.foreignTotal <= Math.floor(sc.thaiCount * 0.25)) {
+      return { error: `ผลถอดเสียงถูกแปลเป็นภาษาไทยแทนที่จะถอดเป็น${sourceLangMeta.shortLabel}` };
+    }
+  }
+
+  const detectedCode = normalizeVideoLanguageCode(parsed.detected_lang_code || '');
+  const detectedName = String(parsed.detected_lang_name || '').trim();
+  return { cues, detectedCode, detectedName };
+}
+
+async function transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt, logger) {
+  const chunkDurationSec = Number(Math.max(1, chunk.endSec - chunk.startSec).toFixed(2));
+  const range = `${chunk.index}/${chunk.total} (${formatDurationShort(chunk.startSec)}–${formatDurationShort(chunk.endSec)})`;
+  const audioBuffer = await fs.promises.readFile(chunk.path);
+  const base64Audio = audioBuffer.toString('base64');
+
+  const languageInstruction = sourceLangMeta
+    ? [
+        `The primary spoken language in this audio is ${sourceLangMeta.englishName} (${sourceLangMeta.label}, code: "${sourceLangMeta.code}").`,
+        `Transcribe ONLY actual spoken dialogue verbatim in ${sourceLangMeta.englishName} using its native script.`,
+        'Do NOT translate into any other language.',
+      ].join(' ')
+    : [
+        'Identify the primary spoken language in this audio (set detected_lang_code as BCP-47 like "th", "ja", "en", "zh", "ko" and detected_lang_name).',
+        'Transcribe ONLY actual spoken dialogue verbatim in its original spoken language and native script. Do NOT translate.',
+      ].join(' ');
+
+  const prompt = [
+    'You are a precision speech-to-subtitle transcription engine for video closed captions.',
+    languageInstruction,
+    `This audio clip is ${chunkDurationSec} seconds long (timestamps MUST be relative to this clip: 0.0 to ${chunkDurationSec}).`,
+    'Rules:',
+    '- Return JSON matching the schema with a "cues" array.',
+    '- Do NOT hallucinate or invent words during silence, music, moaning, breathing, or background noise. If there is no clear spoken dialogue, return {"cues": []}.',
+    '- Split speech into concise subtitle cues of 1 to 5 seconds each (around 15–55 characters max per cue) with accurate start_sec and end_sec.',
+    '- Timestamps must be strictly chronological with end_sec > start_sec and never exceed clip duration.',
+    '- Set "speaker" to "M" (male), "F" (female), "M1"/"M2"/"F1"/"F2" when clearly distinguishable by voice, otherwise "".',
+    customPrompt ? `Additional user instructions:\n${customPrompt}` : '',
+  ].filter(Boolean).join('\n');
+
+  const schemaProps = {
+    cues: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          start_sec: { type: 'NUMBER' },
+          end_sec: { type: 'NUMBER' },
+          speaker: { type: 'STRING' },
+          text: { type: 'STRING' },
+        },
+        required: ['start_sec', 'end_sec', 'text'],
+      },
+    },
   };
-  await logger.log('🔎 กำลังตรวจภาษาพูดจากตัวอย่างเสียงก่อนถอดซับ', { toDb: true });
-  const { text } = await callGeminiWithFallback(JSON.stringify({
-    contents: [{ role: 'user', parts }],
-    generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+  const requiredFields = ['cues'];
+  if (!sourceLangMeta) {
+    schemaProps.detected_lang_code = { type: 'STRING' };
+    schemaProps.detected_lang_name = { type: 'STRING' };
+    requiredFields.push('detected_lang_code', 'detected_lang_name');
+  }
+
+  const requestBody = JSON.stringify({
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'audio/mp3', data: base64Audio } },
+          { text: prompt },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: schemaProps,
+        required: requiredFields,
+      },
+    },
     safetySettings: GEMINI_SAFETY_SETTINGS,
-  }), modelName, logger, 'ตรวจภาษาพูด', {
-    validateText: (value) => readLanguage(value) ? null : 'ระบุภาษาพูดจากตัวอย่างเสียงไม่ได้',
   });
-  const language = readLanguage(text);
-  await logger.log(`✅ ตรวจพบภาษาพูด ${language.name} (${language.code}) — ใช้ภาษานี้ในการถอดซับต้นฉบับ`, { toDb: true });
-  return language;
+
+  const { text, modelUsed } = await callGeminiWithFallback(
+    requestBody,
+    TRANSCRIBE_LLM_MODEL,
+    logger,
+    `ถอดเสียง ${range}`,
+    {
+      purpose: 'transcribe',
+      validateText: (value) => parseAndValidateLlmChunkCues(value, chunk, sourceLangMeta).error || null,
+    }
+  );
+  const validated = parseAndValidateLlmChunkCues(text, chunk, sourceLangMeta);
+  return { ...validated, modelUsed };
+}
+
+function resolveLanguageFromTranscript(allCues, chunkLangVotes, logger) {
+  const plainText = allCues.map((c) => stripSpeakerTags(c.text)).join(' ');
+  const sc = countScriptChars(plainText);
+
+  if (sc.thaiCount >= 6 && sc.thaiCount >= sc.foreignTotal) {
+    return getVideoLanguage('th');
+  }
+  if (sc.kanaCount >= 3) {
+    return getVideoLanguage('ja');
+  }
+  if (sc.hangulCount >= 3) {
+    return getVideoLanguage('ko');
+  }
+  if (sc.cjkCount >= 6 && sc.kanaCount === 0) {
+    return getVideoLanguage('zh');
+  }
+
+  const tally = new Map();
+  for (const code of chunkLangVotes) {
+    if (!code || code === 'none') continue;
+    tally.set(code, (tally.get(code) || 0) + 1);
+  }
+  let topCode = '';
+  let topCount = 0;
+  for (const [code, count] of tally.entries()) {
+    if (count > topCount) {
+      topCode = code;
+      topCount = count;
+    }
+  }
+  const voted = getVideoLanguage(topCode);
+  if (voted && !voted.isNone) return voted;
+
+  if (logger) {
+    void logger.log('⚠️ ไม่พบภาษาตั้งต้นชัดเจน — ใช้ภาษาอังกฤษ (en) เป็นค่าตั้งต้นสำหรับต้นฉบับ', { level: 'warn', toDb: true });
+  }
+  return getVideoLanguage('en');
 }
 
 async function generateSubtitlesWithGemini(
   localAudioPath,
-  modelName,
+  sourceLangMeta,
   customPrompt,
   tempDir,
   audioDurationSec,
@@ -778,67 +987,121 @@ async function generateSubtitlesWithGemini(
   if (!Number.isFinite(audioDurationSec) || audioDurationSec <= 0) throw new Error('Cannot determine audio duration');
   const chunks = await buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger);
 
-  const allOriginalCues = [];
-  let lastTranscribeFinishedAt = -Infinity;
-  const transcriptionRequest = async (url, ...args) => {
+  // Serialized pacing queue for rare safety-blocked chunks that fall back to gemini-3.5-transcribe
+  let fallbackQueue = Promise.resolve();
+  let lastFallbackStartedAt = -Infinity;
+  const fallbackRequest = async (url, ...args) => {
     if (!url.endsWith('/v1beta/interactions')) return fetchWithRetry(url, ...args);
-    const waitMs = TRANSCRIBE_REQUEST_INTERVAL_MS - (performance.now() - lastTranscribeFinishedAt);
+    const waitMs = TRANSCRIBE_FALLBACK_INTERVAL_MS - (performance.now() - lastFallbackStartedAt);
     if (waitMs > 0) {
-      await logger.log(`⏳ เว้น ${Math.ceil(waitMs / 1000)} วินาทีตามโควตาถอดเสียง`);
+      await logger.log(`⏳ เว้น ${Math.ceil(waitMs / 1000)} วินาทีตามโควตา ${TRANSCRIBE_MODEL} (โหมดกู้ช่วงที่ติดบล็อก)`, { toDb: true });
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
-    try {
-      return await fetchWithRetry(url, ...args);
-    } finally {
-      lastTranscribeFinishedAt = performance.now();
-    }
+    lastFallbackStartedAt = performance.now();
+    return fetchWithRetry(url, ...args);
   };
-  for (const chunk of chunks) {
-    const range = `${chunk.index}/${chunk.total} (${formatDurationShort(chunk.startSec)}–${formatDurationShort(chunk.endSec)})`;
-    await logger.log(`[1/2] ${TRANSCRIBE_MODEL} (verbatim): ${range}`, { toDb: true });
-    try {
+  const rescueChunkWithAsr = (chunk, range) => {
+    const run = async () => {
+      await logger.log(
+        `🛡️ [1/2] ช่วง ${range} ติดข้อจำกัดโมเดลหลัก — สลับใช้ ${TRANSCRIBE_MODEL} (ASR) กู้เฉพาะช่วงนี้...`,
+        { level: 'warn', toDb: true }
+      );
       const audio = await fs.promises.readFile(chunk.path);
-      allOriginalCues.push(...await transcribeAudio(
-        audio, Math.round(chunk.startSec * 1000), GEMINI_API_KEY, transcriptionRequest
-      ));
-    } catch (error) {
-      throw new Error(`Transcription failed for audio chunk ${range}: ${error.message}`, { cause: error });
+      const cues = await transcribeAudio(
+        audio,
+        Math.round(chunk.startSec * 1000),
+        GEMINI_API_KEY,
+        fallbackRequest,
+        { languageCode: sourceLangMeta?.bcp47 || '' }
+      );
+      return { cues, detectedCode: sourceLangMeta?.code || '', detectedName: sourceLangMeta?.shortLabel || '', modelUsed: TRANSCRIBE_MODEL };
+    };
+    const next = fallbackQueue.then(run, run);
+    fallbackQueue = next.catch(() => {});
+    return next;
+  };
+
+  let completedChunks = 0;
+  const chunkResults = await runWithConcurrency(chunks, TRANSCRIBE_CONCURRENCY, async (chunk) => {
+    const range = `${chunk.index}/${chunk.total} (${formatDurationShort(chunk.startSec)}–${formatDurationShort(chunk.endSec)})`;
+    await logger.log(
+      `🎙️ [1/2] ${TRANSCRIBE_LLM_MODEL} (${sourceLangMeta ? sourceLangMeta.shortLabel : 'auto'}): ${range}`,
+      { toDb: true }
+    );
+    let result;
+    try {
+      result = await transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt, logger);
+    } catch (llmErr) {
+      // Rescue blocked / failed chunk with dedicated verbatim ASR model
+      try {
+        result = await rescueChunkWithAsr(chunk, range);
+      } catch (asrErr) {
+        throw new Error(
+          `Transcription failed for audio chunk ${range}: LLM(${llmErr.message}) / ASR(${asrErr.message})`,
+          { cause: asrErr }
+        );
+      }
     }
+    completedChunks += 1;
+    await logger.log(
+      `✅ [1/2] ถอดเสียงช่วง ${range} สำเร็จ (${result.cues.length} ประโยค • ${result.modelUsed} • คืบหน้า ${completedChunks}/${chunks.length})`,
+      { toDb: true }
+    );
+    return result;
+  });
+
+  const allOriginalCues = chunkResults.flatMap((r) => r.cues || []);
+  const chunkLangVotes = chunkResults.map((r) => r.detectedCode).filter(Boolean);
+
+  if (!allOriginalCues.length) {
+    throw new Error('ไม่พบเสียงพูดในคลิปสำหรับสร้างซับไตเติล');
   }
 
-  if (!allOriginalCues.length) throw new Error('No speech was transcribed');
-  const dominantLang = await detectSubtitleLanguage(
-    localAudioPath, seekAudioPath, tempDir, audioDurationSec, modelName, logger
+  const dominantLang = sourceLangMeta || resolveLanguageFromTranscript(allOriginalCues, chunkLangVotes, logger);
+  await logger.log(
+    `🗣️ ภาษาต้นฉบับที่ใช้งาน: ${dominantLang.label} (${dominantLang.code}) • ถอดได้ทั้งหมด ${allOriginalCues.length} ประโยค`,
+    { level: 'success', toDb: true }
   );
-  const mergedOriginalSrt = cuesToSrt(allOriginalCues);
 
   if (dominantLang.isThai) {
+    const cleanThaiCues = allOriginalCues.map((cue) => ({
+      ...cue,
+      text: localizeThaiSpeakerTags(cue.text),
+    }));
+    const thaiOriginalSrt = cuesToSrt(cleanThaiCues);
     await logger.log(
-      `🇹🇭 ตรวจพบเสียงพูดภาษาไทยล้วน (${allOriginalCues.length} ประโยค) -> จบที่ 1 ภาษา`,
+      `🇹🇭 เสียงพูดภาษาไทยล้วน (${cleanThaiCues.length} ประโยค) -> จบที่ 1 แทร็กภาษาไทยต้นฉบับ`,
       { level: 'success', toDb: true }
     );
     return {
       isThai: true,
       detectedLangCode: 'th',
       detectedLangName: 'ไทย',
-      originalSrt: mergedOriginalSrt,
-      thaiSrt: mergedOriginalSrt,
-      totalCues: allOriginalCues.length,
+      originalSrt: thaiOriginalSrt,
+      thaiSrt: thaiOriginalSrt,
+      totalCues: cleanThaiCues.length,
+      modelSummary: TRANSCRIBE_LLM_MODEL,
     };
   }
 
-  // Step 2: Non-Thai speech detected -> Translate each chunk cleanly to Thai while preserving exact timestamps
+  // Clean original track (strip internal [M]/[F] hints after using them for Thai translation)
+  const displayOriginalCues = allOriginalCues.map((cue) => ({
+    ...cue,
+    text: stripSpeakerTags(cue.text) || cue.text,
+  }));
+  const mergedOriginalSrt = cuesToSrt(displayOriginalCues);
+
+  // Step 2: Non-Thai speech -> Translate batches in parallel to natural Thai while preserving exact timestamps
   await logger.log(
-    `🌐 [ขั้นที่ 2/2] ตรวจพบภาษา "${dominantLang.name}" (${dominantLang.code}) — เริ่มสร้างแทร็กภาษาไทยจากซับต้นฉบับ ${allOriginalCues.length} ประโยค...`,
+    `🌐 [ขั้นที่ 2/2] เริ่มแปลภาษา "${dominantLang.shortLabel}" (${dominantLang.code}) → ไทย ด้วย ${TRANSLATE_MODEL} (${allOriginalCues.length} ประโยค • ขนาน ${TRANSLATE_CONCURRENCY} ชุด)...`,
     { toDb: true }
   );
 
   const TRANSLATE_BATCH_MAX_CUES = 65;
-  const allThaiCues = [];
   const translateRange = async (start, end, batchLabel, depth = 0) => {
     const batch = allOriginalCues.slice(start, end);
     try {
-      return await translateCuesToThaiWithGemini(batch, dominantLang.name, modelName, customPrompt, {
+      return await translateCuesToThaiWithGemini(batch, dominantLang.shortLabel || dominantLang.englishName, TRANSLATE_MODEL, customPrompt, {
         chunkInfo: batchLabel,
         logger,
         before: allOriginalCues.slice(Math.max(0, start - 2), start).map(({ text }) => text),
@@ -856,22 +1119,39 @@ async function generateSubtitlesWithGemini(
     }
   };
 
+  const batchRanges = [];
   const batchCount = Math.ceil(allOriginalCues.length / TRANSLATE_BATCH_MAX_CUES);
   for (let start = 0; start < allOriginalCues.length; start += TRANSLATE_BATCH_MAX_CUES) {
     const end = Math.min(start + TRANSLATE_BATCH_MAX_CUES, allOriginalCues.length);
-    const label = `ชุด ${Math.floor(start / TRANSLATE_BATCH_MAX_CUES) + 1}/${batchCount} (คิว ${start + 1}–${end})`;
-    await logger.log(`🌐 [ขั้นที่ 2/2] กำลังแปล ${label} → ไทย`, { toDb: true });
-    allThaiCues.push(...await translateRange(start, end, label));
-    await logger.log(`✅ [ขั้นที่ 2/2] แปล ${label} เสร็จแล้ว`, { level: 'success', toDb: true });
+    const batchIndex = Math.floor(start / TRANSLATE_BATCH_MAX_CUES) + 1;
+    batchRanges.push({
+      start,
+      end,
+      label: `ชุด ${batchIndex}/${batchCount} (คิว ${start + 1}–${end})`,
+    });
   }
+
+  let translatedDone = 0;
+  const translatedBatches = await runWithConcurrency(batchRanges, TRANSLATE_CONCURRENCY, async (b) => {
+    await logger.log(`🌐 [ขั้นที่ 2/2] กำลังแปล ${b.label} → ไทย`, { toDb: true });
+    const res = await translateRange(b.start, b.end, b.label);
+    translatedDone += 1;
+    await logger.log(`✅ [ขั้นที่ 2/2] แปล ${b.label} เสร็จแล้ว (${translatedDone}/${batchRanges.length})`, { level: 'success', toDb: true });
+    return res;
+  });
+
+  const allThaiCues = translatedBatches.flat();
 
   return {
     isThai: false,
     detectedLangCode: dominantLang.code,
-    detectedLangName: dominantLang.name,
+    detectedLangName: dominantLang.shortLabel || dominantLang.englishName,
     originalSrt: mergedOriginalSrt,
     thaiSrt: cuesToSrt(allThaiCues),
     totalCues: allOriginalCues.length,
+    modelSummary: TRANSCRIBE_LLM_MODEL === TRANSLATE_MODEL
+      ? TRANSCRIBE_LLM_MODEL
+      : `${TRANSCRIBE_LLM_MODEL} + ${TRANSLATE_MODEL}`,
   };
 }
 
@@ -941,12 +1221,14 @@ async function main() {
     return;
   }
 
+  await ensureAudioSubtitleColumns();
   const [video] = await sql`
     UPDATE videos
     SET subtitle_status = 'processing', updated_at = NOW()
     WHERE id = ${vidNum} AND subtitle_job_id = ${jobId}
       AND subtitle_status = 'extracting' AND audio_status = 'extracting'
-    RETURNING id, title, raw_file_name, onedrive_folder_id, master_playlist_path
+    RETURNING id, title, raw_file_name, onedrive_folder_id, master_playlist_path,
+      COALESCE(source_language, '') AS source_language
   `;
   if (!video) {
     console.log('ข้ามงานซับที่เริ่มไปแล้วหรือไม่อยู่ในคิวอัปโหลด');
@@ -954,15 +1236,32 @@ async function main() {
   }
 
   const activeRawName = video.raw_file_name;
+  const resolvedLangCode = SOURCE_LANGUAGE_ENV || normalizeVideoLanguageCode(video.source_language || '');
+  const sourceLangMeta = getVideoLanguage(resolvedLangCode);
   const thaiTrackLabel = jobId.endsWith('-ai') ? 'ไทย (แปลโดย AI)' : 'ไทย (แปลอัตโนมัติ)';
   const tempDir = path.resolve('./temp_audio_sub', String(vidNum));
   fs.mkdirSync(tempDir, { recursive: true });
   const logger = createWorkerLogger(sql, vidNum, 'sub', 'เสียง & ซับไตเติล AI');
 
+  if (sourceLangMeta?.isNone) {
+    await logger.log('⏭️ ข้ามการสร้างซับอัตโนมัติ (ตั้งค่าภาษาเสียงพูดเป็นไม่มีเสียงพูด)', { toDb: true });
+    await sql`
+      UPDATE videos
+      SET audio_status = CASE WHEN audio_status = 'extracting' THEN 'waiting' ELSE audio_status END,
+          subtitle_status = 'waiting',
+          updated_at = NOW()
+      WHERE id = ${vidNum} AND subtitle_job_id = ${jobId};
+    `;
+    return;
+  }
+
   try {
-    const primaryModel = `${TRANSCRIBE_MODEL} / ${AI_MODEL}`;
-    await logger.log(`🎬 เริ่มงานสกัดเสียงและสร้างซับไตเติลอัตโนมัติ (วิดีโอ #${vidNum}, โมเดล ${primaryModel})...`, { toDb: true });
-    await ensureAudioSubtitleColumns();
+    const primaryModel =
+      sourceLangMeta?.isThai || TRANSCRIBE_LLM_MODEL === TRANSLATE_MODEL
+        ? TRANSCRIBE_LLM_MODEL
+        : `${TRANSCRIBE_LLM_MODEL} + ${TRANSLATE_MODEL}`;
+    const langBanner = sourceLangMeta ? ` • ภาษาตั้งต้น: ${sourceLangMeta.label}` : ' • ภาษา: ตรวจอัตโนมัติ';
+    await logger.log(`🎬 เริ่มงานสกัดเสียงและสร้างซับไตเติล (วิดีโอ #${vidNum}, โมเดล ${primaryModel}${langBanner})...`, { toDb: true });
 
     await logger.log('🔑 กำลังยืนยันตัวตนกับ Microsoft OneDrive...', { toDb: false });
     const driveId = await getUserDriveId();
@@ -1030,17 +1329,17 @@ async function main() {
     `;
     await logger.log(`✅ audio.mp3 (${audioMB} MB) พร้อมถอดซับ`, { level: 'success', toDb: true });
 
-    // 3. Generate AI Subtitles via Gemini (Chunked Language Detection & Dual-Track Subtitles)
+    // 3. Generate AI Subtitles via Gemini (Parallel Gemini 4 Hydrogen Transcription + Gemini 4 Neon Translation)
     const subResult = await generateSubtitlesWithGemini(
       localAudioPath,
-      AI_MODEL,
+      sourceLangMeta,
       CUSTOM_PROMPT,
       tempDir,
       audioDurationSec,
       logger,
       { seekAudioPath }
     );
-    const { isThai, detectedLangCode, detectedLangName, thaiSrt, originalSrt, totalCues } = subResult;
+    const { isThai, detectedLangCode, detectedLangName, thaiSrt, originalSrt, totalCues, modelSummary } = subResult;
 
     const thaiVtt = convertSrtToVtt(thaiSrt);
     const originalVtt = originalSrt ? convertSrtToVtt(originalSrt) : '';
@@ -1071,7 +1370,7 @@ async function main() {
       tracks = [
         {
           id: 'th',
-          label: thaiTrackLabel,
+          label: 'ไทย (ต้นฉบับ)',
           lang: 'th',
           isAutoTranslate: false,
           isOriginal: true,
@@ -1113,7 +1412,8 @@ async function main() {
           subtitle_srt = ${thaiSrt},
           subtitle_vtt = ${thaiVtt},
           subtitle_tracks = ${JSON.stringify(tracks)}::jsonb,
-          subtitle_model = ${TRANSCRIBE_MODEL},
+          subtitle_model = ${modelSummary || TRANSCRIBE_LLM_MODEL},
+          source_language = CASE WHEN COALESCE(source_language, '') = '' THEN ${detectedLangCode || ''} ELSE source_language END,
           source_cache = NULL,
           source_cache_expires_at = 0,
           updated_at = NOW()

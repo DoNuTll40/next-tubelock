@@ -13,6 +13,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
+import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 import { isRatingEvaluated } from '@/lib/ratingStatus';
 import {
   UPLOAD_CATEGORIES,
@@ -36,6 +37,8 @@ export default function StudioDetailsTab({
   setTitle,
   description,
   setDescription,
+  sourceLanguage = '',
+  setSourceLanguage,
   category,
   setCategory,
   tags,
@@ -297,8 +300,15 @@ export default function StudioDetailsTab({
         )}
       </section>
 
-      {/* 3. Category & Tags Card */}
+      {/* 3. Language, Category & Tags Card */}
       <section className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+        <VideoLanguagePicker
+          value={sourceLanguage}
+          onChange={(val) => setSourceLanguage && setSourceLanguage(val)}
+          required={false}
+          compact
+        />
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
             <label className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1] block">

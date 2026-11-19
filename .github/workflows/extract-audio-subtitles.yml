@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: ''
+      source_language:
+        description: 'Primary spoken language code (e.g. th, ja, en, zh, ko)'
+        required: false
+        type: string
+        default: ''
       model:
         description: 'Legacy input retained for compatibility. This workflow uses fixed subtitle models.'
         required: false
@@ -34,7 +39,7 @@ concurrency:
 
 jobs:
   extract-and-subtitle:
-    name: "Audio & AI Subtitles #${{ inputs.video_id }} (3.5 Transcribe + 3.8 Flash)"
+    name: "Audio & AI Subtitles #${{ inputs.video_id }} (Gemini 3.8 Flash)"
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -73,6 +78,7 @@ jobs:
           SUBTITLE_JOB_ID: ${{ inputs.job_id }}
           VIDEO_ID: ${{ inputs.video_id }}
           RAW_FILE_NAME: ${{ inputs.raw_file_name }}
+          SOURCE_LANGUAGE: ${{ inputs.source_language }}
           CUSTOM_PROMPT: ${{ inputs.custom_prompt }}
         run: |
           node scripts/audio-subtitle-worker.js

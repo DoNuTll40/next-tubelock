@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
+import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 import {
   UPLOAD_CATEGORIES,
   SUGGESTED_TAGS,
@@ -24,6 +25,8 @@ export default function StepDetails({
   setTitle,
   description,
   setDescription,
+  sourceLanguage = '',
+  setSourceLanguage,
   category,
   setCategory,
   tags,
@@ -179,6 +182,13 @@ export default function StepDetails({
           </span>
         </div>
       </div>
+
+      {/* Mandatory Source Spoken Language Picker */}
+      <VideoLanguagePicker
+        value={sourceLanguage}
+        onChange={(val) => setSourceLanguage && setSourceLanguage(val)}
+        required
+      />
 
       {/* Description Field */}
       <div className="space-y-1.5">

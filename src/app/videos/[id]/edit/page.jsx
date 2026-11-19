@@ -43,6 +43,7 @@ import {
   formatFileSize,
   CONTENT_RATINGS,
 } from '@/lib/videoEditorUtils';
+import { normalizeVideoLanguageCode } from '@/lib/videoLanguages';
 
 function parseTagsField(rawTags) {
   if (Array.isArray(rawTags)) {
@@ -59,6 +60,7 @@ function buildFormSnapshot(video) {
   return {
     title: video.title || '',
     description: video.description || '',
+    sourceLanguage: normalizeVideoLanguageCode(video.sourceLanguage || ''),
     category: video.category || 'general',
     tags: parseTagsField(video.tags),
     thumbnailUrl: video.thumbnailUrl || '',
@@ -86,6 +88,7 @@ function areSnapshotsEqual(a, b) {
   if (!a || !b) return true;
   if (a.title !== b.title) return false;
   if (a.description !== b.description) return false;
+  if (a.sourceLanguage !== b.sourceLanguage) return false;
   if (a.category !== b.category) return false;
   if (a.thumbnailUrl !== b.thumbnailUrl) return false;
   if (a.contentRating !== b.contentRating) return false;
@@ -124,6 +127,7 @@ function StudioEditorInner() {
   // Editable form fields
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [sourceLanguage, setSourceLanguage] = useState('');
   const [category, setCategory] = useState('general');
   const [tags, setTags] = useState([]);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
@@ -192,6 +196,7 @@ function StudioEditorInner() {
         );
         setTitle(snap.title);
         setDescription(snap.description);
+        setSourceLanguage(snap.sourceLanguage);
         setCategory(snap.category);
         setTags(snap.tags);
         setThumbnailUrl(snap.thumbnailUrl);
@@ -237,13 +242,14 @@ function StudioEditorInner() {
     () => ({
       title,
       description,
+      sourceLanguage,
       category,
       tags,
       thumbnailUrl,
       contentRating,
       subtitleTracks,
     }),
-    [title, description, category, tags, thumbnailUrl, contentRating, subtitleTracks]
+    [title, description, sourceLanguage, category, tags, thumbnailUrl, contentRating, subtitleTracks]
   );
 
   const isDirty = useMemo(
@@ -416,6 +422,7 @@ function StudioEditorInner() {
     if (!savedSnapshot || isSaving) return;
     setTitle(savedSnapshot.title);
     setDescription(savedSnapshot.description);
+    setSourceLanguage(savedSnapshot.sourceLanguage);
     setCategory(savedSnapshot.category);
     setTags(savedSnapshot.tags);
     setThumbnailUrl(savedSnapshot.thumbnailUrl);
@@ -445,6 +452,7 @@ function StudioEditorInner() {
         body: JSON.stringify({
           title: trimmedTitle,
           description,
+          sourceLanguage,
           category,
           tags,
           thumbnailUrl,
@@ -462,6 +470,7 @@ function StudioEditorInner() {
       const nextSnap = {
         title: savedV.title ?? trimmedTitle,
         description: savedV.description ?? description,
+        sourceLanguage: normalizeVideoLanguageCode(savedV.sourceLanguage ?? sourceLanguage),
         category: savedV.category ?? category,
         tags: parseTagsField(savedV.tags ?? tags),
         thumbnailUrl: savedV.thumbnailUrl ?? thumbnailUrl,
@@ -478,6 +487,7 @@ function StudioEditorInner() {
         ...savedV,
         title: nextSnap.title,
         description: nextSnap.description,
+        sourceLanguage: nextSnap.sourceLanguage,
         category: nextSnap.category,
         tags: nextSnap.tags.join(', '),
         thumbnailUrl: nextSnap.thumbnailUrl,
@@ -487,6 +497,7 @@ function StudioEditorInner() {
       }));
       setTitle(nextSnap.title);
       setDescription(nextSnap.description);
+      setSourceLanguage(nextSnap.sourceLanguage);
       setCategory(nextSnap.category);
       setTags(nextSnap.tags);
       setThumbnailUrl(nextSnap.thumbnailUrl);
@@ -895,6 +906,8 @@ function StudioEditorInner() {
                   setTitle={setTitle}
                   description={description}
                   setDescription={setDescription}
+                  sourceLanguage={sourceLanguage}
+                  setSourceLanguage={setSourceLanguage}
                   category={category}
                   setCategory={setCategory}
                   tags={tags}

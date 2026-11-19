@@ -98,7 +98,7 @@ export async function GET(request, context) {
         FROM jsonb_each(d.row_data)
         WHERE key IN ('subtitle_srt', 'subtitle_vtt', 'subtitle_tracks', 'worker_logs',
           'thumbnail_status', 'thumbnail_options', 'runner_specs', 'audio_status',
-          'subtitle_status', 'subtitle_model', 'subtitle_job_id', 'sprite_status', 'sprite_preview_url',
+          'subtitle_status', 'subtitle_model', 'subtitle_job_id', 'source_language', 'sprite_status', 'sprite_preview_url',
           'content_rating', 'user_selected_rating', 'ai_suggested_rating',
           'rating_check_status', 'vision_analysis')
       ) m
@@ -207,6 +207,7 @@ export async function GET(request, context) {
           subtitleTracks: parseJsonSafe(video.subtitle_tracks) || [],
         }),
         subtitleModel: video.subtitle_model || '',
+        sourceLanguage: video.source_language || '',
         spriteStatus: video.sprite_status || 'waiting',
         contentRating: video.content_rating || 'all',
         userSelectedRating: video.user_selected_rating || 'all',

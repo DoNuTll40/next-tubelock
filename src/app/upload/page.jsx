@@ -18,6 +18,10 @@ import {
   decodeUploadId,
   encodeUploadId,
 } from '@/lib/videoUtils';
+import {
+  normalizeVideoLanguageCode,
+  getVideoLanguage,
+} from '@/lib/videoLanguages';
 
 // Import Modular Studio Components
 import StepIndicator from '@/components/upload/StepIndicator';
@@ -48,6 +52,7 @@ export default function UploadPage() {
   const fileRef = useRef(null);
   const titleRef = useRef('');
   const descriptionRef = useRef('');
+  const sourceLanguageRef = useRef('');
   const categoryRef = useRef('general');
   const tagsRef = useRef(['HLS', 'stream']);
   const logEndRef = useRef(null);
@@ -85,6 +90,7 @@ export default function UploadPage() {
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [sourceLanguage, setSourceLanguage] = useState('');
   const [category, setCategory] = useState('general');
   const [tags, setTags] = useState(['HLS', 'stream']);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
@@ -449,6 +455,7 @@ export default function UploadPage() {
         try { draft = JSON.parse(localStorage.getItem(`tubelock_upload_${id}`)); } catch {}
         setTitle(titleRef.current = draft?.title ?? job.title);
         setDescription(descriptionRef.current = draft?.description ?? job.description);
+        setSourceLanguage(sourceLanguageRef.current = normalizeVideoLanguageCode(draft?.sourceLanguage ?? job.sourceLanguage ?? ''));
         setCategory(categoryRef.current = draft?.category ?? job.category);
         setTags(tagsRef.current = draft?.tags ?? job.tags);
         setContentRating(draft?.contentRating ?? job.userSelectedRating ?? job.contentRating);
@@ -529,12 +536,12 @@ export default function UploadPage() {
     if (!activeVideoId || isRestoring) return;
     try {
       localStorage.setItem(`tubelock_upload_${activeVideoId}`, JSON.stringify({
-        title, description, category, tags, contentRating, activeStep,
+        title, description, sourceLanguage, category, tags, contentRating, activeStep,
         subtitleMode, manualSubtitleFile, customPrompt,
         thumbnailUrl, thumbnailOptions,
       }));
     } catch {}
-  }, [activeVideoId, isRestoring, title, description, category, tags, contentRating, activeStep,
+  }, [activeVideoId, isRestoring, title, description, sourceLanguage, category, tags, contentRating, activeStep,
     subtitleMode, manualSubtitleFile, customPrompt, thumbnailUrl, thumbnailOptions]);
 
   // Immediate Upload to OneDrive as soon as a video file is selected
@@ -751,9 +758,11 @@ export default function UploadPage() {
     fileRef.current = null;
     titleRef.current = '';
     descriptionRef.current = '';
+    sourceLanguageRef.current = '';
     setFile(null);
     setTitle('');
     setDescription('');
+    setSourceLanguage('');
     setCategory('general');
     setTags(['HLS', 'stream']);
     setThumbnailUrl('');
@@ -992,6 +1001,14 @@ export default function UploadPage() {
       return;
     }
 
+    const finalSourceLanguage = normalizeVideoLanguageCode(sourceLanguageRef.current || sourceLanguage || '');
+    if (!finalSourceLanguage) {
+      const langErr = 'กรุณาเลือกภาษาเสียงพูดหลักของวิดีโอก่อนเผยแพร่';
+      setErrorMsg(langErr);
+      addLog(`⚠️ ${langErr}`);
+      return;
+    }
+
     const prevStatus = currentStatus;
     const prevStageDetail = stageDetail;
 
@@ -1025,6 +1042,7 @@ export default function UploadPage() {
           rawFileName,
           title: finalTitle,
           description: finalDesc,
+          sourceLanguage: finalSourceLanguage,
           category: finalCategory,
           tags: finalTags,
           contentRating,
@@ -1118,24 +1136,34 @@ export default function UploadPage() {
   }, [queueCount, fetchQueueCount]);
 
   const hasTitle = Boolean(title && title.trim().length > 0);
+  const selectedSourceLang = getVideoLanguage(sourceLanguage);
+  const hasSourceLanguage = Boolean(selectedSourceLang);
   const hasRating = Boolean(contentRating);
 
   // Honest Step Status Mapping for Stepper Badges
   const stepStatus = {
     1: {
-      completed: hasTitle,
-      statusText: hasTitle ? 'กรอกแล้ว' : 'รอระบุชื่อ',
+      completed: hasTitle && hasSourceLanguage,
+      statusText: !hasTitle
+        ? 'รอระบุชื่อ'
+        : !hasSourceLanguage
+          ? 'รอเลือกภาษาเสียงพูด'
+          : `ครบแล้ว (${selectedSourceLang.shortLabel})`,
     },
     2: {
-      completed: Boolean(manualSubtitleFile || subtitleStatus === 'ready'),
+      completed: Boolean(manualSubtitleFile || subtitleStatus === 'ready' || selectedSourceLang?.isNone),
       statusText:
         subtitleStatus === 'ready'
           ? 'สร้างซับแล้ว'
           : manualSubtitleFile
           ? 'แนบไฟล์แล้ว'
+          : selectedSourceLang?.isNone
+          ? 'ข้าม (ไม่มีเสียงพูด)'
+          : !hasSourceLanguage
+          ? 'รอเลือกภาษาตั้งต้น'
           : subtitleStatus === 'processing' || audioStatus === 'extracting'
           ? 'กำลังถอดเสียง...'
-          : 'รันตอนเผยแพร่ได้',
+          : `พร้อมสร้างซับ (${selectedSourceLang.shortLabel})`,
     },
     3: {
       completed: Boolean(
@@ -1169,6 +1197,7 @@ export default function UploadPage() {
 
   const isReadyToPublish =
     hasTitle &&
+    hasSourceLanguage &&
     hasRating &&
     isRawUploaded &&
     !isUploading &&
@@ -1412,6 +1441,12 @@ export default function UploadPage() {
                       setDescription(val);
                       descriptionRef.current = val;
                     }}
+                    sourceLanguage={sourceLanguage}
+                    setSourceLanguage={(val) => {
+                      const next = normalizeVideoLanguageCode(val);
+                      setSourceLanguage(next);
+                      sourceLanguageRef.current = next;
+                    }}
                     category={category}
                     setCategory={(val) => {
                       setCategory(val);
@@ -1439,6 +1474,12 @@ export default function UploadPage() {
 
                 {activeStep === 2 && (
                   <StepSubtitles
+                    sourceLanguage={sourceLanguage}
+                    setSourceLanguage={(val) => {
+                      const next = normalizeVideoLanguageCode(val);
+                      setSourceLanguage(next);
+                      sourceLanguageRef.current = next;
+                    }}
                     subtitleMode={subtitleMode}
                     setSubtitleMode={setSubtitleMode}
                     manualSubtitleFile={manualSubtitleFile}
@@ -1473,6 +1514,7 @@ export default function UploadPage() {
                 {activeStep === 4 && (
                   <StepPublish
                     title={title}
+                    sourceLanguage={sourceLanguage}
                     description={description}
                     category={category}
                     tags={tags}

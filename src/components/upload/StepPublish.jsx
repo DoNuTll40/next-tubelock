@@ -8,9 +8,11 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { encodeVideoSlug } from '@/lib/videoUtils';
+import { getVideoLanguage } from '@/lib/videoLanguages';
 
 export default function StepPublish({
   title,
+  sourceLanguage = '',
   category,
   tags,
   contentRating,
@@ -29,14 +31,20 @@ export default function StepPublish({
   workerDetail = '',
 }) {
   const hasTitle = Boolean(title && title.trim().length > 0);
+  const selectedLang = getVideoLanguage(sourceLanguage);
+  const hasSourceLanguage = Boolean(selectedLang);
   const hasRating = Boolean(contentRating);
 
   // Subtitle summary text
   const subtitleSummary = subtitleMode === 'manual' && manualSubtitleFile
     ? `แนบไฟล์เอง: ${manualSubtitleFile.name}`
+    : selectedLang?.isNone
+    ? 'ข้ามการสร้างซับอัตโนมัติ (ไม่มีเสียงพูด)'
     : subtitleMode === 'requested-ai'
-    ? 'แปลโดย AI'
-    : 'แปลอัตโนมัติเมื่ออัปโหลดเสร็จ';
+    ? `แปลโดย AI${selectedLang ? ` (${selectedLang.shortLabel})` : ''}`
+    : selectedLang?.isThai
+    ? 'ถอดซับไทยต้นฉบับเมื่ออัปโหลดเสร็จ'
+    : `ถอดเสียงและแปลไทยอัตโนมัติ${selectedLang ? ` (${selectedLang.shortLabel} → ไทย)` : ''}`;
 
   const categoryLabels = {
     general: 'ทั่วไป (General)',
@@ -111,16 +119,31 @@ export default function StepPublish({
 
         <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 text-xs sm:text-sm">
           <span className="font-medium text-[#212529] dark:text-[#F1F1F1]">
-            3. ซับไตเติล: {subtitleSummary}
+            3. ภาษาเสียงพูดหลัก: {selectedLang ? selectedLang.label : 'ยังไม่ระบุ'}
           </span>
-          <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-white dark:bg-[#181818] text-[#6C655D] dark:text-[#AAAAAA] border border-[#EFECE6] dark:border-white/10 shrink-0">
-            {manualSubtitleFile ? 'พร้อมแล้ว' : 'รันอัตโนมัติ'}
+          <span
+            className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold shrink-0 ${
+              hasSourceLanguage
+                ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                : 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+            }`}
+          >
+            {hasSourceLanguage ? selectedLang.shortLabel : 'บังคับเลือก'}
           </span>
         </div>
 
         <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 text-xs sm:text-sm">
           <span className="font-medium text-[#212529] dark:text-[#F1F1F1]">
-            4. เรตเนื้อหา: {ratingLabelMap[contentRating] || contentRating || 'ยังไม่ระบุ'}
+            4. ซับไตเติล: {subtitleSummary}
+          </span>
+          <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-white dark:bg-[#181818] text-[#6C655D] dark:text-[#AAAAAA] border border-[#EFECE6] dark:border-white/10 shrink-0">
+            {manualSubtitleFile ? 'พร้อมแล้ว' : selectedLang?.isNone ? 'ข้าม' : 'รันอัตโนมัติ'}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 text-xs sm:text-sm">
+          <span className="font-medium text-[#212529] dark:text-[#F1F1F1]">
+            5. เรตเนื้อหา: {ratingLabelMap[contentRating] || contentRating || 'ยังไม่ระบุ'}
           </span>
           <span
             className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold shrink-0 ${
@@ -199,12 +222,13 @@ export default function StepPublish({
       )}
 
       {/* Missing Prerequisites Hint */}
-      {(!hasTitle || !hasRating || !isRawUploaded || isUploading) && !currentStatus && (
+      {(!hasTitle || !hasSourceLanguage || !hasRating || !isRawUploaded || isUploading) && !currentStatus && (
         <div className="text-xs text-[#6C655D] dark:text-[#9A9A9A] flex items-center gap-1.5">
           <AlertCircle className="w-4 h-4 text-[#FF7A00] shrink-0" />
           <span>
             {!isRawUploaded && `กำลังรออัปโหลดไฟล์เสร็จ (${uploadPercent}%) `}
             {!hasTitle && '• กรุณากรอกชื่อวิดีโอใน Step 1 '}
+            {!hasSourceLanguage && '• กรุณาเลือกภาษาเสียงพูดหลักของวิดีโอใน Step 1 หรือ Step 2 '}
             {!hasRating && '• กรุณาเลือกเรตเนื้อหาใน Step 3'}
           </span>
         </div>

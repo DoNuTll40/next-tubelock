@@ -6,8 +6,11 @@ import {
   CheckCircle2,
   Trash2,
 } from 'lucide-react';
+import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 
 export default function StepSubtitles({
+  sourceLanguage = '',
+  setSourceLanguage,
   subtitleMode,
   setSubtitleMode,
   manualSubtitleFile,
@@ -56,9 +59,17 @@ export default function StepSubtitles({
           02 ถอดเสียงและซับไตเติล
         </h2>
         <p className="text-xs sm:text-sm text-[#6C655D] dark:text-[#AAAAAA] mt-0.5">
-          ระบบสร้างซับเมื่ออัปโหลดเสร็จ เลือกขอซับ AI หรือนำเข้าไฟล์ซับของคุณเองได้ที่นี่
+          เลือกภาษาเสียงพูดตั้งต้นเพื่อให้ AI ถอดเสียงตรงภาษา หรืออัปโหลดไฟล์ซับของคุณเอง
         </p>
       </div>
+
+      {/* Mandatory Source Spoken Language Picker (synced with Step 1) */}
+      <VideoLanguagePicker
+        value={sourceLanguage}
+        onChange={(val) => setSourceLanguage && setSourceLanguage(val)}
+        required
+        compact
+      />
 
       {/* Mode Switcher */}
       <div className="grid grid-cols-3 p-1 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 gap-1">

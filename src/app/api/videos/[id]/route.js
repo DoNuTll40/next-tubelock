@@ -5,6 +5,7 @@ import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId, ensureFolderExists } from '@/lib/onedriveServer';
 import { ensureSourceCacheColumns, invalidateVideoCaches } from '@/lib/videoSourceService';
 import { normalizeSubtitleTracks } from '@/lib/videoEditorUtils';
+import { normalizeVideoLanguageCode } from '@/lib/videoLanguages';
 import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
 import {
   getVideoVersions,
@@ -279,6 +280,7 @@ export async function PATCH(request, context) {
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_tracks JSONB DEFAULT '[]'::jsonb;`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_language VARCHAR(20) DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_selected_rating VARCHAR(50) DEFAULT 'all';`;
       await ensureSourceCacheColumns(sql);
     } catch (_) {}
@@ -297,6 +299,7 @@ export async function PATCH(request, context) {
       thumbnailOptions,
       title,
       description,
+      sourceLanguage,
       category,
       tags,
       contentRating,
@@ -362,6 +365,8 @@ export async function PATCH(request, context) {
 
     const sanitizedTitle = typeof title === 'string' && title.trim() ? title.trim().slice(0, 150) : null;
     const sanitizedDesc = typeof description === 'string' ? description : null;
+    const hasSourceLanguageUpdate = typeof sourceLanguage === 'string';
+    const sanitizedSourceLanguage = hasSourceLanguageUpdate ? normalizeVideoLanguageCode(sourceLanguage) : null;
     const sanitizedCategory = typeof category === 'string' && category.trim() ? category.trim().slice(0, 100) : null;
     const sanitizedTags = Array.isArray(tags)
       ? tags.map((t) => String(t || '').trim().replace(/^[#,]+/, '')).filter(Boolean).slice(0, 15)
@@ -410,6 +415,7 @@ export async function PATCH(request, context) {
           onedrive_folder_id = COALESCE(NULLIF(${syncedFolderId}, ''), onedrive_folder_id),
           title = COALESCE(${sanitizedTitle}, title),
           description = COALESCE(${sanitizedDesc}, description),
+          source_language = CASE WHEN ${hasSourceLanguageUpdate} THEN ${sanitizedSourceLanguage || ''} ELSE source_language END,
           category = COALESCE(${sanitizedCategory}, category),
           tags = COALESCE(${sanitizedTags}, tags),
           content_rating = CASE
@@ -429,7 +435,7 @@ export async function PATCH(request, context) {
           updated_at = NOW()
       WHERE id = ${id} AND (${admin} OR user_id = ${userId})
       RETURNING
-        id, title, description, category, tags, content_rating, user_selected_rating,
+        id, title, description, source_language, category, tags, content_rating, user_selected_rating,
         thumbnail_url, thumbnail_status, thumbnail_options,
         subtitle_status, subtitle_srt, subtitle_vtt, subtitle_tracks, updated_at;
     `;
@@ -447,6 +453,7 @@ export async function PATCH(request, context) {
         id: row.id,
         title: row.title || '',
         description: row.description || '',
+        sourceLanguage: row.source_language || '',
         category: row.category || 'general',
         tags: row.tags || [],
         contentRating: row.content_rating || 'all',

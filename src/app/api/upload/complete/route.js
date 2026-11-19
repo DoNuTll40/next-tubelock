@@ -6,6 +6,7 @@ import { getDb } from '@/lib/db';
 import { triggerGitHubWorkflow } from '@/app/api/upload/dispatch-action/route';
 import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
 import { EVALUATED_RATING_STATUSES, isRatingEvaluated } from '@/lib/ratingStatus';
+import { normalizeVideoLanguageCode, getVideoLanguage } from '@/lib/videoLanguages';
 
 /**
  * POST /api/upload/complete
@@ -20,6 +21,7 @@ export async function POST(request) {
       versionId = null,
       title,
       description,
+      sourceLanguage = '',
       category,
       tags,
       contentRating = 'all',
@@ -61,6 +63,7 @@ export async function POST(request) {
     // Ensure columns exist
     try {
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'general';`;
+      await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_language VARCHAR(20) DEFAULT '';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS audio_status VARCHAR(50) DEFAULT 'waiting';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_status VARCHAR(50) DEFAULT 'waiting';`;
       await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
@@ -80,7 +83,8 @@ export async function POST(request) {
 
     // 1. Verify video exists in DB
     const existing = await sql`
-      SELECT id, title, raw_file_name, status, audio_status, subtitle_status, sprite_status, rating_check_status, updated_at
+      SELECT id, title, raw_file_name, status, audio_status, subtitle_status, sprite_status, rating_check_status,
+             COALESCE(source_language, '') AS source_language, updated_at
       FROM videos 
       WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
@@ -246,6 +250,14 @@ export async function POST(request) {
     const finalRawFileName = currentVideo.raw_file_name;
     const finalTitle = title || currentVideo.title;
     const finalDescription = typeof description === 'string' ? description : '';
+    const finalSourceLanguage = normalizeVideoLanguageCode(sourceLanguage || currentVideo.source_language || '');
+    const selectedLangMeta = getVideoLanguage(finalSourceLanguage);
+    if (!selectedLangMeta) {
+      return NextResponse.json(
+        { success: false, error: 'กรุณาเลือกภาษาเสียงพูดหลักของวิดีโอก่อนเผยแพร่' },
+        { status: 400 }
+      );
+    }
     const finalCategory = typeof category === 'string' && category.trim() ? category.trim() : 'general';
     const finalTags = Array.isArray(tags) ? tags : [];
     const finalRating = contentRating || 'all';
@@ -266,6 +278,7 @@ export async function POST(request) {
         stage_detail = 'อัปโหลดเข้า OneDrive สำเร็จ กำลังส่งคำสั่งเข้าคิว GitHub Actions',
         title = ${finalTitle},
         description = ${finalDescription},
+        source_language = ${finalSourceLanguage},
         category = ${finalCategory},
         tags = ${finalTags},
         content_rating = CASE WHEN rating_check_status = ANY(${EVALUATED_RATING_STATUSES}::text[])
@@ -319,23 +332,31 @@ export async function POST(request) {
       }, { status: 503 });
     }
 
-    // Claim subtitle generation once, during initial upload completion.
+    // Claim subtitle generation once, during initial upload completion (skip if source language is 'none').
     const shouldDispatchAudioSub =
       currentVideo.status === 'UPLOADING' && !hasManualSub &&
+      !selectedLangMeta.isNone &&
       currentVideo.subtitle_status !== 'ready' &&
       !isSubtitleWorkflowActive(currentVideo);
 
     let dispatchedAudioSub = false;
-    if (shouldDispatchAudioSub) {
+    if (selectedLangMeta.isNone && !hasManualSub && currentVideo.status === 'UPLOADING') {
+      await appendWorkerLog(sql, videoId, {
+        source: 'subtitles',
+        label: 'Audio & Sub',
+        message: '⏭️ ข้ามการสร้างซับอัตโนมัติ (ตั้งค่าภาษาเสียงพูดเป็นไม่มีเสียงพูด)',
+      });
+    } else if (shouldDispatchAudioSub) {
       const requestedAi = subtitleMode === 'requested-ai';
       const subtitleJobId = `${Date.now()}-${randomUUID()}-${requestedAi ? 'ai' : 'auto'}`;
+      const primarySubtitleModel = 'gemini-3.8-flash';
       try {
         const claimed = await sql`
           UPDATE videos
           SET audio_status = 'extracting',
               subtitle_status = 'extracting',
               subtitle_job_id = ${subtitleJobId},
-              subtitle_model = 'gemini-3.5-transcribe',
+              subtitle_model = ${primarySubtitleModel},
               updated_at = NOW()
           WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
             AND subtitle_job_id IS NULL
@@ -348,13 +369,14 @@ export async function POST(request) {
             job_id: subtitleJobId,
             video_id: String(videoId),
             raw_file_name: String(finalRawFileName),
+            source_language: String(finalSourceLanguage),
             custom_prompt: requestedAi ? String(customPrompt || '') : '',
           });
           dispatchedAudioSub = true;
           await appendWorkerLog(sql, videoId, {
             source: 'subtitles',
             label: 'Audio & Sub',
-            message: `🚀 ส่งคำสั่งถอดเสียงและซับอัตโนมัติ (3.5 Transcribe + 3.8 Flash) เข้าคิว GitHub Actions`,
+            message: `🚀 ส่งคำสั่งถอดเสียงและซับอัตโนมัติ (${primarySubtitleModel} • ภาษา: ${selectedLangMeta.label}) เข้าคิว GitHub Actions`,
           });
         }
       } catch (subErr) {
