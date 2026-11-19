@@ -13,6 +13,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
+import PlaylistPicker from '@/components/playlist/PlaylistPicker';
 import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 import { isRatingEvaluated } from '@/lib/ratingStatus';
 import {
@@ -43,6 +44,11 @@ export default function StudioDetailsTab({
   setCategory,
   tags,
   setTags,
+  playlistIds,
+  onPlaylistsChange,
+  playlistLoadError,
+  onRetryPlaylists,
+  isSaving,
   thumbnailUrl,
   setThumbnailUrl,
   thumbnailOptions = [],
@@ -385,6 +391,28 @@ export default function StudioDetailsTab({
               </button>
             );
           })}
+        </div>
+
+        <div className="border-t border-[#EFECE6] pt-4 dark:border-white/10">
+          <PlaylistPicker
+            selectedIds={playlistIds ?? []}
+            onChange={onPlaylistsChange}
+            disabled={!playlistIds || isSaving}
+            helperText="การเปลี่ยนแปลงเพลย์ลิสต์จะมีผลเมื่อกดบันทึก"
+          />
+          {playlistLoadError ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-rose-700 dark:text-rose-400">
+              <p role="alert">{playlistLoadError}</p>
+              <button type="button" onClick={onRetryPlaylists} className="cursor-pointer font-semibold underline">
+                ลองอีกครั้ง
+              </button>
+            </div>
+          ) : !playlistIds && (
+            <p role="status" className="mt-2 flex items-center gap-2 text-xs text-[#6C655D] dark:text-[#AAAAAA]">
+              <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+              กำลังโหลดเพลย์ลิสต์ของวิดีโอ…
+            </p>
+          )}
         </div>
       </section>
 

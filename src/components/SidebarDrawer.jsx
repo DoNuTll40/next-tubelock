@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/context/SidebarContext';
 import {
   Menu, Home, PlusSquare,
-  History, PlaySquare, Settings, Gauge, ChevronRight, X, ListOrdered
+  History, PlaySquare, Settings, Gauge, ChevronRight, X, ListOrdered, ListVideo, Clock, ThumbsUp
 } from 'lucide-react';
 import { APP_VERSION_LABEL } from '@/lib/version';
 
@@ -47,7 +47,10 @@ export default function SidebarDrawer() {
 
   const userItems = [
     { label: 'ประวัติการรับชม', path: '/history', icon: History, exact: false },
+    { label: 'เพลย์ลิสต์', path: '/playlists', icon: ListVideo, prefetch: false },
     { label: 'คลังวิดีโอ', path: '/videos', icon: PlaySquare, exact: false },
+    { label: 'ดูภายหลัง', path: '/playlist/WL', icon: Clock, prefetch: false, exact: true },
+    { label: 'วิดีโอที่ชอบ', path: '/playlist/LL', icon: ThumbsUp, prefetch: false, exact: true },
   ];
 
   const systemItems = [
@@ -57,6 +60,7 @@ export default function SidebarDrawer() {
 
   const isItemActive = (item) => {
     if (item.exact) return pathname === item.path;
+    if (item.path === '/playlists' && /^\/playlist\/\d+$/.test(pathname || '')) return true;
     return pathname === item.path || pathname?.startsWith(item.path + '/');
   };
 
@@ -145,6 +149,8 @@ export default function SidebarDrawer() {
                 <Link
                   key={item.path}
                   href={item.path}
+                  prefetch={item.prefetch}
+                  aria-current={isActive ? 'page' : undefined}
                   onClick={closeDrawer}
                   className={`flex items-center gap-4 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors ${
                     isActive

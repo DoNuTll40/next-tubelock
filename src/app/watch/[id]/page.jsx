@@ -299,6 +299,11 @@ export default async function WatchPage({ params, searchParams }) {
         const redirectQuery = new URLSearchParams();
         if (resolvedSearchParams?.t) redirectQuery.set('t', resolvedSearchParams.t);
         if (requestedVersion) redirectQuery.set('v', requestedVersion);
+        for (const key of ['list', 'index', 'shuffle']) {
+          const value = resolvedSearchParams?.[key];
+          const firstValue = Array.isArray(value) ? value[0] : value;
+          if (firstValue) redirectQuery.set(key, firstValue);
+        }
         const qs = redirectQuery.toString();
         redirect(`/watch/${canonicalSlug}${qs ? `?${qs}` : ''}`);
       }

@@ -10,6 +10,7 @@ export default function PlayerContextMenu({
   video,
   isLooping,
   setIsLooping,
+  showLoopOption = true,
   showStats,
   setShowStats,
   showToast,
@@ -23,22 +24,23 @@ export default function PlayerContextMenu({
       onClick={(e) => e.stopPropagation()}
       onMouseLeave={() => setContextMenu?.(null)}
     >
-      <button
-        type="button"
-        onClick={() => {
-          if (video?.current) {
-            const nextLoop = !isLooping;
-            video.current.loop = nextLoop;
-            setIsLooping?.(nextLoop);
-            showToast?.(nextLoop ? 'เปิดการเล่นวนซ้ำ' : 'ปิดการเล่นวนซ้ำ');
-          }
-          setContextMenu?.(null);
-        }}
-        className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer"
-      >
-        <span>เล่นวนซ้ำ (Loop)</span>
-        {isLooping && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
-      </button>
+      {showLoopOption && (
+        <button
+          type="button"
+          onClick={() => {
+            if (video?.current) {
+              const nextLoop = !isLooping;
+              setIsLooping?.(nextLoop);
+              showToast?.(nextLoop ? 'เปิดการเล่นวนซ้ำ' : 'ปิดการเล่นวนซ้ำ');
+            }
+            setContextMenu?.(null);
+          }}
+          className="w-full flex items-center justify-between px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer"
+        >
+          <span>เล่นวนซ้ำ (Loop)</span>
+          {isLooping && <Check className="w-3.5 h-3.5 text-[#FF7A00]" />}
+        </button>
+      )}
 
       <button
         type="button"
@@ -49,7 +51,7 @@ export default function PlayerContextMenu({
           }
           setContextMenu?.(null);
         }}
-        className="w-full flex items-center gap-2 px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5"
+        className={`w-full flex items-center gap-2 px-3.5 py-2 hover:bg-white/10 text-left transition cursor-pointer ${showLoopOption ? 'border-t border-white/5' : ''}`}
       >
         <Copy className="w-3.5 h-3.5 text-zinc-400" />
         <span>คัดลอก URL ของวิดีโอ</span>

@@ -30,6 +30,7 @@ import StudioSubtitlesTab from '@/components/studio/StudioSubtitlesTab';
 import StudioTechTab from '@/components/studio/StudioTechTab';
 import StudioVersionsTab from '@/components/studio/StudioVersionsTab';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
+import { requestPlaylistJson } from '@/components/playlist/PlaylistPicker';
 import { invalidateClientVideoCache } from '@/lib/playbackResolver';
 import { isRatingEvaluated } from '@/lib/ratingStatus';
 import {
@@ -99,6 +100,11 @@ function areSnapshotsEqual(a, b) {
   return true;
 }
 
+function arePlaylistIdsEqual(selectedIds, savedIds) {
+  const selected = new Set(selectedIds);
+  return selected.size === savedIds.length && savedIds.every((id) => selected.has(id));
+}
+
 const VALID_TABS = new Set(['details', 'subtitles', 'versions', 'tech']);
 
 function StudioEditorInner() {
@@ -120,6 +126,7 @@ function StudioEditorInner() {
       : tabState.value;
 
   const [video, setVideo] = useState(null);
+  const videoId = video?.id;
   const [versions, setVersions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState({ status: 0, message: '' });
@@ -133,6 +140,9 @@ function StudioEditorInner() {
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [contentRating, setContentRating] = useState('all');
   const [subtitleTracks, setSubtitleTracks] = useState([]);
+  const [playlistState, setPlaylistState] = useState(null);
+  const playlistDraft = playlistState?.videoId === videoId ? playlistState : null;
+  const loadPlaylistsForVideo = activeTab === 'details' && !playlistDraft ? videoId : null;
 
   // Saved baseline snapshot for dirty-check & reset
   const [savedSnapshot, setSavedSnapshot] = useState(null);
@@ -219,6 +229,29 @@ function StudioEditorInner() {
     };
   }, [rawId]);
 
+  useEffect(() => {
+    if (!loadPlaylistsForVideo) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    const fallback = 'โหลดเพลย์ลิสต์ของวิดีโอไม่สำเร็จ';
+
+    queueMicrotask(async () => {
+      if (signal.aborted) return;
+      try {
+        const data = await requestPlaylistJson(`/api/videos/${loadPlaylistsForVideo}/playlists`, { signal }, fallback);
+        if (!data.authenticated) throw new Error('กรุณาเข้าสู่ระบบเพื่อแก้ไขเพลย์ลิสต์');
+        if (!Array.isArray(data.normalPlaylistIds)) throw new Error(fallback);
+        if (!signal.aborted) {
+          const ids = data.normalPlaylistIds;
+          setPlaylistState({ videoId: loadPlaylistsForVideo, savedIds: ids, selectedIds: ids });
+        }
+      } catch (error) {
+        if (!signal.aborted) setPlaylistState({ videoId: loadPlaylistsForVideo, error: error.message });
+      }
+    });
+    return () => controller.abort();
+  }, [loadPlaylistsForVideo]);
+
   // Close top "..." menu on outside click / Escape
   useEffect(() => {
     if (!showHeaderMenu) return;
@@ -252,10 +285,14 @@ function StudioEditorInner() {
     [title, description, sourceLanguage, category, tags, thumbnailUrl, contentRating, subtitleTracks]
   );
 
-  const isDirty = useMemo(
+  const isMetadataDirty = useMemo(
     () => Boolean(savedSnapshot && !areSnapshotsEqual(currentSnapshot, savedSnapshot)),
     [currentSnapshot, savedSnapshot]
   );
+  const isPlaylistDirty = Boolean(
+    playlistDraft?.savedIds && !arePlaylistIdsEqual(playlistDraft.selectedIds, playlistDraft.savedIds)
+  );
+  const isDirty = isMetadataDirty || isPlaylistDirty;
 
   // Warn browser before closing tab with unsaved changes
   useEffect(() => {
@@ -428,12 +465,97 @@ function StudioEditorInner() {
     setThumbnailUrl(savedSnapshot.thumbnailUrl);
     setContentRating(savedSnapshot.contentRating);
     setSubtitleTracks(savedSnapshot.subtitleTracks);
-    setSaveFeedback({ type: 'info', text: 'ย้อนคืนค่าที่บันทึกล่าสุดแล้ว' });
-    setTimeout(() => setSaveFeedback({ type: '', text: '' }), 3000);
+    if (isPlaylistDirty) {
+      setPlaylistState((draft) => ({ ...draft, selectedIds: draft.savedIds }));
+    }
+    const feedback = { type: 'info', text: 'ย้อนคืนค่าที่บันทึกล่าสุดแล้ว' };
+    setSaveFeedback(feedback);
+    setTimeout(() => setSaveFeedback((current) => current === feedback ? { type: '', text: '' } : current), 3000);
+  };
+
+  const saveVideoDetails = async (trimmedTitle) => {
+    const normalizedTracks = normalizeSubtitleTracks(subtitleTracks);
+    const response = await fetch(`/api/videos/${videoId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: trimmedTitle,
+        description,
+        sourceLanguage,
+        category,
+        tags,
+        thumbnailUrl,
+        thumbnailOptions: Array.isArray(video.thumbnailOptions) ? video.thumbnailOptions : [],
+        ...(!isRatingEvaluated(video.ratingCheckStatus) && contentRating !== savedSnapshot?.contentRating && { contentRating }),
+        subtitleTracks: normalizedTracks,
+      }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.success) {
+      throw new Error(data?.error || 'บันทึกรายละเอียดวิดีโอไม่สำเร็จ');
+    }
+
+    const savedV = data.video || {};
+    const nextSnap = {
+      title: savedV.title ?? trimmedTitle,
+      description: savedV.description ?? description,
+      sourceLanguage: normalizeVideoLanguageCode(savedV.sourceLanguage ?? sourceLanguage),
+      category: savedV.category ?? category,
+      tags: parseTagsField(savedV.tags ?? tags),
+      thumbnailUrl: savedV.thumbnailUrl ?? thumbnailUrl,
+      contentRating: savedV.contentRating ?? contentRating,
+      subtitleTracks: normalizeSubtitleTracks(
+        savedV.subtitleTracks ?? normalizedTracks,
+        savedV.subtitleSrt || '',
+        savedV.subtitleVtt || ''
+      ),
+    };
+
+    setVideo((prev) => ({
+      ...prev,
+      ...savedV,
+      title: nextSnap.title,
+      description: nextSnap.description,
+      sourceLanguage: nextSnap.sourceLanguage,
+      category: nextSnap.category,
+      tags: nextSnap.tags.join(', '),
+      thumbnailUrl: nextSnap.thumbnailUrl,
+      contentRating: nextSnap.contentRating,
+      subtitleTracks: nextSnap.subtitleTracks,
+      subtitleStatus: savedV.subtitleStatus ?? prev.subtitleStatus,
+    }));
+    setTitle((value) => value === title ? nextSnap.title : value);
+    setDescription((value) => value === description ? nextSnap.description : value);
+    setSourceLanguage((value) => value === sourceLanguage ? nextSnap.sourceLanguage : value);
+    setCategory((value) => value === category ? nextSnap.category : value);
+    setTags((value) => value === tags ? nextSnap.tags : value);
+    setThumbnailUrl((value) => value === thumbnailUrl ? nextSnap.thumbnailUrl : value);
+    setContentRating((value) => value === contentRating ? nextSnap.contentRating : value);
+    setSubtitleTracks((value) => value === subtitleTracks ? nextSnap.subtitleTracks : value);
+    setSavedSnapshot(nextSnap);
+
+    invalidateClientVideoCache(videoId);
+    if (video.slug) invalidateClientVideoCache(video.slug);
+  };
+
+  const saveVideoPlaylists = async (selectedIds) => {
+    const fallback = 'บันทึกเพลย์ลิสต์ไม่สำเร็จ';
+    const { playlistIds: savedIds } = await requestPlaylistJson(`/api/videos/${videoId}/playlists`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playlistIds: selectedIds }),
+    }, fallback);
+    if (!Array.isArray(savedIds)) throw new Error(fallback);
+
+    setPlaylistState((draft) => draft?.videoId === videoId ? {
+      videoId,
+      savedIds,
+      selectedIds: draft.selectedIds === selectedIds ? savedIds : draft.selectedIds,
+    } : draft);
   };
 
   const handleSave = async () => {
-    if (!video || isSaving) return;
+    if (!videoId || isSaving || !isDirty) return;
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
       setSaveFeedback({ type: 'error', text: 'กรุณาระบุชื่อวิดีโอก่อนบันทึก' });
@@ -444,83 +566,26 @@ function StudioEditorInner() {
     setIsSaving(true);
     setSaveFeedback({ type: '', text: '' });
 
-    try {
-      const normalizedTracks = normalizeSubtitleTracks(subtitleTracks);
-      const res = await fetch(`/api/videos/${video.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: trimmedTitle,
-          description,
-          sourceLanguage,
-          category,
-          tags,
-          thumbnailUrl,
-          thumbnailOptions: Array.isArray(video.thumbnailOptions) ? video.thumbnailOptions : [],
-          ...(!isRatingEvaluated(video.ratingCheckStatus) && contentRating !== savedSnapshot?.contentRating && { contentRating }),
-          subtitleTracks: normalizedTracks,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || 'ไม่สามารถบันทึกการเปลี่ยนแปลงได้');
-      }
+    const [detailsResult, playlistsResult] = await Promise.allSettled([
+      isMetadataDirty && saveVideoDetails(trimmedTitle),
+      isPlaylistDirty && saveVideoPlaylists(playlistDraft.selectedIds),
+    ]);
 
-      const savedV = data.video || {};
-      const nextSnap = {
-        title: savedV.title ?? trimmedTitle,
-        description: savedV.description ?? description,
-        sourceLanguage: normalizeVideoLanguageCode(savedV.sourceLanguage ?? sourceLanguage),
-        category: savedV.category ?? category,
-        tags: parseTagsField(savedV.tags ?? tags),
-        thumbnailUrl: savedV.thumbnailUrl ?? thumbnailUrl,
-        contentRating: savedV.contentRating ?? contentRating,
-        subtitleTracks: normalizeSubtitleTracks(
-          savedV.subtitleTracks ?? normalizedTracks,
-          savedV.subtitleSrt || '',
-          savedV.subtitleVtt || ''
-        ),
-      };
-
-      setVideo((prev) => ({
-        ...prev,
-        ...savedV,
-        title: nextSnap.title,
-        description: nextSnap.description,
-        sourceLanguage: nextSnap.sourceLanguage,
-        category: nextSnap.category,
-        tags: nextSnap.tags.join(', '),
-        thumbnailUrl: nextSnap.thumbnailUrl,
-        contentRating: nextSnap.contentRating,
-        subtitleTracks: nextSnap.subtitleTracks,
-        subtitleStatus: savedV.subtitleStatus ?? prev.subtitleStatus,
-      }));
-      setTitle(nextSnap.title);
-      setDescription(nextSnap.description);
-      setSourceLanguage(nextSnap.sourceLanguage);
-      setCategory(nextSnap.category);
-      setTags(nextSnap.tags);
-      setThumbnailUrl(nextSnap.thumbnailUrl);
-      setContentRating(nextSnap.contentRating);
-      setSubtitleTracks(nextSnap.subtitleTracks);
-      setSavedSnapshot(nextSnap);
-
-      invalidateClientVideoCache(video.id);
-      if (video.slug) invalidateClientVideoCache(video.slug);
-
-      setSaveFeedback({
-        type: 'success',
-        text: 'บันทึกการเปลี่ยนแปลงเรียบร้อย (อัปเดตฐานข้อมูลและ OneDrive แล้ว)',
-      });
-      setTimeout(() => setSaveFeedback({ type: '', text: '' }), 4500);
-    } catch (err) {
-      setSaveFeedback({
-        type: 'error',
-        text: err.message || 'เกิดข้อผิดพลาดในการบันทึก',
-      });
-    } finally {
-      setIsSaving(false);
+    const detailsFailed = detailsResult.status === 'rejected';
+    const playlistsFailed = playlistsResult.status === 'rejected';
+    const failed = detailsFailed || playlistsFailed;
+    const feedback = {
+      type: failed ? 'error' : 'success',
+      text: [
+        isMetadataDirty && (detailsFailed ? detailsResult.reason?.message || 'บันทึกรายละเอียดวิดีโอไม่สำเร็จ' : 'บันทึกรายละเอียดวิดีโอแล้ว'),
+        isPlaylistDirty && (playlistsFailed ? playlistsResult.reason?.message || 'บันทึกเพลย์ลิสต์ไม่สำเร็จ' : 'บันทึกเพลย์ลิสต์แล้ว'),
+      ].filter(Boolean).join(' · '),
+    };
+    setSaveFeedback(feedback);
+    if (!failed) {
+      setTimeout(() => setSaveFeedback((current) => current === feedback ? { type: '', text: '' } : current), 4500);
     }
+    setIsSaving(false);
   };
 
   const dispatchStudioWorkflow = async (payload, pendingSetter, optimisticallyUpdate) => {
@@ -912,6 +977,15 @@ function StudioEditorInner() {
                   setCategory={setCategory}
                   tags={tags}
                   setTags={setTags}
+                  playlistIds={playlistDraft?.selectedIds}
+                  onPlaylistsChange={(selectedIds) => {
+                    setPlaylistState((draft) => draft?.savedIds && draft.videoId === videoId
+                      ? { ...draft, selectedIds }
+                      : draft);
+                  }}
+                  playlistLoadError={playlistDraft?.error}
+                  onRetryPlaylists={() => setPlaylistState(null)}
+                  isSaving={isSaving}
                   thumbnailUrl={thumbnailUrl}
                   setThumbnailUrl={setThumbnailUrl}
                   thumbnailOptions={video.thumbnailOptions || []}

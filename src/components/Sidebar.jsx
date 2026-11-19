@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useSidebar } from '@/context/SidebarContext';
 import { 
   Home, History, PlusSquare, 
-  Settings, PlaySquare, ChevronRight, ListOrdered, Gauge
+  Settings, PlaySquare, ChevronRight, ListOrdered, Gauge, ListVideo, Clock, ThumbsUp
 } from 'lucide-react';
 import { APP_VERSION_LABEL } from '@/lib/version';
 
@@ -32,7 +32,13 @@ export default function Sidebar() {
 
   const userItems = [
     { label: 'ประวัติการรับชม', path: '/history', icon: History, exact: false },
+    { label: 'เพลย์ลิสต์', path: '/playlists', icon: ListVideo, prefetch: false },
     { label: 'คลังวิดีโอ', path: '/videos', icon: PlaySquare, exact: false },
+  ];
+
+  const playlistShortcuts = [
+    { label: 'ดูภายหลัง', path: '/playlist/WL', icon: Clock, prefetch: false, exact: true },
+    { label: 'วิดีโอที่ชอบ', path: '/playlist/LL', icon: ThumbsUp, prefetch: false, exact: true },
   ];
 
   const systemItems = [
@@ -43,6 +49,9 @@ export default function Sidebar() {
   // Match helper: exact for '/', startsWith for everything else
   const isItemActive = (item) => {
     if (item.exact) return pathname === item.path;
+    if (item.path === '/playlists' && pathname?.startsWith('/playlist/')) {
+      return !isExpanded || /^\/playlist\/\d+$/.test(pathname);
+    }
     return pathname === item.path || pathname?.startsWith(item.path + '/');
   };
 
@@ -65,6 +74,7 @@ export default function Sidebar() {
                   <li key={item.path}>
                     <Link
                       href={item.path}
+                      prefetch={item.prefetch}
                       aria-label={item.label}
                       aria-current={isActive ? 'page' : undefined}
                       title={item.label}
@@ -121,13 +131,15 @@ export default function Sidebar() {
           <span>คุณ</span>
           <ChevronRight className="w-3.5 h-3.5 text-[#8C857B] dark:text-[#AAAAAA]" />
         </Link>
-        {userItems.map((item) => {
+        {[...userItems, ...playlistShortcuts].map((item) => {
           const Icon = item.icon;
           const isActive = isItemActive(item);
           return (
             <Link
               key={item.path + item.label}
               href={item.path}
+              prefetch={item.prefetch}
+              aria-current={isActive ? 'page' : undefined}
               className={`flex items-center gap-4 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors ${
                 isActive
                   ? 'bg-[#FFF4EB] dark:bg-[#FF7A00]/15 text-[#FF7A00] font-bold'

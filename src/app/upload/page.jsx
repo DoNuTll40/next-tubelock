@@ -55,6 +55,7 @@ export default function UploadPage() {
   const sourceLanguageRef = useRef('');
   const categoryRef = useRef('general');
   const tagsRef = useRef(['HLS', 'stream']);
+  const selectedPlaylistIdsRef = useRef([]);
   const logEndRef = useRef(null);
   const pollingTimerRef = useRef(null);
 
@@ -93,6 +94,7 @@ export default function UploadPage() {
   const [sourceLanguage, setSourceLanguage] = useState('');
   const [category, setCategory] = useState('general');
   const [tags, setTags] = useState(['HLS', 'stream']);
+  const [selectedPlaylistIds, setSelectedPlaylistIds] = useState([]);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [thumbnailOptions, setThumbnailOptions] = useState([]);
   const [thumbnailStatus, setThumbnailStatus] = useState('waiting');
@@ -458,6 +460,11 @@ export default function UploadPage() {
         setSourceLanguage(sourceLanguageRef.current = normalizeVideoLanguageCode(draft?.sourceLanguage ?? job.sourceLanguage ?? ''));
         setCategory(categoryRef.current = draft?.category ?? job.category);
         setTags(tagsRef.current = draft?.tags ?? job.tags);
+        const restoredPlaylistIds = Array.isArray(draft?.selectedPlaylistIds)
+          ? draft.selectedPlaylistIds.filter((id) => Number.isInteger(id) && id > 0)
+          : [];
+        selectedPlaylistIdsRef.current = restoredPlaylistIds;
+        setSelectedPlaylistIds(restoredPlaylistIds);
         setContentRating(draft?.contentRating ?? job.userSelectedRating ?? job.contentRating);
         setActiveStep(job.status === 'UPLOADING' ? draft?.activeStep ?? 1 : 4);
         setSubtitleMode(draft?.subtitleMode === 'requested-ai' || draft?.subtitleMode === 'manual' ? draft.subtitleMode : 'auto');
@@ -536,12 +543,12 @@ export default function UploadPage() {
     if (!activeVideoId || isRestoring) return;
     try {
       localStorage.setItem(`tubelock_upload_${activeVideoId}`, JSON.stringify({
-        title, description, sourceLanguage, category, tags, contentRating, activeStep,
+        title, description, sourceLanguage, category, tags, selectedPlaylistIds, contentRating, activeStep,
         subtitleMode, manualSubtitleFile, customPrompt,
         thumbnailUrl, thumbnailOptions,
       }));
     } catch {}
-  }, [activeVideoId, isRestoring, title, description, sourceLanguage, category, tags, contentRating, activeStep,
+  }, [activeVideoId, isRestoring, title, description, sourceLanguage, category, tags, selectedPlaylistIds, contentRating, activeStep,
     subtitleMode, manualSubtitleFile, customPrompt, thumbnailUrl, thumbnailOptions]);
 
   // Immediate Upload to OneDrive as soon as a video file is selected
@@ -765,6 +772,8 @@ export default function UploadPage() {
     setSourceLanguage('');
     setCategory('general');
     setTags(['HLS', 'stream']);
+    selectedPlaylistIdsRef.current = [];
+    setSelectedPlaylistIds([]);
     setThumbnailUrl('');
     setIsUploading(false);
     setIsRawUploaded(false);
@@ -795,6 +804,8 @@ export default function UploadPage() {
   // Handle File Selection
   const handleFile = async (selectedFile) => {
     if (!selectedFile) return;
+    selectedPlaylistIdsRef.current = [];
+    setSelectedPlaylistIds([]);
     setErrorMsg(null);
     setCompletedVideo(null);
     setCurrentStatus(null);
@@ -1045,6 +1056,7 @@ export default function UploadPage() {
           sourceLanguage: finalSourceLanguage,
           category: finalCategory,
           tags: finalTags,
+          playlistIds: selectedPlaylistIdsRef.current,
           contentRating,
           subtitleMode,
           manualSubtitleSrt:
@@ -1456,6 +1468,11 @@ export default function UploadPage() {
                     setTags={(val) => {
                       setTags(val);
                       tagsRef.current = val;
+                    }}
+                    selectedPlaylistIds={selectedPlaylistIds}
+                    onChangePlaylists={(ids) => {
+                      selectedPlaylistIdsRef.current = ids;
+                      setSelectedPlaylistIds(ids);
                     }}
                     thumbnailUrl={thumbnailUrl}
                     thumbnailOptions={thumbnailOptions}

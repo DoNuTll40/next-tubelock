@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useEffectEvent, useRef, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { Play, RotateCcw, Loader2, LockKeyhole, X } from 'lucide-react';
 import { encodeVideoSlug, getVideoResumeTime, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
@@ -12,6 +12,7 @@ import { extractDominantColor } from '@/lib/colorExtractor';
 
 // Track pre-warmed videos in memory
 const preWarmedIds = new Set();
+const PLAYLIST_COUNTDOWN_SECONDS = 5;
 
 /**
  * Format Badge Duration (YouTube Style: 45:27, 7:06, 3:40:08)
@@ -89,7 +90,7 @@ export function getDynamicRecommendations(currentVideo, allVideos = [], count = 
 /**
  * EndScreenCard: Single recommendation card with dynamic dominant color hover background
  */
-function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = false, onSelectVideo = null }) {
+function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = false, onSelectVideo = null, onPlayNext = null }) {
   const [dominantColor, setDominantColor] = useState(null);
   const imgRef = useRef(null);
 
@@ -126,6 +127,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
     '--hover-tint-dark': dominantColor.darkBg,
     '--hover-tint-light': dominantColor.lightBg,
   } : undefined;
+  const Action = onPlayNext ? 'button' : Link;
 
   return (
     <div
@@ -135,9 +137,14 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
         }`}
       style={cardHoverStyle}
     >
-      <Link
-        href={watchUrl}
+      <Action
+        href={onPlayNext ? undefined : watchUrl}
+        type={onPlayNext ? 'button' : undefined}
         onClick={(e) => {
+          if (onPlayNext) {
+            onPlayNext();
+            return;
+          }
           if (onSelectVideo && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
             e.preventDefault();
             onSelectVideo(v, resumeTime);
@@ -150,7 +157,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
           }
         }}
         aria-label={v.title || 'เล่นวิดีโอ'}
-        className="absolute inset-0 z-10 rounded-2xl focus-visible:outline-2 focus-visible:outline-[#FF7A00]"
+        className="absolute inset-0 z-10 cursor-pointer rounded-2xl focus-visible:outline-2 focus-visible:outline-[#FF7A00]"
       />
       {/* Thumbnail Container */}
       <div
@@ -271,7 +278,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
 /**
  * MobileEndScreenPrompt: YouTube-style single featured recommendation prompt ("วิดีโอแนะนำ") for mobile viewports
  */
-function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSelectVideo = null, onDismiss = null }) {
+function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSelectVideo = null, onDismiss = null, onPlayNext = null, countdown = null }) {
   const videoSlug = encodeVideoSlug(v.id, v.category) || v.id;
   const durationStr = formatBadgeDuration(v.duration);
   const isMature = isMatureVideo(v);
@@ -306,6 +313,11 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
     }
   };
 
+  const Action = onPlayNext ? 'button' : Link;
+  const actionProps = onPlayNext
+    ? { type: 'button', onClick: onPlayNext }
+    : { href: watchUrl, onClick: handlePlay };
+
   return (
     <div
       className={`absolute inset-0 z-40 flex flex-col justify-between bg-[#0F0F0F]/95 backdrop-blur-md text-white select-none pointer-events-auto animate-fadeIn ${
@@ -320,7 +332,7 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-[#FF7A00] shadow-[0_0_8px_#FF7A00]" />
           <span className={`font-semibold text-white/95 ${isFullscreen ? 'text-sm sm:text-base' : 'text-xs'}`}>
-            วิดีโอแนะนำ
+            {countdown !== null ? `กำลังเล่นรายการถัดไปใน ${countdown} วินาที` : onPlayNext ? 'รายการถัดไป' : 'วิดีโอแนะนำ'}
           </span>
         </div>
         <button
@@ -329,7 +341,7 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
             e.stopPropagation();
             onDismiss?.();
           }}
-          aria-label="ปิดวิดีโอแนะนำ"
+          aria-label={onPlayNext ? 'ปิดการเล่นรายการถัดไป' : 'ปิดวิดีโอแนะนำ'}
           className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/25 border border-white/15 backdrop-blur-md text-white/90 hover:text-white active:scale-90 transition cursor-pointer"
         >
           <X className={isFullscreen ? 'w-5 h-5' : 'w-4 h-4'} />
@@ -344,9 +356,8 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
           }`}
         >
           {!canRevealPoster && (
-            <Link
-              href={watchUrl}
-              onClick={handlePlay}
+            <Action
+              {...actionProps}
               aria-label={v.title || 'เล่นวิดีโอ'}
               className="absolute inset-0 z-10 rounded-xl"
             />
@@ -415,21 +426,20 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
           )}
         </div>
 
-        <Link
-          href={watchUrl}
-          onClick={handlePlay}
+        <Action
+          {...actionProps}
           className="flex flex-col justify-center min-w-0 flex-1 text-left cursor-pointer"
         >
           <span className={`font-semibold text-[#FF7A00] ${isFullscreen ? 'text-xs mb-1' : 'text-[10px] mb-0.5'}`}>
             รายการถัดไป
           </span>
-          <h4 className={`text-white font-bold leading-snug ${isFullscreen ? 'text-base sm:text-xl line-clamp-3' : 'text-[13px] line-clamp-2'}`}>
+          <span className={`text-white font-bold leading-snug ${isFullscreen ? 'text-base sm:text-xl line-clamp-3' : 'text-[13px] line-clamp-2'}`}>
             {v.title}
-          </h4>
+          </span>
           <span className={`text-zinc-400 truncate ${isFullscreen ? 'text-xs sm:text-sm mt-1.5' : 'text-[11px] mt-0.5'}`}>
             {v.author_name || 'TubeLock'}
           </span>
-        </Link>
+        </Action>
       </div>
 
       {/* Bottom Action Pills */}
@@ -444,19 +454,18 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
             isFullscreen ? 'h-10 sm:h-11 text-xs sm:text-sm' : 'h-8.5 text-xs'
           }`}
         >
-          ปิด
+          {onPlayNext ? 'ยกเลิก' : 'ปิด'}
         </button>
 
-        <Link
-          href={watchUrl}
-          onClick={handlePlay}
+        <Action
+          {...actionProps}
           className={`rounded-full bg-[#FF7A00] hover:bg-[#FF8C1A] active:bg-[#E56E00] border border-[#FF9A40]/40 active:scale-[0.98] text-white font-bold flex items-center justify-center gap-1.5 shadow-[0_4px_20px_rgba(255,122,0,0.35)] transition cursor-pointer ${
             isFullscreen ? 'h-10 sm:h-11 text-xs sm:text-sm' : 'h-8.5 text-xs'
           }`}
         >
           <Play className={isFullscreen ? 'w-4 h-4 fill-white text-white' : 'w-3.5 h-3.5 fill-white text-white'} />
           <span>เล่นเลย</span>
-        </Link>
+        </Action>
       </div>
     </div>
   );
@@ -471,11 +480,44 @@ export default function PlayerEndScreen({
   onReplay = null,
   onSelectVideo = null,
   onDismiss = null,
+  playlistNextVideo = null,
+  onPlayNext = null,
 }) {
-  const recommendations = useMemo(
-    () => (isVisible ? getDynamicRecommendations(currentVideo, relatedVideos, 3) : []),
-    [isVisible, currentVideo, relatedVideos]
-  );
+  const [seconds, setSeconds] = useState(PLAYLIST_COUNTDOWN_SECONDS);
+  const [countdownCancelled, setCountdownCancelled] = useState(false);
+  const countdownTimer = useRef(null);
+  const hasPlaylistNext = Boolean(playlistNextVideo && onPlayNext);
+  const showCountdown = isVisible && hasPlaylistNext && !countdownCancelled;
+
+  const recommendations = useMemo(() => {
+    if (!isVisible) return [];
+    if (!hasPlaylistNext) return getDynamicRecommendations(currentVideo, relatedVideos, 3);
+    const others = relatedVideos.filter((video) => String(video?.id) !== String(playlistNextVideo.id));
+    return [playlistNextVideo, ...getDynamicRecommendations(currentVideo, others, 2)];
+  }, [isVisible, currentVideo, relatedVideos, hasPlaylistNext, playlistNextVideo]);
+
+  function stopCountdown() {
+    clearInterval(countdownTimer.current);
+    setCountdownCancelled(true);
+  }
+
+  function playPlaylistNext() {
+    stopCountdown();
+    onPlayNext?.();
+  }
+
+  const finishCountdown = useEffectEvent(playPlaylistNext);
+  useEffect(() => {
+    if (!showCountdown) return;
+    const deadline = Date.now() + PLAYLIST_COUNTDOWN_SECONDS * 1000;
+    const timer = setInterval(() => {
+      const remaining = Math.ceil((deadline - Date.now()) / 1000);
+      if (remaining <= 0) finishCountdown();
+      else setSeconds(remaining);
+    }, 250);
+    countdownTimer.current = timer;
+    return () => clearInterval(timer);
+  }, [showCountdown]);
 
   // Pre-warm video on card hover for instant playback
   const handlePreWarm = useCallback((vidId) => {
@@ -501,7 +543,12 @@ export default function PlayerEndScreen({
         isFullscreen={isFullscreen}
         onPreWarm={handlePreWarm}
         onSelectVideo={onSelectVideo}
-        onDismiss={onDismiss}
+        onDismiss={() => {
+          if (hasPlaylistNext) stopCountdown();
+          onDismiss?.();
+        }}
+        onPlayNext={hasPlaylistNext ? playPlaylistNext : null}
+        countdown={showCountdown ? seconds : null}
       />
     );
   }
@@ -539,6 +586,18 @@ export default function PlayerEndScreen({
         </div>
       )}
 
+      {showCountdown && (
+        <div className="mb-3 flex max-w-full flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-xl border border-white/15 bg-white/10 px-3 py-1.5 text-xs text-white sm:mb-4">
+          <span>กำลังเล่นรายการถัดไปใน <span className="font-semibold tabular-nums text-[#FF9A40]">{seconds}</span> วินาที</span>
+          <button type="button" onClick={stopCountdown} className="cursor-pointer rounded-full px-2.5 py-1 hover:bg-white/15">
+            ยกเลิก
+          </button>
+          <button type="button" onClick={playPlaylistNext} className="cursor-pointer rounded-full bg-[#FF7A00] px-2.5 py-1 font-semibold text-[#212529] hover:bg-[#FF9A40]">
+            เล่นเลย
+          </button>
+        </div>
+      )}
+
       {/* 3 Video Cards Row (YouTube Desktop 3-Card Layout) */}
       <div className={`grid grid-cols-2 md:grid-cols-3 w-full mx-auto items-start ${containerMaxWidth} ${isFullscreen
         ? 'gap-5 sm:gap-6'
@@ -552,6 +611,7 @@ export default function PlayerEndScreen({
             isThirdOnMobile={idx === 2}
             onPreWarm={handlePreWarm}
             onSelectVideo={onSelectVideo}
+            onPlayNext={hasPlaylistNext && idx === 0 ? playPlaylistNext : null}
           />
         ))}
       </div>

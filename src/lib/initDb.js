@@ -1,4 +1,5 @@
 import { getDb } from './db';
+import { ensurePlaylistSchema } from './playlists';
 import { ensureVideoVersionsSchema } from './videoVersions';
 
 /**
@@ -64,4 +65,10 @@ export async function initTables() {
   `;
 
   await ensureVideoVersionsSchema(sql);
+  try {
+    await ensurePlaylistSchema(sql);
+  } catch (error) {
+    // Login can bootstrap users before the videos table exists on a fresh database.
+    if (error.code !== '42P01') console.warn('[playlists schema warning]:', error.message);
+  }
 }

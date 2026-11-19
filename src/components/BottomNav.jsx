@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, History, Plus, PlaySquare, Settings } from 'lucide-react';
+import { Home, History, Plus, PlaySquare, ListVideo } from 'lucide-react';
 
 export default function BottomNav() {
   const pathname = usePathname();
@@ -21,7 +21,7 @@ export default function BottomNav() {
     { label: 'ประวัติ', path: '/history', icon: History },
     { label: 'อัปโหลด', path: '/upload', icon: Plus, isPrimary: true, isDev: false },
     { label: 'คลังวิดีโอ', path: '/videos', icon: PlaySquare },
-    { label: 'ตั้งค่า', path: '/settings', icon: Settings },
+    { label: 'เพลย์ลิสต์', path: '/playlists', icon: ListVideo, prefetch: false },
   ];
 
   return (
@@ -29,7 +29,8 @@ export default function BottomNav() {
       <nav className="max-w-md mx-auto grid grid-cols-5 items-center h-14 sm:h-16 px-2 relative">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.path;
+          const isActive = pathname === item.path
+            || (item.path === '/playlists' && pathname?.startsWith('/playlist/'));
 
           // Primary Upload Button (Floating large orange button)
           if (item.isPrimary) {
@@ -57,6 +58,8 @@ export default function BottomNav() {
             <Link
               key={item.path}
               href={item.path}
+              prefetch={item.prefetch}
+              aria-current={isActive ? 'page' : undefined}
               className={`flex flex-col items-center justify-center gap-1 h-full transition-colors active:scale-95 ${isActive ? 'text-[#FF7A00]' : 'text-[#8C857B] dark:text-[#888888] hover:text-[#212529] dark:hover:text-[#F1F1F1]'
                 }`}
             >

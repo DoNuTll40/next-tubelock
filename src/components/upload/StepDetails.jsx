@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
 import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
+import PlaylistPicker from '@/components/playlist/PlaylistPicker';
 import {
   UPLOAD_CATEGORIES,
   SUGGESTED_TAGS,
@@ -31,6 +32,8 @@ export default function StepDetails({
   setCategory,
   tags,
   setTags,
+  selectedPlaylistIds,
+  onChangePlaylists,
   thumbnailUrl = '',
   thumbnailOptions = [],
   thumbnailStatus = 'waiting',
@@ -441,6 +444,8 @@ export default function StepDetails({
           );
         })}
       </div>
+
+      <PlaylistPicker selectedIds={selectedPlaylistIds} onChange={onChangePlaylists} />
     </div>
   );
 }

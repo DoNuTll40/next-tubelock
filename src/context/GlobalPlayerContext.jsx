@@ -24,6 +24,7 @@ import {
   preloadHlsModule,
 } from '@/lib/playbackResolver';
 import {
+  decodeVideoSlug,
   encodeVideoSlug,
   isMatureVideo,
   isMusicVideo,
@@ -137,6 +138,65 @@ function readStoredPlayerConfig() {
   }
 }
 
+function normalizePlaylistKey(rawKey) {
+  const key = rawKey?.toLowerCase();
+  if (key === 'wl' || key === 'watch_later') return 'WL';
+  if (key === 'll' || key === 'liked') return 'LL';
+  if (/^\d+$/.test(key) && Number(key) > 0 && Number(key) <= 2147483647) return String(Number(key));
+  return null;
+}
+
+function writePlaylistParams(url, state) {
+  if (state) {
+    url.searchParams.set('list', state.listKey);
+    url.searchParams.set('index', String(state.currentIndex + 1));
+  } else {
+    url.searchParams.delete('list');
+    url.searchParams.delete('index');
+  }
+  if (state?.isShuffled) url.searchParams.set('shuffle', '1');
+  else url.searchParams.delete('shuffle');
+}
+
+function replacePlaylistInUrl(state) {
+  const url = new URL(window.location.href);
+  if (!url.pathname.startsWith('/watch/')) return;
+  writePlaylistParams(url, state);
+  if (url.href !== window.location.href) window.history.replaceState(null, '', url);
+}
+
+function shufflePlaylist(size, currentIndex, startWithCurrent = true) {
+  const order = Array.from({ length: size }, (_, i) => i).filter((i) => i !== currentIndex);
+  for (let i = order.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  if (startWithCurrent) return [currentIndex, ...order];
+  order.splice(1 + Math.floor(Math.random() * order.length), 0, currentIndex);
+  return order;
+}
+
+function preparePlaylistCycle(state) {
+  const needsNextCycle = state.isShuffled && state.loopMode === 'all' && state.items.length > 1
+    && state.shuffleOrder.at(-1) === state.currentIndex;
+  if (needsNextCycle && !state.nextShuffleOrder) {
+    return { ...state, nextShuffleOrder: shufflePlaylist(state.items.length, state.currentIndex, false) };
+  }
+  return !needsNextCycle && state.nextShuffleOrder ? { ...state, nextShuffleOrder: null } : state;
+}
+
+function getPlaylistStep(state, direction) {
+  if (!state?.items.length) return null;
+  const { currentIndex, isShuffled, items, loopMode, nextShuffleOrder, shuffleOrder } = state;
+  const position = isShuffled ? shuffleOrder.indexOf(currentIndex) : currentIndex;
+  const target = position + direction;
+  if (target >= 0 && target < items.length) return { index: isShuffled ? shuffleOrder[target] : target };
+  if (loopMode !== 'all') return null;
+  if (!isShuffled) return { index: target < 0 ? items.length - 1 : 0 };
+  if (direction < 0) return null;
+  return { index: nextShuffleOrder?.[0] ?? currentIndex, shuffleOrder: nextShuffleOrder };
+}
+
 export function GlobalPlayerProvider({ children }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -162,6 +222,8 @@ export function GlobalPlayerProvider({ children }) {
   const sessionWatchedIdsRef = useRef(new Set());
   const rankedMetaKeyRef = useRef('');
   const rankedSeedRef = useRef(0);
+  const playlistStateRef = useRef(null);
+  const playlistRequestRef = useRef(null);
 
   const [isDockedInWatch, setIsDockedInWatch] = useState(false);
   const [selection, setSelection] = useState({ id: null, startTime: 0 });
@@ -170,6 +232,7 @@ export function GlobalPlayerProvider({ children }) {
   const [isSwitchingVersion, setIsSwitchingVersion] = useState(false);
   const [isSwitchingVideo, setIsSwitchingVideo] = useState(false);
   const [relatedVideos, setRelatedVideos] = useState([]);
+  const [playlistState, setPlaylistState] = useState(null);
   const [ssrShowAdultPosters, setSsrShowAdultPosters] = useState(false);
   const [streamUrl, setStreamUrl] = useState('');
   const [storyboard, setStoryboard] = useState(null);
@@ -229,6 +292,91 @@ export function GlobalPlayerProvider({ children }) {
     currentVideoRef.current = video;
   }, [video]);
 
+  const updatePlaylist = useCallback((nextState) => {
+    const next = nextState ? preparePlaylistCycle(nextState) : null;
+    playlistStateRef.current = next;
+    setPlaylistState(next);
+    return next;
+  }, []);
+
+  const clearPlaylist = useCallback(({ updateUrl = true } = {}) => {
+    playlistRequestRef.current?.controller.abort();
+    playlistRequestRef.current = null;
+    if (playlistStateRef.current) updatePlaylist(null);
+    if (updateUrl) replacePlaylistInUrl(null);
+  }, [updatePlaylist]);
+
+  const loadPlaylist = useCallback(async () => {
+    const url = new URL(window.location.href);
+    if (!url.pathname.startsWith('/watch/')) return;
+    const listKey = normalizePlaylistKey(url.searchParams.get('list'));
+    if (!listKey) {
+      clearPlaylist();
+      return;
+    }
+
+    function syncPlaylist(state, location) {
+      const id = decodeVideoSlug(location.pathname.split('/').at(-1));
+      const currentIndex = state.items.findIndex((item) => Number(item.id) === id);
+      if (currentIndex < 0) {
+        clearPlaylist();
+        return;
+      }
+      const isShuffled = location.searchParams.get('shuffle') === '1';
+      if (state.isShuffled !== isShuffled) {
+        state = {
+          ...state,
+          isShuffled,
+          shuffleOrder: isShuffled ? shufflePlaylist(state.items.length, currentIndex) : [],
+          nextShuffleOrder: null,
+        };
+      }
+      if (state.currentIndex !== currentIndex) state = { ...state, currentIndex, nextShuffleOrder: null };
+      if (state !== playlistStateRef.current) state = updatePlaylist(state);
+      replacePlaylistInUrl(state);
+    }
+
+    const current = playlistStateRef.current;
+    if (current?.listKey === listKey && !current.isLoading) {
+      syncPlaylist(current, url);
+      return;
+    }
+    if (playlistRequestRef.current?.listKey === listKey) return;
+    playlistRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    playlistRequestRef.current = { listKey, controller };
+    updatePlaylist({
+      listKey, playlist: null, items: [], currentIndex: -1, loopMode: 'none',
+      isShuffled: false, shuffleOrder: [], isLoading: true,
+    });
+
+    try {
+      const response = await fetch(`/api/playlists/${encodeURIComponent(listKey)}`, { signal: controller.signal });
+      if (!response.ok) throw new Error('Could not load playlist');
+      const data = await response.json();
+      if (!data.success || !data.playlist || !Array.isArray(data.items)) throw new Error('Invalid playlist');
+      const location = new URL(window.location.href);
+      if (controller.signal.aborted || !location.pathname.startsWith('/watch/')
+        || normalizePlaylistKey(location.searchParams.get('list')) !== listKey) return;
+      syncPlaylist({
+        listKey,
+        playlist: data.playlist,
+        items: data.items.filter((item) => item.id && (!item.status || item.status === 'READY')),
+        currentIndex: -1,
+        loopMode: 'none',
+        isShuffled: false,
+        shuffleOrder: [],
+        isLoading: false,
+      }, location);
+    } catch {
+      const location = new URL(window.location.href);
+      if (!controller.signal.aborted && location.pathname.startsWith('/watch/')
+        && normalizePlaylistKey(location.searchParams.get('list')) === listKey) clearPlaylist();
+    } finally {
+      if (playlistRequestRef.current?.controller === controller) playlistRequestRef.current = null;
+    }
+  }, [clearPlaylist, updatePlaylist]);
+
   // Ensure singleton host is parked offscreen when no /watch slot owns it
   useLayoutEffect(() => {
     if (
@@ -258,6 +406,7 @@ export function GlobalPlayerProvider({ children }) {
     activeSlotRef.current = null;
 
     const t = Promise.resolve().then(() => {
+      if (!window.location.pathname.startsWith('/watch/')) clearPlaylist({ updateUrl: false });
       setIsDockedInWatch((prev) => (activeSlotRef.current ? prev : false));
     });
 
@@ -274,7 +423,7 @@ export function GlobalPlayerProvider({ children }) {
     }
 
     return () => { void t; };
-  }, [pathname, hostEl]);
+  }, [pathname, hostEl, clearPlaylist]);
 
   const dockPlayerSlot = useCallback(
     (slotEl) => {
@@ -335,7 +484,9 @@ export function GlobalPlayerProvider({ children }) {
 
   // YouTube In-Place Instant Video Switcher (keeps #movie_player, #player-primary-container & Fullscreen 100% intact)
   const handleSelectVideo = useCallback(
-    (newVideo, resumeTime = 0, { replace = false } = {}) => {
+    (newVideo, resumeTime = 0, {
+      replace = false, preservePlaylist = false, nextPlaylistIndex, nextShuffleOrder, updateHistory = true,
+    } = {}) => {
       if (
         !newVideo ||
         !newVideo.id ||
@@ -348,13 +499,25 @@ export function GlobalPlayerProvider({ children }) {
       const safeId = newVideo.id && newVideo.id !== 'undefined' ? newVideo.id : '';
       const videoSlug =
         encodeVideoSlug(safeId, newVideo.category) || (safeId ? String(safeId) : '');
-      const newUrl = videoSlug ? `/watch/${videoSlug}` : '/';
+      const currentPlaylist = playlistStateRef.current;
+      let nextPlaylist = null;
+      if (preservePlaylist && currentPlaylist?.items[nextPlaylistIndex]?.id === newVideo.id) {
+        nextPlaylist = updatePlaylist({
+          ...currentPlaylist,
+          currentIndex: nextPlaylistIndex,
+          shuffleOrder: nextShuffleOrder ?? currentPlaylist.shuffleOrder,
+          nextShuffleOrder: null,
+        });
+      } else if (!preservePlaylist) {
+        clearPlaylist({ updateUrl: false });
+      }
 
       if (typeof window !== 'undefined') {
-        if (replace) {
-          window.history.replaceState(null, '', newUrl);
-        } else {
-          window.history.pushState(null, '', newUrl);
+        if (updateHistory) {
+          const url = new URL(videoSlug ? `/watch/${videoSlug}` : '/', window.location.origin);
+          if (nextPlaylist) writePlaylistParams(url, nextPlaylist);
+          if (replace && (!currentPlaylist || preservePlaylist)) window.history.replaceState(null, '', url);
+          else window.history.pushState(null, '', url);
         }
         document.title = newVideo.title ? `${newVideo.title} - TubeLock` : 'TubeLock';
         if (window.scrollY > 120) {
@@ -399,13 +562,81 @@ export function GlobalPlayerProvider({ children }) {
       setActiveVersionKey(null);
       setIsSwitchingVersion(false);
       setIsSwitchingVideo(Boolean(streamUrlRef.current));
-      setSelection({ id: newVideo.id, startTime: Number(resumeTime) || 0 });
+      setSelection({
+        id: newVideo.id,
+        startTime: Number(resumeTime) || 0,
+        forcePlaylistPlayback: Boolean(nextPlaylist && updateHistory),
+      });
       setVideo(newVideo);
       setRelatedVideos(rankedRelated);
       setStreamAttemptSeq((s) => s + 1);
     },
-    [silenceAndPauseCurrentVideo]
+    [silenceAndPauseCurrentVideo, clearPlaylist, updatePlaylist]
   );
+
+  const selectPlaylistVideo = useCallback((index, nextShuffleOrder) => {
+    const state = playlistStateRef.current;
+    const next = state?.items[index];
+    if (!next) return;
+    if (index === state.currentIndex) {
+      const player = videoRef.current;
+      if (player) {
+        player.currentTime = 0;
+        player.play().catch(() => {});
+      }
+      return;
+    }
+    handleSelectVideo(next, 0, { preservePlaylist: true, nextPlaylistIndex: index, nextShuffleOrder });
+  }, [handleSelectVideo]);
+
+  const playNextInPlaylist = useCallback(() => {
+    const next = getPlaylistStep(playlistStateRef.current, 1);
+    if (next) selectPlaylistVideo(next.index, next.shuffleOrder);
+  }, [selectPlaylistVideo]);
+
+  const playPrevInPlaylist = useCallback(() => {
+    const previous = getPlaylistStep(playlistStateRef.current, -1);
+    if (previous) selectPlaylistVideo(previous.index);
+  }, [selectPlaylistVideo]);
+
+  const togglePlaylistShuffle = useCallback(() => {
+    const state = playlistStateRef.current;
+    if (!state?.items.length) return;
+    const isShuffled = !state.isShuffled;
+    const next = updatePlaylist({
+      ...state,
+      isShuffled,
+      shuffleOrder: isShuffled ? shufflePlaylist(state.items.length, state.currentIndex) : [],
+      nextShuffleOrder: null,
+    });
+    replacePlaylistInUrl(next);
+  }, [updatePlaylist]);
+
+  const cyclePlaylistLoop = useCallback(() => {
+    const state = playlistStateRef.current;
+    if (!state?.items.length) return;
+    const loopMode = state.loopMode === 'none' ? 'all' : state.loopMode === 'all' ? 'one' : 'none';
+    updatePlaylist({ ...state, loopMode });
+  }, [updatePlaylist]);
+
+  const restorePlaylistWatchLocation = useCallback(() => {
+    const url = new URL(window.location.href);
+    if (!url.pathname.startsWith('/watch/')) return true;
+    const listKey = normalizePlaylistKey(url.searchParams.get('list'));
+    const state = playlistStateRef.current;
+    if ((!listKey && !state) || url.searchParams.has('v')) return false;
+    const id = decodeVideoSlug(url.pathname.split('/').at(-1));
+    const index = state?.listKey === listKey
+      ? state.items.findIndex((item) => Number(item.id) === id)
+      : -1;
+    const item = index >= 0 ? state.items[index] : candidatePoolRef.current.get(String(id));
+    if (!item && String(id) !== String(selectionIdRef.current)) return false;
+    if (item) {
+      handleSelectVideo(item, 0, { preservePlaylist: Boolean(listKey), nextPlaylistIndex: index, updateHistory: false });
+    }
+    void loadPlaylist();
+    return true;
+  }, [handleSelectVideo, loadPlaylist]);
 
   const handlePrimeVideo = useCallback(
     (newVideo, { startTime = 0, versionKey = null, inPlace = false, replace = false } = {}) => {
@@ -689,7 +920,7 @@ export function GlobalPlayerProvider({ children }) {
       setError(null);
       setDetectedRatio(null);
       setIsSwitchingVersion(true);
-      setSelection({ id, startTime: currentPos });
+      setSelection((previous) => ({ ...previous, id, startTime: currentPos }));
       setActiveVersionKey(targetKey);
       setStreamAttemptSeq((s) => s + 1);
 
@@ -714,14 +945,14 @@ export function GlobalPlayerProvider({ children }) {
     let cancelled = false;
     let hydrationTimer = null;
     const storyboardRequest = new AbortController();
+    // Selection refs change immediately, before React cleans up the old effect.
+    const isStale = () => cancelled || String(selectionIdRef.current) !== String(id)
+      || activeVersionKeyRef.current !== activeVersionKey;
 
     async function initStream() {
       try {
         setError(null);
         setStoryboard(null);
-
-        const prevBlobUrls = [...activeBlobUrlsRef.current];
-        activeBlobUrlsRef.current = [];
 
         if (latestSourceTypeRef.current !== 'mp4') {
           preloadHlsModule().catch(() => {});
@@ -755,7 +986,7 @@ export function GlobalPlayerProvider({ children }) {
           fetch(`/api/videos/${id}${versionQuery}`, { cache: 'no-store' })
             .then((r) => (r.ok ? r.json() : null))
             .then((detailRes) => {
-              if (cancelled || !detailRes?.video) return;
+              if (isStale() || !detailRes?.video) return;
               loadedDetailIdRef.current = id;
               const dv = detailRes.video;
               const mergedForRank = { ...(currentVideoRef.current || {}), ...dv };
@@ -791,7 +1022,7 @@ export function GlobalPlayerProvider({ children }) {
               showAdultPreviews: showAdultPoster,
               version: activeVersionKey,
             }));
-        if (cancelled) return;
+        if (isStale()) return;
 
         const needsRestrictedStoryboard =
           !showAdultPoster && sourceData.type === 'hls' && isMatureVideo(sourceData.video);
@@ -810,7 +1041,7 @@ export function GlobalPlayerProvider({ children }) {
               )
             )
             .then((preview) => {
-              if (!cancelled && preview) setStoryboard(preview);
+              if (!isStale() && preview) setStoryboard(preview);
             })
             .catch(() => {});
         }
@@ -840,6 +1071,7 @@ export function GlobalPlayerProvider({ children }) {
         try {
           resolved = await resolveClientPlaybackSource(sourceData);
         } catch (resolveErr) {
+          if (isStale()) return;
           console.warn(
             '[GlobalPlayer] Token expired or fetch failed, auto-recovering with fresh tokens...',
             resolveErr
@@ -852,12 +1084,13 @@ export function GlobalPlayerProvider({ children }) {
           resolved = await resolveClientPlaybackSource(sourceData);
         }
 
-        if (cancelled) return;
-
-        if (resolved.blobUrls && resolved.blobUrls.length > 0) {
-          activeBlobUrlsRef.current = resolved.blobUrls;
+        if (isStale()) {
+          for (const url of resolved.blobUrls ?? []) URL.revokeObjectURL(url);
+          return;
         }
 
+        const prevBlobUrls = activeBlobUrlsRef.current;
+        activeBlobUrlsRef.current = resolved.blobUrls ?? [];
         partialSegmentMapRef.current = resolved.segmentUrlMap
           ? { ...resolved.segmentUrlMap }
           : {};
@@ -878,7 +1111,7 @@ export function GlobalPlayerProvider({ children }) {
         // Two-Phase Cold-Batch Hydration (~2.2s later upgrade _002+.ts to direct CF Worker URLs)
         if (resolved.partial) {
           hydrationTimer = setTimeout(() => {
-            if (cancelled) return;
+            if (isStale()) return;
             fetchVideoSourceClient(id, {
               preferFull: true,
               lowPriority: true,
@@ -886,7 +1119,7 @@ export function GlobalPlayerProvider({ children }) {
               version: activeVersionKey,
             })
               .then((fullSource) => {
-                if (cancelled || !Array.isArray(fullSource?.items)) return;
+                if (isStale() || !Array.isArray(fullSource?.items)) return;
                 const map = partialSegmentMapRef.current || {};
                 for (const item of fullSource.items) {
                   if (item?.name && item.downloadUrl && item.name.toLowerCase().endsWith('.ts')) {
@@ -903,7 +1136,7 @@ export function GlobalPlayerProvider({ children }) {
                 if (!needsRestrictedStoryboard) {
                   resolveStoryboard(fullSource.items)
                     .then((sb) => {
-                      if (!cancelled && sb) setStoryboard(sb);
+                      if (!isStale() && sb) setStoryboard(sb);
                     })
                     .catch(() => {});
                 }
@@ -918,7 +1151,7 @@ export function GlobalPlayerProvider({ children }) {
         } else if (resolved.storyboardPromise) {
           resolved.storyboardPromise
             .then((sb) => {
-              if (!cancelled && sb) {
+              if (!isStale() && sb) {
                 setStoryboard(sb);
               }
             })
@@ -928,7 +1161,9 @@ export function GlobalPlayerProvider({ children }) {
         }
       } catch (err) {
         console.error('[GlobalPlayer Error]:', err);
-        if (!cancelled) {
+        if (!isStale()) {
+          for (const url of activeBlobUrlsRef.current) URL.revokeObjectURL(url);
+          activeBlobUrlsRef.current = [];
           isSwitchingVideoRef.current = false;
           setIsSwitchingVideo(false);
           setIsSwitchingVersion(false);
@@ -969,6 +1204,11 @@ export function GlobalPlayerProvider({ children }) {
     encodeVideoSlug(video?.id, video?.category) ||
     (video?.id && video?.id !== 'undefined' ? String(video?.id) : '');
 
+  const playlistNextStep = getPlaylistStep(playlistState, 1);
+  const playlistPrevStep = getPlaylistStep(playlistState, -1);
+  const playlistNextVideo = playlistNextStep ? playlistState.items[playlistNextStep.index] : null;
+  const playlistPrevVideo = playlistPrevStep ? playlistState.items[playlistPrevStep.index] : null;
+
   const contextValue = useMemo(
     () => ({
       video,
@@ -992,6 +1232,16 @@ export function GlobalPlayerProvider({ children }) {
       handleRatioChange,
       handleSelectVideo,
       handleSelectVersion,
+      playlistState,
+      playlistNextVideo,
+      loadPlaylist,
+      clearPlaylist,
+      restorePlaylistWatchLocation,
+      selectPlaylistVideo,
+      togglePlaylistShuffle,
+      cyclePlaylistLoop,
+      playNextInPlaylist,
+      playPrevInPlaylist,
       dockPlayerSlot,
       undockPlayerSlot,
       hydrateWatchPage,
@@ -1017,6 +1267,16 @@ export function GlobalPlayerProvider({ children }) {
       handleRatioChange,
       handleSelectVideo,
       handleSelectVersion,
+      playlistState,
+      playlistNextVideo,
+      loadPlaylist,
+      clearPlaylist,
+      restorePlaylistWatchLocation,
+      selectPlaylistVideo,
+      togglePlaylistShuffle,
+      cyclePlaylistLoop,
+      playNextInPlaylist,
+      playPrevInPlaylist,
       dockPlayerSlot,
       undockPlayerSlot,
       hydrateWatchPage,
@@ -1083,6 +1343,13 @@ export function GlobalPlayerProvider({ children }) {
                   setAmbientMode={handleSetAmbientMode}
                   currentVideo={video}
                   relatedVideos={relatedVideos}
+                  playlistActive={Boolean(playlistState)}
+                  playlistNextVideo={playlistNextVideo}
+                  playlistPrevVideo={playlistPrevVideo}
+                  playlistLoopMode={playlistState?.loopMode ?? 'none'}
+                  onPlayNext={playlistNextVideo ? playNextInPlaylist : null}
+                  onPlayPrev={playlistPrevVideo ? playPrevInPlaylist : null}
+                  forcePlaylistPlayback={Boolean(selection.forcePlaylistPlayback)}
                   onSelectVideo={handleSelectVideo}
                   isSwitchingVideo={isSwitchingVideo || !streamUrl}
                   versions={playableVersions}

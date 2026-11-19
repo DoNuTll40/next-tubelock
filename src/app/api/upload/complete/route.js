@@ -1,12 +1,13 @@
 import { isSubtitleWorkflowActive, markSubtitleDispatchFailed } from '@/lib/subtitleWorkflow';
 import { randomUUID } from 'node:crypto';
-import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
+import { getCachedServerSession, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { triggerGitHubWorkflow } from '@/app/api/upload/dispatch-action/route';
 import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
 import { EVALUATED_RATING_STATUSES, isRatingEvaluated } from '@/lib/ratingStatus';
 import { normalizeVideoLanguageCode, getVideoLanguage } from '@/lib/videoLanguages';
+import { addVideoToPlaylists, ensurePlaylistSchema } from '@/lib/playlists';
 
 /**
  * POST /api/upload/complete
@@ -24,6 +25,7 @@ export async function POST(request) {
       sourceLanguage = '',
       category,
       tags,
+      playlistIds = [],
       contentRating = 'all',
       subtitleMode = 'auto', // 'manual' | 'requested-ai' | 'auto'
       manualSubtitleSrt = '',
@@ -57,7 +59,7 @@ export async function POST(request) {
     }
 
     const sql = getDb();
-    const userId = await getSessionUserId(sql);
+    const userId = (await getCachedServerSession())?.id;
     if (userId == null) return accessError(401);
 
     // Ensure columns exist
@@ -308,6 +310,15 @@ export async function POST(request) {
 
     if (!claimed.length) {
       return NextResponse.json({ success: false, error: 'Video status changed' }, { status: 409 });
+    }
+
+    if (Array.isArray(playlistIds) && playlistIds.length > 0) {
+      try {
+        await ensurePlaylistSchema(sql);
+        await addVideoToPlaylists(sql, userId, claimed[0].id, playlistIds);
+      } catch (error) {
+        console.warn('[Upload Playlist Warning]', { videoId, code: error.code, message: error.message });
+      }
     }
 
     const githubToken = process.env.GITHUB_TOKEN || process.env.GH_PAT || process.env.GITHUB_PAT || '';

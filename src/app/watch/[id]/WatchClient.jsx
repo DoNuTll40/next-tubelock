@@ -9,14 +9,17 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import VideoCard from '@/components/VideoCard';
 import DescriptionBox from '@/components/watch/DescriptionBox';
+import WatchPlaylistPanel from '@/components/playlist/WatchPlaylistPanel';
 import {
   DESKTOP_PLAYER_MAX_HEIGHT,
   useGlobalPlayer,
 } from '@/context/GlobalPlayerContext';
+import { useSession } from '@/context/SessionContext';
 import {
   Share2,
   ThumbsUp,
@@ -28,6 +31,8 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
+
+const SaveToPlaylistModal = dynamic(() => import('@/components/playlist/SaveToPlaylistModal'), { ssr: false });
 
 function formatDuration(seconds) {
   if (!seconds || isNaN(seconds)) return '0:00';
@@ -60,9 +65,14 @@ export default function WatchClient({
   initialSource = null,
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const session = useSession();
   const searchParams = useSearchParams();
   const urlT = searchParams?.get('t');
   const urlV = searchParams?.get('v')?.trim() || null;
+  const urlList = searchParams?.get('list');
+  const urlListIndex = searchParams?.get('index');
+  const urlShuffle = searchParams?.get('shuffle');
 
   const {
     video: globalVideo,
@@ -74,6 +84,14 @@ export default function WatchClient({
     dockPlayerSlot,
     undockPlayerSlot,
     hydrateWatchPage,
+    playlistState,
+    playlistNextVideo,
+    loadPlaylist,
+    clearPlaylist,
+    restorePlaylistWatchLocation,
+    selectPlaylistVideo,
+    togglePlaylistShuffle,
+    cyclePlaylistLoop,
   } = useGlobalPlayer();
 
   // Compute SSR fallback aspect ratio for initial pre-dock frame
@@ -94,12 +112,8 @@ export default function WatchClient({
   const relatedVideos = isDockedInWatch ? globalRelated : initialRelated;
   const videoRatio = isDockedInWatch ? globalVideoRatio : initialRatio;
 
-  const [copied, setCopied] = useState(false);
-  const [liked, setLiked] = useState(false);
-  const [disliked, setDisliked] = useState(false);
-  const [likeCount, setLikeCount] = useState(652);
+  const videoId = video?.id;
   const [isSubscribed, setIsSubscribed] = useState(false);
-  const [isSaved, setIsSaved] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [avatarError, setAvatarError] = useState(false);
   const [prevVideoId, setPrevVideoId] = useState(initialVideo?.id ?? null);
@@ -120,11 +134,15 @@ export default function WatchClient({
   // Handle browser Back / Forward buttons
   useEffect(() => {
     const handlePopState = () => {
-      router.refresh();
+      if (!restorePlaylistWatchLocation()) router.refresh();
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [router]);
+  }, [restorePlaylistWatchLocation, router]);
+
+  useEffect(() => {
+    void loadPlaylist();
+  }, [loadPlaylist, pathname, urlList, urlListIndex, urlShuffle]);
 
   // Clean URL query param (?t=...) after reading initial seek time, so page reload won't stick to old time!
   useEffect(() => {
@@ -185,37 +203,6 @@ export default function WatchClient({
     ro.observe(el);
     return () => ro.disconnect();
   }, [videoRatio, isDockedInWatch]);
-
-  const handleCopyLink = () => {
-    if (typeof window !== 'undefined') {
-      navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const handleLike = () => {
-    if (liked) {
-      setLiked(false);
-      setLikeCount((c) => c - 1);
-    } else {
-      setLiked(true);
-      setLikeCount((c) => c + 1);
-      if (disliked) setDisliked(false);
-    }
-  };
-
-  const handleDislike = () => {
-    if (disliked) {
-      setDisliked(false);
-    } else {
-      setDisliked(true);
-      if (liked) {
-        setLiked(false);
-        setLikeCount((c) => c - 1);
-      }
-    }
-  };
 
   const fileSizeMB = video?.file_size_bytes
     ? (Number(video.file_size_bytes) / (1024 * 1024)).toFixed(1)
@@ -362,44 +349,7 @@ export default function WatchClient({
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
-                <div className="flex items-center bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 rounded-full text-xs font-semibold text-[#0F0F0F] dark:text-[#F1F1F1] shrink-0 transition">
-                  <button
-                    type="button"
-                    onClick={handleLike}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-l-full active:scale-95 transition cursor-pointer hover:bg-black/5 dark:hover:bg-white/10"
-                  >
-                    <ThumbsUp className={`w-4 h-4 ${liked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
-                    <span className={liked ? 'text-[#FF7A00] font-bold' : ''}>{likeCount}</span>
-                  </button>
-                  <div className="w-px h-4 bg-black/15 dark:bg-white/15" />
-                  <button
-                    type="button"
-                    onClick={handleDislike}
-                    className="px-3 py-2 rounded-r-full active:scale-95 transition cursor-pointer hover:bg-black/5 dark:hover:bg-white/10"
-                  >
-                    <ThumbsDown className={`w-4 h-4 ${disliked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
-                  </button>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleCopyLink}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 text-[#0F0F0F] dark:text-[#F1F1F1] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
-                >
-                  <Share2 className="w-4 h-4" />
-                  <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsSaved(!isSaved)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 text-[#0F0F0F] dark:text-[#F1F1F1] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
-                >
-                  <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
-                  <span className={isSaved ? 'text-[#FF7A00] font-bold' : ''}>{isSaved ? 'บันทึกแล้ว' : 'บันทึก'}</span>
-                </button>
-              </div>
+              {videoId && <WatchActions key={`${videoId}:${session?.id ?? ''}`} videoId={videoId} userId={session?.id} />}
             </div>
 
             <DescriptionBox
@@ -415,6 +365,17 @@ export default function WatchClient({
 
         {/* Right / Sidebar: Related Videos Column */}
         <div className="w-full lg:w-[360px] xl:w-[450px] shrink-0 flex flex-col gap-3 px-3.5 sm:px-0 pt-2 lg:pt-0 pb-10">
+          {playlistState && (
+            <WatchPlaylistPanel
+              key={playlistState.listKey}
+              state={playlistState}
+              nextVideo={playlistNextVideo}
+              onSelect={selectPlaylistVideo}
+              onToggleShuffle={togglePlaylistShuffle}
+              onCycleLoop={cyclePlaylistLoop}
+              onClose={clearPlaylist}
+            />
+          )}
           <div
             style={{
               top: playerHeight ? `${playerHeight}px` : '56.25vw',
@@ -494,6 +455,177 @@ export default function WatchClient({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function WatchActions({ videoId, userId }) {
+  const router = useRouter();
+  const [copied, setCopied] = useState(false);
+  const [reaction, setReaction] = useState(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [error, setError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [isSaved, setIsSaved] = useState(false);
+  const [isSaveOpen, setIsSaveOpen] = useState(false);
+  const membershipChanged = useRef(false);
+  const liked = reaction?.liked ?? false;
+  const disliked = reaction?.disliked ?? false;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadMembership = async () => {
+      if (controller.signal.aborted) return;
+      try {
+        const response = await fetch(`/api/videos/${videoId}/playlists`, { signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error();
+        if (controller.signal.aborted) return;
+        setReaction({ liked: data.liked, disliked: false, count: data.likeCount });
+        if (!membershipChanged.current) setIsSaved(data.saved);
+      } catch {
+        if (!controller.signal.aborted) setError('โหลดสถานะวิดีโอไม่สำเร็จ');
+      }
+    };
+    queueMicrotask(loadMembership);
+    return () => controller.abort();
+  }, [videoId, loadAttempt]);
+
+  const openLogin = () => {
+    const { pathname, search } = window.location;
+    router.push(`/login?from=${encodeURIComponent(pathname + search)}`);
+  };
+
+  const handleReaction = async (isDislike) => {
+    if (!userId) {
+      openLogin();
+      return;
+    }
+    if (isUpdating || !reaction) return;
+
+    const nextLiked = !isDislike && !liked;
+    const nextDisliked = isDislike && !disliked;
+    setError('');
+    setReaction({
+      liked: nextLiked,
+      disliked: nextDisliked,
+      count: Math.max(0, reaction.count + Number(nextLiked) - Number(liked)),
+    });
+    if (nextLiked === liked) return;
+
+    setIsUpdating(true);
+    try {
+      const url = '/api/playlists/LL/items';
+      const response = await (nextLiked
+        ? fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoId }),
+          })
+        : fetch(`${url}?videoId=${videoId}`, { method: 'DELETE' }));
+
+      if (response.status === 401) {
+        setReaction(reaction);
+        openLogin();
+        return;
+      }
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error();
+    } catch {
+      setReaction(reaction);
+      setError('อัปเดตสถานะถูกใจไม่สำเร็จ');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSave = () => {
+    if (userId) setIsSaveOpen(true);
+    else openLogin();
+  };
+
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 select-none -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
+        <div className="flex items-center bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 rounded-full text-xs font-semibold text-[#0F0F0F] dark:text-[#F1F1F1] shrink-0 transition">
+          <button
+            type="button"
+            aria-label={reaction ? `ถูกใจ ${reaction.count} ครั้ง` : 'ถูกใจ'}
+            aria-pressed={liked}
+            disabled={isUpdating || Boolean(userId && !reaction)}
+            onClick={() => void handleReaction(false)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-l-full active:scale-95 transition cursor-pointer hover:bg-black/5 dark:hover:bg-white/10 disabled:cursor-default"
+          >
+            <ThumbsUp className={`w-4 h-4 ${liked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
+            <span className={liked ? 'text-[#FF7A00] font-bold' : ''}>{reaction?.count ?? 'ถูกใจ'}</span>
+          </button>
+          <div className="w-px h-4 bg-black/15 dark:bg-white/15" />
+          <button
+            type="button"
+            aria-label="ไม่ชอบ"
+            aria-pressed={disliked}
+            disabled={isUpdating || Boolean(userId && !reaction)}
+            onClick={() => void handleReaction(true)}
+            className="px-3 py-2 rounded-r-full active:scale-95 transition cursor-pointer hover:bg-black/5 dark:hover:bg-white/10 disabled:cursor-default"
+          >
+            <ThumbsDown className={`w-4 h-4 ${disliked ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleCopyLink}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 text-[#0F0F0F] dark:text-[#F1F1F1] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
+        >
+          <Share2 className="w-4 h-4" />
+          <span>{copied ? 'คัดลอกแล้ว!' : 'แชร์'}</span>
+        </button>
+
+        <button
+          type="button"
+          aria-haspopup={userId ? 'dialog' : undefined}
+          onClick={handleSave}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 text-[#0F0F0F] dark:text-[#F1F1F1] text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer"
+        >
+          <Bookmark className={`w-4 h-4 ${isSaved ? 'fill-[#FF7A00] text-[#FF7A00]' : 'text-[#0F0F0F] dark:text-[#F1F1F1]'}`} />
+          <span className={isSaved ? 'text-[#FF7A00] font-bold' : ''}>{isSaved ? 'บันทึกแล้ว' : 'บันทึก'}</span>
+        </button>
+      </div>
+
+      {error && (
+        <div className="mt-1.5 flex items-center gap-2 text-xs text-rose-700 dark:text-rose-400">
+          <p role="alert">{error}</p>
+          {!reaction && (
+            <button
+              type="button"
+              className="font-semibold underline cursor-pointer"
+              onClick={() => {
+                setError('');
+                setLoadAttempt((attempt) => attempt + 1);
+              }}
+            >
+              ลองอีกครั้ง
+            </button>
+          )}
+        </div>
+      )}
+
+      {isSaveOpen && (
+        <SaveToPlaylistModal
+          videoId={Number(videoId)}
+          onClose={() => setIsSaveOpen(false)}
+          onMembershipChange={({ saved }) => {
+            membershipChanged.current = true;
+            setIsSaved(saved);
+          }}
+        />
+      )}
     </div>
   );
 }

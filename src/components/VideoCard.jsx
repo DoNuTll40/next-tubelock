@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import {
   Play,
   Clock,
@@ -16,6 +18,7 @@ import {
   Pencil
 } from 'lucide-react';
 import { memo, useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { formatResolutionBadge, encodeVideoSlug, isMatureVideo, getVideoResumeTime } from '@/lib/videoUtils';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { prewarmVideoSourceClient, invalidateClientVideoCache, preloadHlsModule } from '@/lib/playbackResolver';
@@ -25,6 +28,8 @@ import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
 import { useSession } from '@/context/SessionContext';
 import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
+
+const SaveToPlaylistModal = dynamic(() => import('@/components/playlist/SaveToPlaylistModal'), { ssr: false });
 
 // Module-level Set: track which video IDs are already pre-warmed this session
 const preWarmedIds = new Set();
@@ -42,7 +47,11 @@ function VideoCard({
   renderMenu = null,
   isMenuOpen = false,
 }) {
+  const router = useRouter();
   const [showMenu, setShowMenu] = useState(false);
+  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [playlistNotice, setPlaylistNotice] = useState(null);
   const [imgError, setImgError] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -232,10 +241,91 @@ function VideoCard({
   }, [isMusic, video?.id]);
 
   const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
+  const playlistVideoId = Number(safeId);
+  const canSave = Number.isSafeInteger(playlistVideoId) && playlistVideoId > 0;
   const videoSlug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
   const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, video.duration);
   const watchUrl = href || (videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/');
   const effectiveProgressPct = progressPctOverride !== null ? progressPctOverride : progressPct;
+
+  useEffect(() => {
+    if (!playlistNotice) return;
+    const timer = setTimeout(() => setPlaylistNotice(null), 2400);
+    return () => clearTimeout(timer);
+  }, [playlistNotice]);
+
+  const openLogin = () => {
+    const { pathname, search } = window.location;
+    router.push(`/login?from=${encodeURIComponent(pathname + search)}`);
+  };
+
+  const handleSaveToWatchLater = async () => {
+    if (!canSave || isSaving) return;
+    setShowMenu(false);
+    if (!isLoggedIn) {
+      openLogin();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const response = await fetch('/api/playlists/WL/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId: playlistVideoId }),
+      });
+      if (response.status === 401) {
+        openLogin();
+        return;
+      }
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error();
+      setPlaylistNotice({ message: 'บันทึกไปยังดูภายหลังแล้ว', error: false });
+    } catch {
+      setPlaylistNotice({ message: 'บันทึกไปยังดูภายหลังไม่สำเร็จ', error: true });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleOpenPlaylistModal = () => {
+    setShowMenu(false);
+    if (isLoggedIn) setShowPlaylistModal(true);
+    else openLogin();
+  };
+
+  const menuProps = {
+    video,
+    showMenu,
+    setShowMenu,
+    onOpenDeleteModal: () => setShowDeleteModal(true),
+    canDelete: Boolean(onDelete),
+    canEdit,
+    onSaveToWatchLater: canSave ? handleSaveToWatchLater : undefined,
+    onOpenPlaylistModal: canSave ? handleOpenPlaylistModal : undefined,
+    isSaving,
+  };
+
+  const playlistOverlays = (
+    <>
+      {showPlaylistModal && (
+        <SaveToPlaylistModal
+          key={playlistVideoId}
+          videoId={playlistVideoId}
+          onClose={() => setShowPlaylistModal(false)}
+        />
+      )}
+      {playlistNotice && createPortal(
+        <div
+          role={playlistNotice.error ? 'alert' : 'status'}
+          className={`pointer-events-none fixed bottom-20 sm:bottom-6 left-1/2 z-[120] -translate-x-1/2 whitespace-nowrap rounded-full px-4 py-2.5 text-sm font-medium shadow-xl ${playlistNotice.error ? 'bg-rose-700 text-white' : 'bg-[#212529] text-white dark:bg-[#F1F1F1] dark:text-[#0F0F0F]'}`}
+        >
+          {playlistNotice.message}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
 
   // CSS variables กำหนดสี Hover แบบ YouTube (สีชัดลึกใน Dark Mode / พาสเทลใน Light Mode)
   const cardHoverStyle = dominantColor ? {
@@ -344,15 +434,7 @@ function VideoCard({
 
           {/* 4. เฉพาะปุ่ม 3 จุด เมนู: ตรึงไว้ที่มุมล่างขวาสุด และแสดงเฉพาะตอน Hover ตัวการ์ด */}
           <div className="absolute right-0 bottom-0">
-            <VideoMenu
-              video={video}
-              variant="half"
-              showMenu={showMenu}
-              setShowMenu={setShowMenu}
-              onOpenDeleteModal={() => setShowDeleteModal(true)}
-              canDelete={Boolean(onDelete)}
-              canEdit={canEdit}
-            />
+            <VideoMenu {...menuProps} variant="half" />
           </div>
         </div>
 
@@ -366,6 +448,7 @@ function VideoCard({
             videoTitle={video.title}
           />
         )}
+        {playlistOverlays}
       </div>
     );
   }
@@ -458,17 +541,7 @@ function VideoCard({
           </div>
         </div>
 
-        {(onDelete || canEdit) && (
-          <VideoMenu
-            video={video}
-            variant="compact"
-            showMenu={showMenu}
-            setShowMenu={setShowMenu}
-            onOpenDeleteModal={() => setShowDeleteModal(true)}
-            canDelete={Boolean(onDelete)}
-            canEdit={canEdit}
-          />
-        )}
+        {(canSave || onDelete || canEdit) && <VideoMenu {...menuProps} variant="compact" />}
 
         {showDeleteModal && (
           <DeleteVideoModal
@@ -480,6 +553,7 @@ function VideoCard({
             videoTitle={video.title}
           />
         )}
+        {playlistOverlays}
       </div>
     );
   }
@@ -626,15 +700,7 @@ function VideoCard({
         {renderMenu ? (
           renderMenu()
         ) : (
-          <VideoMenu
-            video={video}
-            variant="grid"
-            showMenu={showMenu}
-            setShowMenu={setShowMenu}
-            onOpenDeleteModal={() => setShowDeleteModal(true)}
-            canDelete={Boolean(onDelete)}
-            canEdit={canEdit}
-          />
+          <VideoMenu {...menuProps} variant="grid" />
         )}
       </div>
 
@@ -648,6 +714,7 @@ function VideoCard({
           videoTitle={video.title}
         />
       )}
+      {playlistOverlays}
     </div>
   );
 }
@@ -665,10 +732,41 @@ function VideoMenu({
   onOpenDeleteModal,
   canDelete = false,
   canEdit = false,
+  onSaveToWatchLater,
+  onOpenPlaylistModal,
+  isSaving,
 }) {
   const isHalf = variant === 'half';
   const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
   const slug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
+  const playlistItemClass = isHalf
+    ? 'px-4 py-2.5 gap-3.5'
+    : 'px-2.5 py-2 gap-2 rounded-lg text-[#606060] dark:text-zinc-300';
+  const playlistIconClass = isHalf
+    ? 'w-5 h-5 shrink-0 text-[#606060] dark:text-zinc-300 stroke-[1.8]'
+    : 'w-3.5 h-3.5 shrink-0 text-[#77716A] dark:text-zinc-400';
+  const playlistActions = onSaveToWatchLater && (
+    <>
+      <button
+        type="button"
+        className={`w-full text-left flex items-center transition-colors hover:bg-[#F5F2EB] dark:hover:bg-white/10 cursor-pointer disabled:opacity-50 disabled:cursor-wait ${playlistItemClass}`}
+        onClick={onSaveToWatchLater}
+        disabled={isSaving}
+      >
+        <Clock className={playlistIconClass} />
+        <span>บันทึกไปยังดูภายหลัง</span>
+      </button>
+      <button
+        type="button"
+        className={`w-full text-left flex items-center transition-colors hover:bg-[#F5F2EB] dark:hover:bg-white/10 cursor-pointer disabled:opacity-50 disabled:cursor-wait ${playlistItemClass}`}
+        onClick={onOpenPlaylistModal}
+        disabled={isSaving}
+      >
+        <Bookmark className={playlistIconClass} />
+        <span>บันทึกไปยังเพลย์ลิสต์</span>
+      </button>
+    </>
+  );
 
   return (
     <div className="relative shrink-0">
@@ -679,7 +777,8 @@ function VideoMenu({
           e.stopPropagation();
           setShowMenu(!showMenu);
         }}
-        className={`relative z-20 p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-[#F5F2EB] dark:hover:bg-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-all cursor-pointer ${showMenu ? 'opacity-100 bg-black/10 dark:bg-white/10' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+        aria-expanded={showMenu}
+        className={`relative z-20 p-1.5 rounded-full hover:bg-black/10 dark:hover:bg-[#F5F2EB] dark:hover:bg-white/10 text-[#8C857B] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-all cursor-pointer ${showMenu ? 'opacity-100 bg-black/10 dark:bg-white/10' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
           }`}
         title="ตัวเลือกเพิ่มเติม"
       >
@@ -723,23 +822,7 @@ function VideoMenu({
                 <span>เพิ่มลงในคิว</span>
               </button>
 
-              <button
-                type="button"
-                className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
-                onClick={() => setShowMenu(false)}
-              >
-                <Clock className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
-                <span>บันทึกไปยังดูภายหลัง</span>
-              </button>
-
-              <button
-                type="button"
-                className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
-                onClick={() => setShowMenu(false)}
-              >
-                <Bookmark className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
-                <span>บันทึกไปยังเพลย์ลิสต์</span>
-              </button>
+              {playlistActions}
 
               <button
                 type="button"
@@ -789,7 +872,7 @@ function VideoMenu({
             /* 2. เมนู COMPACT / GRID (เมนูกะทัดรัดแบบเดิม)                     */
             /* ------------------------------------------------------------- */
             <div
-              className="absolute right-0 top-full mt-1 z-50 w-40 bg-white text-[#212529] dark:bg-[#1c1c1c] dark:text-[#F1F1F1] rounded-xl border border-[#EFECE6] dark:border-white/10 shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-100 cursor-default select-none"
+              className="absolute right-0 top-full mt-1 z-50 w-48 bg-white text-[#212529] dark:bg-[#1c1c1c] dark:text-[#F1F1F1] rounded-xl border border-[#EFECE6] dark:border-white/10 shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-100 cursor-default select-none"
               onClick={(e) => e.stopPropagation()}
             >
               <Link
@@ -800,6 +883,8 @@ function VideoMenu({
                 <Play className="w-3.5 h-3.5 text-[#FF7A00]" />
                 <span>เล่นวิดีโอ</span>
               </Link>
+
+              {playlistActions}
 
               <button
                 type="button"

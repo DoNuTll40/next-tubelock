@@ -126,14 +126,29 @@ export function extractDominantColor(imgElement) {
       ? 'rgba(0, 0, 0, 0.05)'
       : `hsla(${hsl.h}, ${Math.max(45, Math.min(hsl.s, 85))}%, 38%, 0.09)`;
 
+    // Stacked Playlist Layers (YouTube-style 2-layer cover-tinted bars above playlist thumbnails)
+    const stackSatDark = isLowSat ? 0 : Math.min(Math.max(Math.round(hsl.s * 0.48), 16), 44);
+    const stackSatLight = isLowSat ? 8 : Math.min(Math.max(Math.round(hsl.s * 0.45), 18), 44);
+    const stackHueLight = isLowSat ? 30 : hsl.h;
+
+    const stackTopDark = `hsl(${hsl.h}, ${stackSatDark}%, 26%)`;
+    const stackMidDark = `hsl(${hsl.h}, ${Math.min(stackSatDark + 4, 48)}%, 44%)`;
+    const stackTopLight = `hsl(${stackHueLight}, ${stackSatLight}%, 82%)`;
+    const stackMidLight = `hsl(${stackHueLight}, ${Math.min(stackSatLight + 6, 50)}%, 68%)`;
+
     const result = {
       rgb: `${targetR}, ${targetG}, ${targetB}`,
+      hsl,
       darkBg: darkAlphaBg,
       lightBg: lightAlphaBg,
       darkAlphaBg,
       lightAlphaBg,
       rgbaDark: `rgba(${targetR}, ${targetG}, ${targetB}, 0.22)`,
       rgbaLight: `rgba(${targetR}, ${targetG}, ${targetB}, 0.09)`,
+      stackTopDark,
+      stackMidDark,
+      stackTopLight,
+      stackMidLight,
     };
 
     colorCache.set(src, result);

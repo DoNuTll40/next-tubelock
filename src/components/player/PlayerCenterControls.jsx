@@ -22,6 +22,7 @@ export default function PlayerCenterControls({
   resetControlsTimer,
   isEnded = false,
   onPlayNext = null,
+  onPlayPrev = null,
 }) {
   return (
     <>
@@ -77,9 +78,15 @@ export default function PlayerCenterControls({
               <div className="flex items-center gap-6 sm:gap-14 [&_button]:pointer-events-auto select-none [animation:fadein_0.15s_ease-out]">
                 <button
                   type="button"
-                  disabled
+                  disabled={!onPlayPrev}
                   aria-label="วิดีโอก่อนหน้า"
-                  className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/40 border border-white/10 text-white/35 flex items-center justify-center shadow-2xl cursor-default"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPlayPrev?.();
+                  }}
+                  className={`w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/40 border border-white/10 flex items-center justify-center shadow-2xl ${
+                    onPlayPrev ? 'text-white active:bg-[#FF7A00] active:scale-90 cursor-pointer' : 'text-white/35 cursor-default'
+                  }`}
                 >
                   <SkipBack className="w-5.5 h-5.5 fill-current" />
                 </button>

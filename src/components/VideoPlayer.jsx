@@ -76,6 +76,13 @@ export default function VideoPlayer({
   currentVideo = null,
   relatedVideos = [],
   onSelectVideo = null,
+  playlistActive = false,
+  playlistNextVideo = null,
+  playlistPrevVideo = null,
+  playlistLoopMode = 'none',
+  onPlayNext = null,
+  onPlayPrev = null,
+  forcePlaylistPlayback = false,
   isSwitchingVideo = false,
   versions = [],
   activeVersion = null,
@@ -83,6 +90,7 @@ export default function VideoPlayer({
   isSwitchingVersion = false,
   partialSegmentMapRef = null,
 }) {
+  const shouldAutoplay = defaultAutoplay || forcePlaylistPlayback;
   const video = useRef(null);
   const isActiveRef = useRef(isActive);
   useEffect(() => {
@@ -695,6 +703,8 @@ export default function VideoPlayer({
   const [accumulatedSeconds, setAccumulatedSeconds] = useState(0);
   const [contextMenu, setContextMenu] = useState(null);
   const [isLooping, setIsLooping] = useState(false);
+  const nativeLooping = isLooping && !playlistActive;
+  const repeatPlaylistVideo = playlistActive && playlistLoopMode === 'one';
   const controlsTimeoutRef = useRef(null);
   const lastSavedTimeRef = useRef(0);
   const lastSavedHistoryTimeRef = useRef(0);
@@ -718,7 +728,7 @@ export default function VideoPlayer({
     return () => { void resetTimer; };
   }, [videoId]);
 
-  const isUserPausedRef = useRef(!defaultAutoplay);
+  const isUserPausedRef = useRef(!shouldAutoplay);
   const wakeLockSentinelRef = useRef(null);
   const isSeekingRef = useRef(false);
   const seekTimeRef = useRef(0);
@@ -1079,7 +1089,7 @@ export default function VideoPlayer({
   // Reliable Autoplay with YouTube-style graceful unmuted -> muted fallback
   const attemptAutoPlay = useCallback(() => {
     const v = video.current;
-    if (!v || !isActiveRef.current || !defaultAutoplay || isUserPausedRef.current) return;
+    if (!v || !isActiveRef.current || !shouldAutoplay || isUserPausedRef.current) return;
     if (isSwitchingVideoRef.current || v.readyState < 2) return;
 
     // Do NOT autoplay if video is ended or approaching the end (leaves playback stopped at end screen)
@@ -1117,7 +1127,7 @@ export default function VideoPlayer({
         }
       });
     }
-  }, [defaultAutoplay, restoreAudioAfterTransition]);
+  }, [shouldAutoplay, restoreAudioAfterTransition]);
 
   // Initialize HLS or Native Player
   useEffect(() => {
@@ -1417,7 +1427,7 @@ export default function VideoPlayer({
             v.addEventListener('loadedmetadata', applySeek);
           }
         }
-        if (isActiveRef.current && defaultAutoplay && !isUserPausedRef.current) {
+        if (isActiveRef.current && shouldAutoplay && !isUserPausedRef.current) {
           restoreAudioAfterTransition();
           v.play().then(() => setIsPlaying(true)).catch((err) => {
             if (err?.name === 'NotAllowedError') {
@@ -1439,7 +1449,7 @@ export default function VideoPlayer({
         hlsInstanceRef.current = null;
       }
     };
-  }, [src, defaultAutoplay, video, showToast, isSwitchingVideo]);
+  }, [src, shouldAutoplay, video, showToast, isSwitchingVideo]);
 
   // Quality selector (100% Smooth switch: nextLevel only, no stream reload)
   const handleSelectQuality = (levelIdx) => {
@@ -1463,27 +1473,44 @@ export default function VideoPlayer({
     resetControlsTimer();
   };
 
+  const replayVideo = useCallback(() => {
+    const current = video.current;
+    if (!current) return;
+    current.currentTime = 0;
+    isEndedRef.current = false;
+    setIsEnded(false);
+    setIsMobileEndScreenDismissed(false);
+    isUserPausedRef.current = false;
+    restoreAudioAfterTransition();
+    if (fadeBlackOverlayRef.current) {
+      fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
+      fadeBlackOverlayRef.current.style.opacity = '0';
+    }
+    current.play()
+      .then(() => setIsPlaying(true))
+      .catch(() => setIsPlaying(false));
+    resetControlsTimer();
+  }, [resetControlsTimer, restoreAudioAfterTransition]);
+
+  const nextPlaylistVideoId = playlistNextVideo?.id;
+  const prevPlaylistVideoId = playlistPrevVideo?.id;
+  const selectPlaylistNext = useCallback(() => {
+    if (String(nextPlaylistVideoId) === String(videoId)) replayVideo();
+    else onPlayNext?.();
+  }, [nextPlaylistVideoId, videoId, replayVideo, onPlayNext]);
+  const selectPlaylistPrev = useCallback(() => {
+    if (String(prevPlaylistVideoId) === String(videoId)) replayVideo();
+    else onPlayPrev?.();
+  }, [prevPlaylistVideoId, videoId, replayVideo, onPlayPrev]);
+  const playPlaylistNext = playlistActive && playlistNextVideo && onPlayNext ? selectPlaylistNext : null;
+  const playPlaylistPrev = playlistActive && playlistPrevVideo && onPlayPrev ? selectPlaylistPrev : null;
+
   // Instant Play/Pause
   const togglePlay = useCallback(() => {
     if (!video.current) return;
 
     if (video.current.ended || isEnded || isEndedRef.current) {
-      video.current.currentTime = 0;
-      isEndedRef.current = false;
-      setIsEnded(false);
-      setIsMobileEndScreenDismissed(false);
-      isUserPausedRef.current = false;
-      restoreAudioAfterTransition();
-      if (fadeBlackOverlayRef.current) {
-        fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
-        fadeBlackOverlayRef.current.style.opacity = '0';
-      }
-      video.current.play()
-        .then(() => {
-          setIsPlaying(true);
-        })
-        .catch(() => setIsPlaying(false));
-      resetControlsTimer();
+      replayVideo();
       return;
     }
 
@@ -1501,7 +1528,7 @@ export default function VideoPlayer({
       setIsPlaying(false);
     }
     resetControlsTimer();
-  }, [video, isEnded, resetControlsTimer, restoreAudioAfterTransition]);
+  }, [video, isEnded, replayVideo, resetControlsTimer, restoreAudioAfterTransition]);
 
   // Volume Handlers
   const handleVolumeChange = (e) => {
@@ -2248,7 +2275,7 @@ export default function VideoPlayer({
   // Keyboard Shortcuts (Supports all keyboard languages via physical e.code)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (!isActive) return;
+      if (!isActive || e.defaultPrevented) return;
       // Ignore if user is typing in an input, textarea, or contentEditable element
       if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName) || e.target?.isContentEditable) return;
       // Do not hijack browser system combos (Ctrl+C, Ctrl+F, Ctrl+P, Alt+Left, etc.)
@@ -2256,6 +2283,17 @@ export default function VideoPlayer({
 
       const code = e.code;
       const key = e.key?.toLowerCase();
+
+      if (playlistActive && e.shiftKey) {
+        const isNext = code === 'KeyN' || key === 'n';
+        const isPrev = code === 'KeyP' || key === 'p';
+        if (isNext || isPrev) {
+          e.preventDefault();
+          const playTrack = isNext ? playPlaylistNext : playPlaylistPrev;
+          if (!e.repeat) playTrack?.();
+          return;
+        }
+      }
 
       // Number jump: 0-9 (Digit0-Digit9 or Numpad0-Numpad9 works even in Thai keyboard mode)
       const digitMatch = code?.match(/^(Digit|Numpad)([0-9])$/);
@@ -2269,6 +2307,7 @@ export default function VideoPlayer({
       }
 
       if (code === 'Space' || code === 'KeyK' || key === ' ' || key === 'k') {
+        if ((code === 'Space' || key === ' ') && e.target?.closest?.('button, a, [role="button"]')) return;
         e.preventDefault();
         togglePlay();
       } else if (code === 'KeyF' || key === 'f') {
@@ -2331,7 +2370,7 @@ export default function VideoPlayer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive]);
+  }, [isActive, togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive, playlistActive, playPlaylistNext, playPlaylistPrev]);
 
   // Sync position progress & playback speed with OS media controls (Android / Lockscreen / Bluetooth)
   const syncMediaPositionState = useCallback((positionOverride = null) => {
@@ -2467,6 +2506,20 @@ export default function VideoPlayer({
     };
   }, [isActive, videoId, video, togglePlay, commitSeek, seekStep, duration, syncMediaPositionState]);
 
+  useEffect(() => {
+    if (!isActive || !playlistActive || typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    const mediaSession = navigator.mediaSession;
+    const handlers = [['nexttrack', playPlaylistNext], ['previoustrack', playPlaylistPrev]];
+    for (const [action, handler] of handlers) {
+      try { mediaSession.setActionHandler(action, handler); } catch (_) { }
+    }
+    return () => {
+      for (const [action] of handlers) {
+        try { mediaSession.setActionHandler(action, null); } catch (_) { }
+      }
+    };
+  }, [isActive, playlistActive, playPlaylistNext, playPlaylistPrev]);
+
 
   const is4K = (resolution && resolution.toString().includes('2160')) ||
     (activeLevelLabel && (activeLevelLabel.includes('4K') || activeLevelLabel.includes('2160p')));
@@ -2504,12 +2557,10 @@ export default function VideoPlayer({
   }, [isMobileView, effectiveFullscreen, isSwitchingVideo, duration, src, targetInitialTime]);
 
   const controlsVisible = showControls || (!isMobileView && !isPlaying);
-  const upNextVideo = useMemo(
-    () => (Array.isArray(relatedVideos) && relatedVideos.length > 0 ? relatedVideos[0] : null),
-    [relatedVideos]
-  );
+  const upNextVideo = playlistActive ? (playPlaylistNext ? playlistNextVideo : null) : relatedVideos?.[0] ?? null;
+  const showEndScreen = isActive && isEnded && !nativeLooping && !repeatPlaylistVideo && !isSwitchingVideo && !isSwitchingVersion;
   const isMobileEndPromptOpen = Boolean(
-    isMobileView && isEnded && !isLooping && !isSwitchingVideo && !isMobileEndScreenDismissed && upNextVideo
+    isMobileView && showEndScreen && !isMobileEndScreenDismissed && upNextVideo
   );
   const subtitleLayout = useMemo(
     () => computeSubtitleBoxLayout({
@@ -2569,7 +2620,7 @@ export default function VideoPlayer({
         ref={video}
         poster={poster}
         crossOrigin="anonymous"
-        loop={isLooping}
+        loop={nativeLooping}
         playsInline
         webkit-playsinline="true"
         x5-playsinline="true"
@@ -2605,7 +2656,8 @@ export default function VideoPlayer({
           ) {
             return;
           }
-          const isAtEnd = v && (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current);
+          const isAtEnd = v.ended || isEndedRef.current ||
+            (!playlistActive && v.duration > 0 && v.currentTime >= v.duration - 0.5);
 
           if (isAtEnd) {
             const wasEnded = isEndedRef.current;
@@ -2670,6 +2722,10 @@ export default function VideoPlayer({
         }}
         onEnded={(event) => {
           if (isSwitchingVideo || !event.currentTarget.ended) return;
+          if (isActive && repeatPlaylistVideo) {
+            replayVideo();
+            return;
+          }
           const wasEnded = isEndedRef.current;
           isEndedRef.current = true;
           setIsEnded(true);
@@ -2677,11 +2733,12 @@ export default function VideoPlayer({
             setIsMobileEndScreenDismissed(false);
           }
           setIsPlaying(false);
+          if (playlistActive) setShowControls(true);
           if (fadeBlackOverlayRef.current) {
             fadeBlackOverlayRef.current.style.transition = 'opacity 200ms ease-out';
             fadeBlackOverlayRef.current.style.opacity = '1';
           }
-          if (isLooping) {
+          if (nativeLooping) {
             setTimeout(() => {
               if (fadeBlackOverlayRef.current) {
                 fadeBlackOverlayRef.current.style.transition = 'opacity 400ms ease-out';
@@ -2842,7 +2899,7 @@ export default function VideoPlayer({
         isMobileView={isMobileView}
         isEnded={isEnded}
         upNextVideo={upNextVideo}
-        onSelectVideo={onSelectVideo}
+        onSelectVideo={playlistActive ? playPlaylistNext : onSelectVideo}
         title={title}
         channelName={channelName}
         onBack={onBack}
@@ -2881,12 +2938,14 @@ export default function VideoPlayer({
         duration={duration}
         showToast={showToast}
         resetControlsTimer={resetControlsTimer}
-        onPlayNext={upNextVideo && onSelectVideo ? () => onSelectVideo(upNextVideo, 0) : null}
+        onPlayNext={playlistActive ? playPlaylistNext : upNextVideo && onSelectVideo ? () => onSelectVideo(upNextVideo, 0) : null}
+        onPlayPrev={playPlaylistPrev}
       />
 
       {/* 🎬 YouTube-style End Screen Overlay (Lazy-loaded via next/dynamic only when ended) */}
-      {(isEnded && !isLooping && !isSwitchingVideo && (!isMobileView || !isMobileEndScreenDismissed)) && (
+      {(showEndScreen && (!isMobileView || isMobileEndPromptOpen)) && (
         <PlayerEndScreen
+          key={`${videoId}:${playlistActive}:${playlistNextVideo?.id ?? ''}`}
           isVisible={true}
           isFullscreen={effectiveFullscreen}
           isMobileView={isMobileView}
@@ -2894,6 +2953,8 @@ export default function VideoPlayer({
           relatedVideos={relatedVideos}
           onReplay={togglePlay}
           onSelectVideo={onSelectVideo}
+          playlistNextVideo={playPlaylistNext ? playlistNextVideo : null}
+          onPlayNext={playPlaylistNext}
           onDismiss={() => {
             setIsMobileEndScreenDismissed(true);
             setShowControls(true);
@@ -2928,8 +2989,9 @@ export default function VideoPlayer({
           contextMenu={contextMenu}
           setContextMenu={setContextMenu}
           video={video}
-          isLooping={isLooping}
+          isLooping={nativeLooping}
           setIsLooping={setIsLooping}
+          showLoopOption={!playlistActive}
           showStats={showStats}
           setShowStats={setShowStats}
           showToast={showToast}

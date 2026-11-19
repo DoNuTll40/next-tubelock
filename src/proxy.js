@@ -29,6 +29,11 @@ export async function proxy(request) {
   const host = request.headers.get('host') || '';
   const isReadRequest = request.method === 'GET' || request.method === 'HEAD';
   const isPublicStreamImage = isReadRequest && pathname.startsWith('/streams/') && isPreviewImage(pathname);
+  const isVideoPlaylistApi = /^\/api\/videos\/[^/]+\/playlists$/.test(pathname);
+  // These handlers validate with getCachedServerSession and return their own 401 response.
+  const playlistApiHandlesAuth = isVideoPlaylistApi
+    || /^\/api\/playlists(?:\/[^/]+(?:\/items(?:\/reorder)?)?)?$/.test(pathname);
+  const playlistPageHandlesAuth = isReadRequest && pathname === '/playlists';
 
   // ── เข้า /watch โดยไม่ระบุรหัสวิดีโอ หรือเป็น undefined/null → redirect ไปหน้าแรก / เสมอ ──
   if (
@@ -53,6 +58,8 @@ export async function proxy(request) {
     pathname.startsWith('/api/search') ||
     (isReadRequest &&
       (pathname === '/api/videos' ||
+        /^\/(?:api\/playlists|playlist)\/\d+$/.test(pathname) ||
+        isVideoPlaylistApi ||
         (/^\/api\/videos\/[^/]+(?:\/poster)?$/.test(pathname) &&
           pathname !== '/api/videos/queue'))) ||
     pathname.startsWith('/api/og') ||
@@ -77,7 +84,7 @@ export async function proxy(request) {
   const token = request.cookies.get('tubelock_session')?.value;
 
   // ไม่มี token + ไม่ใช่ public path → redirect /login
-  if (!token && !isPublicPath) {
+  if (!token && !isPublicPath && !playlistApiHandlesAuth) {
     if (pathname.startsWith('/api/') || pathname.startsWith('/streams/')) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
@@ -87,7 +94,7 @@ export async function proxy(request) {
   }
 
   // Public routes perform their own optional session lookups when needed.
-  if (token && (!isPublicPath || pathname === '/login')) {
+  if (token && !playlistApiHandlesAuth && !playlistPageHandlesAuth && (!isPublicPath || pathname === '/login')) {
     if (pathname !== '/login' && getCachedSessionValid(token)) {
       // Validated within last 60s — skip redundant Neon DB round-trip!
     } else {
