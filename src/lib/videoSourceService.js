@@ -134,6 +134,44 @@ function extractM3u8Map(items) {
   return map;
 }
 
+function isMasterPlaylistConsistent(source) {
+  const isArr = Array.isArray(source);
+  const map = isArr ? extractM3u8Map(source) : source || {};
+  const hasMasterItem = isArr
+    ? source.some((i) => i?.name?.toLowerCase() === 'master.m3u8')
+    : Object.keys(map).some((k) => k.toLowerCase() === 'master.m3u8');
+  if (!hasMasterItem) return true;
+
+  const masterEntry = Object.entries(map).find(([k]) => k.toLowerCase() === 'master.m3u8');
+  const masterText = masterEntry?.[1];
+  const subNames = isArr
+    ? source
+        .filter((i) => i?.name && i.name.toLowerCase().endsWith('.m3u8') && i.name.toLowerCase() !== 'master.m3u8')
+        .map((i) => i.name)
+    : Object.keys(map).filter((k) => k.toLowerCase().endsWith('.m3u8') && k.toLowerCase() !== 'master.m3u8');
+
+  if (subNames.length === 0) return true;
+  if (!masterText || !masterText.includes('#EXTM3U')) return isArr;
+
+  const referenced = new Set(
+    masterText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .map((line) => line.replace(/^\.?\//, '').toLowerCase())
+  );
+  return subNames.every((name) => referenced.has(name.replace(/^\.?\//, '').toLowerCase()));
+}
+
+function stripMasterFromM3u8Map(map) {
+  if (!map || typeof map !== 'object') return;
+  for (const key of Object.keys(map)) {
+    if (key.toLowerCase() === 'master.m3u8') {
+      delete map[key];
+    }
+  }
+}
+
 // ดึงเนื้อหาไฟล์ .m3u8 ขนานกัน (ใช้เวลา ~400ms หรือ 0ms ถ้ามีใน cache เดิมแล้ว)
 // ช่วยให้ฝั่ง Browser สร้าง Blob URL ได้ทันทีใน <2ms โดยไม่ต้องยิง fetch ไปหา OneDrive อีก 6 รอบ
 async function hydrateM3u8Contents(items, existingContentMap = {}) {
@@ -183,7 +221,8 @@ async function listHlsFolderItems(token, driveId, folderId, existingM3u8Map = {}
         const dlUrl = rawItem?.['@microsoft.graph.downloadUrl'];
         if (name && dlUrl && name.toLowerCase().endsWith('.m3u8') && !startedM3u8.has(name)) {
           startedM3u8.add(name);
-          if (!existingM3u8Map[name]) {
+          const isMaster = name.toLowerCase() === 'master.m3u8';
+          if (isMaster || !existingM3u8Map[name]) {
             earlyM3u8Promises.push(
               fetch(dlUrl)
                 .then((r) => (r.ok ? r.text() : null))
@@ -332,10 +371,22 @@ export async function ensureSourceCacheColumns(sql) {
   } catch (_) {}
 }
 
-async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versionId = null) {
+async function saveSourceCacheToDb(
+  sql,
+  id,
+  payloadObj,
+  expiresAt = null,
+  versionId = null,
+  { persistM3u8Cache = true } = {}
+) {
   const compressed = compressSourceCache(payloadObj);
   const m3u8Map = extractM3u8Map(payloadObj?.items);
-  const m3u8Compressed = Object.keys(m3u8Map).length > 0 ? compressSourceCache(m3u8Map) : null;
+  const canSaveM3u8 =
+    persistM3u8Cache &&
+    Object.keys(m3u8Map).length > 0 &&
+    isMasterPlaylistConsistent(payloadObj?.items);
+  const m3u8Compressed = canSaveM3u8 ? compressSourceCache(m3u8Map) : null;
+  const shouldClearM3u8 = !persistM3u8Cache || (Object.keys(m3u8Map).length > 0 && !canSaveM3u8);
   const itemsCount = Array.isArray(payloadObj?.items) ? payloadObj.items.length : 0;
 
   const runUpdate = () => {
@@ -344,14 +395,14 @@ async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versio
         ? sql`
             UPDATE video_versions
             SET source_cache_br = ${compressed},
-                m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
+                m3u8_cache_br = CASE WHEN ${shouldClearM3u8} THEN NULL ELSE COALESCE(${m3u8Compressed}, m3u8_cache_br) END,
                 source_cache_items_count = ${itemsCount}
             WHERE id = ${versionId} AND video_id = ${id};
           `
         : sql`
             UPDATE video_versions
             SET source_cache_br = ${compressed},
-                m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
+                m3u8_cache_br = CASE WHEN ${shouldClearM3u8} THEN NULL ELSE COALESCE(${m3u8Compressed}, m3u8_cache_br) END,
                 source_cache_items_count = ${itemsCount},
                 source_cache_expires_at = ${expiresAt}
             WHERE id = ${versionId} AND video_id = ${id};
@@ -361,7 +412,7 @@ async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versio
       ? sql`
           UPDATE videos
           SET source_cache_br = ${compressed},
-              m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
+              m3u8_cache_br = CASE WHEN ${shouldClearM3u8} THEN NULL ELSE COALESCE(${m3u8Compressed}, m3u8_cache_br) END,
               source_cache_items_count = ${itemsCount},
               source_cache = NULL
           WHERE id = ${id};
@@ -369,7 +420,7 @@ async function saveSourceCacheToDb(sql, id, payloadObj, expiresAt = null, versio
       : sql`
           UPDATE videos
           SET source_cache_br = ${compressed},
-              m3u8_cache_br = COALESCE(${m3u8Compressed}, m3u8_cache_br),
+              m3u8_cache_br = CASE WHEN ${shouldClearM3u8} THEN NULL ELSE COALESCE(${m3u8Compressed}, m3u8_cache_br) END,
               source_cache_items_count = ${itemsCount},
               source_cache = NULL,
               source_cache_expires_at = ${expiresAt}
@@ -731,16 +782,21 @@ export async function resolveVideoSourceServer(
       };
     }
 
-    // เก็บเนื้อหา .m3u8 เดิมจากคอลัมน์เล็ก m3u8_cache_br (~2–7KB ไม่หมดอายุตาม tempauth) ก่อน
+    const isCompleted = Number(activeProgress || 0) >= 100;
+
+    // เก็บเนื้อหา .m3u8 เดิมจากคอลัมน์เล็ก m3u8_cache_br (~2–7KB ไม่หมดอายุตาม tempauth) เฉพาะคลิปที่แปลงครบ 100% และไม่ได้ขอ forceFresh
     // ช่วยให้ Cold Miss ไม่ต้องดูด source_cache_br (180–650KB) จาก Neon และไม่ต้องโหลด .m3u8 จาก SharePoint ซ้ำ!
     const existingM3u8Map = {};
-    if (activeM3u8CacheBr) {
+    if (!forceFresh && isCompleted && activeM3u8CacheBr) {
       const parsedM3u8 = decompressSourceCache(activeM3u8CacheBr);
       if (parsedM3u8 && typeof parsedM3u8 === 'object') {
         for (const [name, content] of Object.entries(parsedM3u8)) {
           if (name && typeof content === 'string' && content.includes('#EXTM3U')) {
             existingM3u8Map[name] = content;
           }
+        }
+        if (!isMasterPlaylistConsistent(existingM3u8Map)) {
+          stripMasterFromM3u8Map(existingM3u8Map);
         }
       }
     }
@@ -757,7 +813,7 @@ export async function resolveVideoSourceServer(
               : activeCacheLegacy;
         } catch (_) {}
       }
-      if (Array.isArray(parsedCache?.items)) {
+      if (!forceFresh && isCompleted && Array.isArray(parsedCache?.items) && isMasterPlaylistConsistent(parsedCache.items)) {
         for (const item of parsedCache.items) {
           if (item?.name && item?.content && item.name.toLowerCase().endsWith('.m3u8')) {
             existingM3u8Map[item.name] = item.content;
@@ -778,10 +834,16 @@ export async function resolveVideoSourceServer(
         (activeProgress === 100 || activeStatus === 'READY') &&
         cachedM3u8Count <= 2 &&
         (parsedCache?.items?.length || 0) < 150;
+      const hasStaleMaster =
+        Array.isArray(parsedCache?.items) && !isMasterPlaylistConsistent(parsedCache.items);
+      if (hasStaleMaster) {
+        stripMasterFromM3u8Map(existingM3u8Map);
+      }
 
       if (
         isTokenValid &&
         !isStaleEarlySnapshot &&
+        !hasStaleMaster &&
         (parsedCache.items?.length > 0 || parsedCache.url)
       ) {
         hitPath = 'db-hit';
@@ -811,13 +873,16 @@ export async function resolveVideoSourceServer(
                   items: parsedCache.items,
                 },
                 null,
-                activeVersionId
+                activeVersionId,
+                { persistM3u8Cache: isCompleted }
               );
             } catch (_) {}
           });
         } else if (isMigratingFromLegacy && !needsSwrRefresh) {
           scheduleAfterOrBackground(async () => {
-            await saveSourceCacheToDb(sql, id, parsedCache, expTime, activeVersionId);
+            await saveSourceCacheToDb(sql, id, parsedCache, expTime, activeVersionId, {
+              persistM3u8Cache: isCompleted,
+            });
           });
         }
 
@@ -832,11 +897,12 @@ export async function resolveVideoSourceServer(
                 const driveId = await getUserDriveId(token);
                 if (activeSourceType === 'hls' || activeFolderId) {
                   const folderId = activeFolderId || activeItemId;
+                  const swrM3u8Map = { ...existingM3u8Map };
                   const allItems = await listHlsFolderItems(
                     token,
                     driveId,
                     folderId,
-                    existingM3u8Map
+                    swrM3u8Map
                   );
                   const freshValid = allItems
                     .filter((i) => i.name && i['@microsoft.graph.downloadUrl'])
@@ -845,18 +911,19 @@ export async function resolveVideoSourceServer(
                         name: i.name,
                         downloadUrl: i['@microsoft.graph.downloadUrl'],
                       };
-                      if (existingM3u8Map[i.name]) entry.content = existingM3u8Map[i.name];
+                      if (swrM3u8Map[i.name]) entry.content = swrM3u8Map[i.name];
                       return entry;
                     });
                   if (freshValid.length > 0) {
-                    const newExp = Date.now() + 50 * 60 * 1000;
+                    const newExp = Date.now() + (isCompleted ? 50 * 60 * 1000 : 15 * 1000);
                     storeInMemoryCache({ success: true, type: 'hls', video, items: freshValid }, newExp);
                     await saveSourceCacheToDb(
                       sql,
                       id,
                       { success: true, type: 'hls', items: freshValid },
                       newExp,
-                      activeVersionId
+                      activeVersionId,
+                      { persistM3u8Cache: isCompleted }
                     );
                   }
                 }
@@ -879,7 +946,6 @@ export async function resolveVideoSourceServer(
     // Case 1: HLS Stream Folder
     if (activeSourceType === 'hls' || activeFolderId) {
       const folderId = activeFolderId || activeItemId;
-      const isCompleted = Number(activeProgress || 0) >= 100;
 
       const startFullHlsFetch = () => {
         if (!forceFresh && inFlightFullRefresh.has(cacheKey)) {
@@ -925,7 +991,8 @@ export async function resolveVideoSourceServer(
             id,
             { success: true, type: 'hls', items: fullResultData.items },
             fullExpiresAt,
-            activeVersionId
+            activeVersionId,
+            { persistM3u8Cache: isCompleted }
           ).then(() => fullResultData)
         );
 
@@ -944,7 +1011,11 @@ export async function resolveVideoSourceServer(
       // ⚡ Two-Phase $batch Fast Cold Start (~350-550ms instead of 2–15s signing 465–4,343 files!)
       // Runs 12-file $batch FIRST with zero SharePoint contention, then kicks off full folder listing + Neon DB save in background via after().
       const initialSegNames =
-        !forceFresh && !preferFull && isCompleted && existingM3u8Map['master.m3u8']
+        !forceFresh &&
+        !preferFull &&
+        isCompleted &&
+        existingM3u8Map['master.m3u8'] &&
+        isMasterPlaylistConsistent(existingM3u8Map)
           ? extractInitialSegmentNames(existingM3u8Map, 12)
           : [];
 

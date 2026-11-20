@@ -170,6 +170,12 @@ async function ensureDbSchemaOnce() {
     try {
         await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS runner_specs JSONB;`;
     } catch (_) { }
+    try {
+        await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS m3u8_cache_br TEXT;`;
+    } catch (_) { }
+    try {
+        await sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS m3u8_cache_br TEXT;`;
+    } catch (_) { }
     await ensureWorkerLogsColumn(sql);
 }
 
@@ -231,6 +237,7 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
                       stage_detail = ${stageDetail},
                       error_message = ${errorMsg},
                       source_cache_br = NULL,
+                      m3u8_cache_br = NULL,
                       source_cache_items_count = 0,
                       source_cache_expires_at = 0,
                       thumbnail_url = COALESCE(${extra.thumbnail_url ?? null}, thumbnail_url),
@@ -265,6 +272,11 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
                             codec = COALESCE(${dv.codec}, codec),
                             bitrate = COALESCE(${dv.bitrate}, bitrate),
                             file_size_bytes = COALESCE(${dv.file_size_bytes}, file_size_bytes),
+                            source_cache = NULL,
+                            source_cache_br = NULL,
+                            m3u8_cache_br = NULL,
+                            source_cache_items_count = 0,
+                            source_cache_expires_at = 0,
                             updated_at = NOW()
                         WHERE id = ${vidNum};
                     `.catch(() => { });
@@ -279,6 +291,7 @@ async function updateDbStatus({ status, progress, stageDetail, errorMsg = '', ex
                       error_message = ${errorMsg},
                       source_cache = NULL,
                       source_cache_br = NULL,
+                      m3u8_cache_br = NULL,
                       source_cache_items_count = 0,
                       source_cache_expires_at = 0,
                       thumbnail_url = COALESCE(${extra.thumbnail_url ?? null}, thumbnail_url),
@@ -1011,6 +1024,11 @@ async function main() {
 
             const sdFiles = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('360p') || f.includes('480p') || f === 'master.m3u8');
             await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, sdFiles, true, '360p & 480p');
+            await updateDbStatus({
+                status: 'READY',
+                progress: 50,
+                stageDetail: '⚡ พร้อมรับชมสูงสุด 480p แล้ว (กำลังหั่นความละเอียดสูงขึ้นในพื้นหลัง...)',
+            });
             await logger.log('✅ อัปโหลด 360p + 480p SD และอัปเดต master.m3u8 เรียบร้อย', { level: 'success' });
         } else if (srcHeight >= 360) {
             await logger.log('⚡ Pass 2: กำลังหั่น 360p SD...');
@@ -1030,6 +1048,11 @@ async function main() {
             fs.writeFileSync(masterPath, buildMasterM3U8(readyQualities));
             const pass2Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('360p') || f === 'master.m3u8');
             await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass2Files, true, '360p');
+            await updateDbStatus({
+                status: 'READY',
+                progress: 50,
+                stageDetail: '⚡ พร้อมรับชมสูงสุด 360p แล้ว',
+            });
             await logger.log('✅ อัปโหลด 360p SD สำเร็จ', { level: 'success' });
         }
 
@@ -1068,6 +1091,11 @@ async function main() {
 
             const pass4Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('720p') || f === 'master.m3u8');
             await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass4Files, true, '720p HD');
+            await updateDbStatus({
+                status: 'READY',
+                progress: 65,
+                stageDetail: '⚡ พร้อมรับชมสูงสุด 720p HD แล้ว (กำลังหั่นความละเอียดสูงขึ้นในพื้นหลัง...)',
+            });
             await logger.log('✅ อัปโหลด 720p HD และอัปเดต master.m3u8 เรียบร้อย', { level: 'success' });
         }
 
@@ -1106,6 +1134,11 @@ async function main() {
 
             const pass5Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1080p') || f === 'master.m3u8');
             await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass5Files, true, '1080p Full HD');
+            await updateDbStatus({
+                status: 'READY',
+                progress: 80,
+                stageDetail: '⚡ พร้อมรับชมสูงสุด 1080p Full HD แล้ว',
+            });
             await logger.log('✅ อัปโหลด 1080p Full HD และอัปเดต master.m3u8 เรียบร้อย', { level: 'success' });
         }
 
@@ -1144,6 +1177,11 @@ async function main() {
 
             const pass6Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('1440p') || f === 'master.m3u8');
             await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass6Files, true, '1440p 2K');
+            await updateDbStatus({
+                status: 'READY',
+                progress: 92,
+                stageDetail: '⚡ พร้อมรับชมสูงสุด 2K (1440p) แล้ว',
+            });
             await logger.log('✅ อัปโหลด 1440p (2K) สำเร็จ', { level: 'success' });
         }
 
@@ -1182,6 +1220,11 @@ async function main() {
 
             const pass7Files = fs.readdirSync(hlsOutputDir).filter((f) => f.includes('2160p') || f === 'master.m3u8');
             await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass7Files, true, '2160p 4K');
+            await updateDbStatus({
+                status: 'READY',
+                progress: 98,
+                stageDetail: '⚡ พร้อมรับชมสูงสุด 4K (2160p) แล้ว',
+            });
             await logger.log('✅ อัปโหลด 2160p (4K UHD) สำเร็จ', { level: 'success' });
         }
 
