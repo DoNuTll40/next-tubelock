@@ -2860,11 +2860,7 @@ export default function VideoPlayer({
             ? 'object-cover'
             : 'object-contain'
           }`}
-        style={{
-          transform: aspectMode === 'crop' ? 'scale(1.08)' : 'none',
-          willChange: 'auto',
-          backfaceVisibility: 'hidden',
-        }}
+        style={aspectMode === 'crop' ? { transform: 'scale(1.08)' } : undefined}
       />
 
       {/* 🖼️ Instant Video Poster / Transition Backdrop (Shows new video's thumbnail immediately!) */}
