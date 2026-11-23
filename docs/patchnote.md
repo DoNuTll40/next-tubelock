@@ -24,7 +24,18 @@ updated: 23 พฤศจิกายน 2026
     - **Finalize (`finalize`):** รอครบทั้ง 5 เครื่องแล้วซิงก์ `master.m3u8` ฉบับสมบูรณ์ + เคลียร์ `/raw/` + `100% READY`
   - ปรับน้ำหนัก `transcode_progress` ใหม่ (`fast_sd 25%`, `hd 15%`, `fhd 15%`, `qhd 15%`, `uhd 15%` + ฐาน `10%` → `95%` → `finalize 100%`), ปรับ `UPLOAD_CONCURRENCY = 3` ต่อเครื่อง (กัน Microsoft Graph 429) และตั้งโควตา `/dev/shm` สำหรับเครื่อง 2K/4K ให้ปลอดภัยจาก `ENOSPC`
 
-### 2. ระบบเสียง Hi-Res Lossless แท้ (Full PCM WAV 16/24-bit สูงสุด 192 kHz + Auto-FLAC Fallback)
+### 2. อัปเกรด True HDR10 (MDCV/CLL), Multi-Tile AV1 Fast-Decode, Dual-Range SDR/HDR & ลด Drop Frame 4K
+- **True HDR10 Static Metadata & Multi-Tile Fast-Decode (`scripts/transcode-worker.js`):**
+  - ขยาย `ffprobe` (`-show_streams`) ให้ดึงค่า **`Mastering display metadata` (`MDCV`)** และ **`Content light level` (`MaxCLL` / `MaxFALL`)** จริงจากไฟล์ต้นฉบับ แล้วฉีดเข้า `-svtav1-params` (`enable-hdr=1:color-primaries=9:transfer-characteristics=16:matrix-coefficients=9:mastering-display=...:content-light=...`) เพื่อให้จอ HDR มือถือ/ทีวีปลดล็อกความสว่าง **Real HDR Peak Brightness** ได้จริง
+  - เพิ่ม **AV1 Multi-Tile + Fast-Decode** (`tile-columns=2:tile-rows=1:fast-decode=1` สำหรับ 4K และ `tile-columns=1:tile-rows=1:fast-decode=1` สำหรับ 1080p/2K) ลดภาระการถอดรหัส 4K AV1 10-bit และแก้อาการ Drop Frame บนเครื่องที่ถอดรหัสด้วย CPU
+- **Smart Dual-Range Tiering สไตล์ YouTube (ไม่ยัด HDR ให้ความละเอียดต่ำ `144p–720p`):**
+  - สำหรับคลิปต้นฉบับ HDR: ชั้น **`144p / 360p / 480p / 720p`** (รวมถึง `poster.jpg` และ Storyboards) จะเข้ารหัสเป็น **H.264 8-bit SDR (`bt709`)** พร้อม **Hable HDR→SDR Tone-Mapping** (`zscale + tonemap=hable`) ในกล่อง `fMP4` เดียวกัน ช่วยปลดล็อก `144p READY` เร็วขึ้น ~8 เท่า (~30–45 วิ) และให้จอ SDR / เครื่องเก่าเล่นลื่น 0% Drop Frame ส่วนชั้น **`1080p HDR / 1440p HDR (2K) / 2160p HDR (4K)`** ยังคงเป็น **AV1 10-bit True HDR10** เต็มรูปแบบ
+- **ตัดต้นตอ Drop Frame & รักษา Hardware HDR Overlay ฝั่ง Player (`AmbientLight.jsx`, `VideoPlayer.jsx`, `GlobalPlayerContext.jsx`):**
+  - ปรับ `AmbientLight` ให้ดึงสีจาก Storyboard Sprite/Poster แทนการเรียก `ctx.drawImage(video)` เมื่อเล่นวิดีโอ 1080p/2K/4K หรือ HDR เพื่อตัดอาการ GPU Readback Stall ทุก 1.5 วินาที และรักษา **DX11 / Android SurfaceFlinger Hardware HDR Overlay** ไม่ให้หลุดลง SDR
+  - ปิด Inner Ambient Backdrop และปลด `contain: paint layout` ในโหมด Fullscreen HDR เพื่อเปิดทางให้ OS โปรโมต `<video>` ขึ้น Hardware HDR Overlay โดยตรง
+  - เพิ่ม **`capLevelOnFPSDrop: true`** (`fpsDroppedMonitoringThreshold: 0.15`) ใน `hls.js` และจำกัด Auto ABR บนจอ SDR (`<= 1080p`) เพื่อไม่ให้โหมด Auto ดัน 4K AV1 เกินความละเอียดจอโดยไม่จำเป็น (ผู้ใช้ยังเลือก `1440p HDR` / `2160p HDR` เองได้เสมอ)
+
+### 3. ระบบเสียง Hi-Res Lossless แท้ (Full PCM WAV 16/24-bit สูงสุด 192 kHz + Auto-FLAC Fallback)
 - **Smart Auto-Detect & Lossless Extraction (`scripts/transcode-worker.js`):**
   - ขยาย `ffprobe` ให้ตรวจสอบ `codec_name`, `profile`, `sample_fmt`, `sample_rate`, `bits_per_sample` และ `bits_per_raw_sample` ของแทร็กเสียงต้นฉบับอัตโนมัติ
   - **Smart Auto-Detect:** สกัดแทร็กเสียง Hi-Res Lossless เฉพาะเมื่อต้นฉบับเป็นเสียง Lossless / Hi-Res จริง (`FLAC`, `WAV/PCM`, `ALAC`, `TrueHD`, `MLP`, `DTS-HD MA`, `WavPack`, `APE`, `DSD` หรือ Sample Rate `> 48 kHz` / Bit-Depth `>= 24-bit`) โดยคง Sample Rate ต้นฉบับ (`44.1–192 kHz`) และ Bit-Depth (`16-bit / 24-bit`) แท้ไม่ทำ fake upsample และรันหลัง Pass SD ใน Lane 1 เพื่อไม่ให้หน่วงเวลาปลดล็อก `144p READY`
@@ -35,7 +46,7 @@ updated: 23 พฤศจิกายน 2026
   - เพิ่มเมนู **`คุณภาพเสียง`** พร้อมป้ายทอง **`Hi-Res WAV` / `Hi-Res FLAC`** ในเมนูตั้งค่า (เฟือง) ทั้ง Desktop และ Mobile ให้สลับระหว่าง **Hi-Res Lossless** กับ **มาตรฐาน (AAC)** ได้ทันที
   - อัปเกรดแถว **`Audio`** ใน Stats for Nerds ให้ไฮไลต์สีทองพร้อมแสดงสเปกจริง (เช่น `PCM WAV 24-bit/96kHz • 5.1 Surround (Lossless)`) และอ่านค่าระดับเสียงจริงจากแทร็ก Hi-Res
 
-### 3. รองรับเสียงหลายแชนเนลเต็มระบบ (1.0 Mono → 7.1 Surround) & แก้บั๊ก DB Enum
+### 4. รองรับเสียงหลายแชนเนลเต็มระบบ (1.0 Mono → 7.1 Surround) & แก้บั๊ก DB Enum
 - **Auto Multi-Channel Uniform Audio (`scripts/transcode-worker.js`):**
   - เข้ารหัสเสียง AAC-LC 48 kHz แบบ Uniform Audio เท่ากันทุกความละเอียด (`144p`–`2160p`) เพื่อไม่ให้ MSE สะดุดเวลาสลับความชัด:
     - **1.0 Mono:** `aformat=channel_layouts=mono` (`-ac 1`, `128k`)
@@ -47,7 +58,7 @@ updated: 23 พฤศจิกายน 2026
 - **แก้ไข `video_status` ENUM Cast ใน Worker (`scripts/transcode-worker.js`):**
   - แก้การอัปเดตคอลัมน์ `videos.status` ใน `updateLaneProgress` และ `setFinalDbStatus` ให้ cast เป็น `video_status` ENUM อย่างถูกต้อง (แก้ error `column "status" is of type video_status but expression is of type text`), เพิ่ม `hls_folder_path` และเพิ่ม guard ป้องกัน progress ping ซ้อนกัน
 
-### 4. ปรับโฉมแถบสารบัญด้านขวาของหน้าเอกสาร (Docs TOC Redesign)
+### 5. ปรับโฉมแถบสารบัญด้านขวาของหน้าเอกสาร (Docs TOC Redesign)
 - **Release Timeline & Active Scrollspy (`DocsTableOfContents.jsx`, `MarkdownDocViewer.jsx`, `globals.css`):**
   - แยกแถบ `ON THIS PAGE` เป็นคอมโพเนนต์แบบโต้ตอบได้ พร้อม Scrollspy เส้นส้ม `#FF7A00` ไฮไลต์หัวข้อที่กำลังอ่าน, ปุ่ม **กลับขึ้นด้านบน**, ล้างเครื่องหมาย backtick ดิบออกจากสารบัญ และแปลงหัวข้อ Patch Notes เป็นการ์ดไทม์ไลน์ 2 แถว (`เลขเวอร์ชัน + วันที่แบบย่อ + สรุป 1 บรรทัด`)
   - เพิ่มคลาส `.no-scrollbar` และ `.docs-toc-scroll` แบบเส้นบาง `3px` เพื่อตัดปัญหาแถบ Scrollbar สีส้มขนาดใหญ่ที่ขอบขวา

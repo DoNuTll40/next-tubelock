@@ -73,6 +73,7 @@ export default function VideoPlayer({
   onTimeUpdate,
   onLoadedMetadata,
   onRatioChange = null,
+  onHdrStateChange = null,
   videoRef: externalVideoRef,
   desktopMaxHeight = 'calc(100vh - 100px)',
   ambientMode = true,
@@ -350,6 +351,8 @@ export default function VideoPlayer({
   useEffect(() => {
     isHiResActiveRef.current = isHiResActive;
   }, [isHiResActive]);
+  const [isCurrentLevelHdr, setIsCurrentLevelHdr] = useState(false);
+  const autoCapLevelIndexRef = useRef(-1);
 
   // Responsive device view & popup placement
   const [isMobileView, setIsMobileView] = useState(false);
@@ -1262,6 +1265,11 @@ export default function VideoPlayer({
             enableWorker: true,
             lowLatencyMode: false,
 
+            // ลดระดับอัตโนมัติในโหมด Auto เมื่ออุปกรณ์ดรอปเฟรม (เช่น CPU ถอดรหัส 4K AV1 ไม่ไหว) — แต่ยังกดเลือก 4K เองได้เสมอ
+            capLevelOnFPSDrop: true,
+            fpsDroppedMonitoringPeriod: 5000,
+            fpsDroppedMonitoringThreshold: 0.15,
+
             fragLoadingTimeOut: 20000,
             fragLoadingMaxRetry: 4,
             manifestLoadingTimeOut: 15000,
@@ -1322,19 +1330,42 @@ export default function VideoPlayer({
 
               // ✨ Quality Persistence vs YouTube-style Fast-Start ABR
               let appliedSaved = false;
+              const displaySupportsHdr =
+                typeof window !== 'undefined' &&
+                Boolean(window.matchMedia?.('(dynamic-range: high)')?.matches);
+              const screenPhysHeight =
+                typeof window !== 'undefined'
+                  ? Math.round((window.screen?.height || 1080) * (window.devicePixelRatio || 1))
+                  : 1080;
+
+              // In Auto mode on SDR screens (<=1080p physical height), cap auto-escalation at <=1080p so CPU doesn't waste 4x load decoding 4K AV1 just to downscale to 1080p!
+              // Manual selection always clears autoLevelCapping so user can still pick 1440p/2160p anytime.
+              let computedAutoCap = -1;
+              if (!displaySupportsHdr && parsed.some((l) => l.isHdr) && screenPhysHeight <= 1200) {
+                const underCap = parsed.filter((l) => (l.height || 0) <= 1080);
+                if (underCap.length > 0 && underCap.length < parsed.length) {
+                  computedAutoCap = underCap[underCap.length - 1].index;
+                }
+              }
+              autoCapLevelIndexRef.current = computedAutoCap;
+
               if (savedStartLevel > 0) {
                 const matchIdx = parsed.findIndex((l) => l.height === savedStartLevel);
                 if (matchIdx !== -1) {
+                  hls.autoLevelCapping = -1;
                   hls.startLevel = matchIdx;
                   hls.currentLevel = matchIdx;
                   hls.nextLevel = matchIdx;
                   setCurrentLevelIndex(matchIdx);
                   setActiveLevelLabel(parsed[matchIdx].label);
+                  setIsCurrentLevelHdr(Boolean(parsed[matchIdx].isHdr));
+                  onHdrStateChange?.(Boolean(parsed[matchIdx].isHdr));
                   appliedSaved = true;
                 }
               }
 
               if (!appliedSaved) {
+                hls.autoLevelCapping = computedAutoCap;
                 if (parsed.length > 1) {
                   const sortedByHeight = [...parsed].sort((a, b) => (a.height || 0) - (b.height || 0));
                   const fastStart = isMobile
@@ -1343,6 +1374,8 @@ export default function VideoPlayer({
                   if (fastStart) {
                     // Load only chunk #0 from fast-start level (~150-250 KB) while keeping Auto ABR active for chunk #1+
                     hls.startLevel = fastStart.index;
+                    setIsCurrentLevelHdr(Boolean(fastStart.isHdr));
+                    onHdrStateChange?.(Boolean(fastStart.isHdr));
                   }
                 }
                 setCurrentLevelIndex(-1);
@@ -1369,6 +1402,8 @@ export default function VideoPlayer({
               const isLevelHdr = videoRange === 'PQ' || videoRange === 'HLG';
               const formatted = formatQualityLevel(lvl.height, lvlFps, isLevelHdr);
               setActiveLevelLabel(formatted.label);
+              setIsCurrentLevelHdr(isLevelHdr);
+              onHdrStateChange?.(isLevelHdr);
               if (lvl.width && lvl.height) {
                 updateRatio(lvl.width / lvl.height);
               }
@@ -1502,6 +1537,7 @@ export default function VideoPlayer({
   const handleSelectQuality = (levelIdx) => {
     setCurrentLevelIndex(levelIdx);
     if (hlsInstanceRef.current) {
+      hlsInstanceRef.current.autoLevelCapping = levelIdx === -1 ? autoCapLevelIndexRef.current : -1;
       hlsInstanceRef.current.nextLevel = levelIdx;
       if (levelIdx === -1) {
         showToast('ความละเอียด : Auto (ปรับตามเน็ต)');
@@ -1510,6 +1546,8 @@ export default function VideoPlayer({
         const selected = levels.find((l) => l.index === levelIdx);
         if (selected) {
           setActiveLevelLabel(selected.label);
+          setIsCurrentLevelHdr(Boolean(selected.isHdr));
+          onHdrStateChange?.(Boolean(selected.isHdr));
           showToast(`ความละเอียด : ${selected.label}`);
           // ✨ Persist: เก็บ height ไว้ใน localStorage → คลิปต่อไปจะเริ่มที่ quality นี้เลย
           try { localStorage.setItem('tubelock_quality_height', String(selected.height)); } catch (_) { }
@@ -2849,6 +2887,7 @@ export default function VideoPlayer({
     ambientMode &&
     isActive &&
     !isSwitchingVideo &&
+    !(isCurrentLevelHdr && effectiveFullscreen) &&
     aspectMode === 'fit' &&
     (effectiveFullscreen || (videoRatio && videoRatio < 0.98) || (isMobileView && isCinematic))
   );
@@ -2890,7 +2929,7 @@ export default function VideoPlayer({
             ? (isMobileView ? 'min(48vh, 380px)' : desktopMaxHeight)
             : desktopMaxHeight,
         margin: (videoRatio && videoRatio >= 0.98) ? 0 : '0 auto',
-        contain: 'paint layout',
+        contain: (isCurrentLevelHdr && effectiveFullscreen) ? undefined : 'paint layout',
         WebkitTouchCallout: 'none',
       }}
     >
@@ -2900,6 +2939,7 @@ export default function VideoPlayer({
         storyboard={keepScrubPreviewOnLoad ? null : storyboard}
         poster={poster}
         enabled={showInnerAmbientBackdrop}
+        preferStoryboardOnly={isCurrentLevelHdr}
         variant="backdrop"
       />
 

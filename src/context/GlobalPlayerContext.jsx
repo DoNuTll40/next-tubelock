@@ -239,6 +239,7 @@ export function GlobalPlayerProvider({ children }) {
   const [error, setError] = useState(null);
   const [detectedRatio, setDetectedRatio] = useState(null);
   const [detectedAudio, setDetectedAudio] = useState(null);
+  const [isPlayingHdr, setIsPlayingHdr] = useState(false);
   const [streamAttemptSeq, setStreamAttemptSeq] = useState(0);
 
   const [playerConfig, setPlayerConfig] = useState(readStoredPlayerConfig);
@@ -1350,6 +1351,7 @@ export function GlobalPlayerProvider({ children }) {
               storyboard={matureVideo && !showAdultPoster ? null : storyboard}
               poster={watchPoster}
               enabled={ambientMode && isDockedInWatch}
+              preferStoryboardOnly={isPlayingHdr}
               aspectRatio={videoRatio}
               className="max-md:mix-blend-multiply dark:max-md:mix-blend-screen"
             />
@@ -1388,6 +1390,7 @@ export function GlobalPlayerProvider({ children }) {
                 initialTime={startTime}
                 isMusic={isMusic}
                 onRatioChange={handleRatioChange}
+                onHdrStateChange={setIsPlayingHdr}
                 ambientMode={ambientMode}
                 setAmbientMode={handleSetAmbientMode}
                 currentVideo={video}

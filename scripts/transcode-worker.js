@@ -14,7 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { neon } from '@neondatabase/serverless';
 import {
@@ -652,6 +652,7 @@ function normalizeQualitiesList(rawList) {
             height: Number(item.height) || 0,
             bitrate: Number(item.bitrate) || 0,
             is_hdr: Boolean(item.is_hdr),
+            is_fmp4: Boolean(item.is_fmp4 || item.is_hdr),
             hdr_type: item.hdr_type || null,
             audio_channels: item.audio_channels != null ? Number(item.audio_channels) : null,
             audio_layout: item.audio_layout || null,
@@ -682,6 +683,7 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
         height: q.height,
         bitrate: q.bitrate,
         is_hdr: Boolean(q.is_hdr),
+        is_fmp4: Boolean(q.is_fmp4 || q.is_hdr),
         hdr_type: q.hdr_type || null,
         audio_channels: q.audio_channels != null ? Number(q.audio_channels) : null,
         audio_layout: q.audio_layout || null,
@@ -1056,8 +1058,8 @@ function probeVideo(inputTarget, timeoutMs = 30000) {
 
         const proc = spawn('ffprobe', [
             '-v', 'error',
-            '-show_entries', 'stream=codec_type,width,height,duration,r_frame_rate,codec_name,profile,pix_fmt,color_range,color_space,color_transfer,color_primaries,channels,channel_layout,sample_rate,sample_fmt,bits_per_sample,bits_per_raw_sample',
-            '-show_entries', 'format=duration,bit_rate',
+            '-show_streams',
+            '-show_format',
             '-of', 'json',
             inputTarget,
         ]);
@@ -1267,6 +1269,102 @@ async function exportAndUploadHiResAudio({ driveId, streamFolderId, hlsOutputDir
     }
 }
 
+function parseRatioNum(val, fallback = 0) {
+    if (val == null) return fallback;
+    if (typeof val === 'number') return Number.isFinite(val) ? val : fallback;
+    const str = String(val).trim();
+    if (!str) return fallback;
+    if (str.includes('/')) {
+        const [n, d] = str.split('/').map(Number);
+        return d && Number.isFinite(n / d) ? n / d : fallback;
+    }
+    const num = Number(str);
+    return Number.isFinite(num) ? num : fallback;
+}
+
+function extractHdr10Metadata(vStream, isHdr, hdrType) {
+    if (!isHdr || hdrType === 'HLG') {
+        return {
+            hdrMasteringDisplay: null,
+            hdrContentLight: null,
+            hdrMaxNits: 0,
+            hdrMaxCll: 0,
+        };
+    }
+    const sideList = Array.isArray(vStream?.side_data_list) ? vStream.side_data_list : [];
+    const mdcv = sideList.find((sd) => /mastering display/i.test(String(sd?.side_data_type || '')));
+    const cll = sideList.find((sd) => /content light level/i.test(String(sd?.side_data_type || '')));
+
+    let hdrMasteringDisplay = 'G(0.2650,0.6900)B(0.1500,0.0600)R(0.6800,0.3200)WP(0.3127,0.3290)L(1000.0000,0.0001)';
+    let hdrMaxNits = 1000;
+    if (mdcv) {
+        const gx = parseRatioNum(mdcv.green_x, 0.265);
+        const gy = parseRatioNum(mdcv.green_y, 0.69);
+        const bx = parseRatioNum(mdcv.blue_x, 0.15);
+        const by = parseRatioNum(mdcv.blue_y, 0.06);
+        const rx = parseRatioNum(mdcv.red_x, 0.68);
+        const ry = parseRatioNum(mdcv.red_y, 0.32);
+        const wpx = parseRatioNum(mdcv.white_point_x, 0.3127);
+        const wpy = parseRatioNum(mdcv.white_point_y, 0.329);
+        const maxLum = Math.max(100, parseRatioNum(mdcv.max_luminance, 1000));
+        const minLum = Math.max(0.0001, parseRatioNum(mdcv.min_luminance, 0.0001));
+        hdrMaxNits = Math.round(maxLum);
+        hdrMasteringDisplay = `G(${gx.toFixed(4)},${gy.toFixed(4)})B(${bx.toFixed(4)},${by.toFixed(4)})R(${rx.toFixed(4)},${ry.toFixed(4)})WP(${wpx.toFixed(4)},${wpy.toFixed(4)})L(${maxLum.toFixed(4)},${minLum.toFixed(4)})`;
+    }
+
+    let hdrMaxCll = 1000;
+    let hdrMaxFall = 400;
+    if (cll) {
+        const mc = Number(cll.max_content) || 0;
+        const ma = Number(cll.max_average) || 0;
+        if (mc > 0) hdrMaxCll = Math.round(mc);
+        if (ma > 0) hdrMaxFall = Math.round(ma);
+    }
+    const hdrContentLight = `${hdrMaxCll},${hdrMaxFall}`;
+    return { hdrMasteringDisplay, hdrContentLight, hdrMaxNits, hdrMaxCll };
+}
+
+let cachedHasZscale = null;
+function hasZscaleFilter() {
+    if (cachedHasZscale !== null) return cachedHasZscale;
+    try {
+        const out = execFileSync('ffmpeg', ['-hide_banner', '-filters'], { encoding: 'utf8', timeout: 5000 });
+        cachedHasZscale = /\bzscale\b/.test(out) && /\btonemap\b/.test(out);
+    } catch {
+        cachedHasZscale = false;
+    }
+    return cachedHasZscale;
+}
+
+function buildHdrToSdrToneMapChain(meta) {
+    if (hasZscaleFilter()) {
+        const tin = meta.hdrColorTrc || 'smpte2084';
+        return `zscale=tin=${tin}:pin=bt2020:min=bt2020nc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv`;
+    }
+    return 'colorspace=all=bt709:iall=bt2020:fast=1';
+}
+
+function buildSvtAv1Params(meta, targetHeight) {
+    const tileCols = targetHeight >= 2160 ? 2 : targetHeight >= 720 ? 1 : 0;
+    const tileRows = targetHeight >= 1080 ? 1 : 0;
+    const trcCode = meta.hdrType === 'HLG' ? 18 : 16;
+    const parts = [
+        'enable-hdr=1',
+        'color-primaries=9',
+        `transfer-characteristics=${trcCode}`,
+        'matrix-coefficients=9',
+        'color-range=0',
+        'fast-decode=1',
+    ];
+    if (tileCols > 0) parts.push(`tile-columns=${tileCols}`);
+    if (tileRows > 0) parts.push(`tile-rows=${tileRows}`);
+    if (meta.hdrType !== 'HLG') {
+        if (meta.hdrMasteringDisplay) parts.push(`mastering-display=${meta.hdrMasteringDisplay}`);
+        if (meta.hdrContentLight) parts.push(`content-light=${meta.hdrContentLight}`);
+    }
+    return parts.join(':');
+}
+
 function parseProbeMeta(probeData) {
     const streams = probeData.streams || [];
     const vStream = streams.find((s) => s.codec_type === 'video') || streams[0] || {};
@@ -1292,6 +1390,7 @@ function parseProbeMeta(probeData) {
         (colorPrimaries === 'bt2020' && pixFmt.includes('10'));
     const hdrType = colorTransfer === 'arib-std-b67' ? 'HLG' : isHdr ? 'PQ' : null;
     const hdrColorTrc = hdrType === 'HLG' ? 'arib-std-b67' : 'smpte2084';
+    const hdr10Meta = extractHdr10Metadata(vStream, isHdr, hdrType);
     const sourceCodec = vStream.codec_name || 'h264';
     const codec = isHdr ? 'av01' : 'h264';
     const bitrate = probeData.format?.bit_rate
@@ -1332,6 +1431,7 @@ function parseProbeMeta(probeData) {
         isHdr,
         hdrType,
         hdrColorTrc,
+        ...hdr10Meta,
         ...audioProfile,
     };
 }
@@ -1381,9 +1481,10 @@ function runFFmpeg(args, onProgress, stepLabel = '', durationSec = 0, options = 
 function buildMasterM3U8(qualities) {
     const sorted = [...qualities].sort((a, b) => a.bitrate - b.bitrate);
     const hasHdr = sorted.some((q) => q.is_hdr);
+    const hasFmp4 = hasHdr || sorted.some((q) => q.is_fmp4);
     const audioSample = sorted.find((q) => q.audio_channels != null) || null;
     const hiResSample = sorted.find((q) => q.hires_audio && q.hires_audio.file)?.hires_audio || null;
-    const lines = ['#EXTM3U', `#EXT-X-VERSION:${hasHdr ? 7 : 3}`];
+    const lines = ['#EXTM3U', `#EXT-X-VERSION:${hasFmp4 ? 7 : 3}`];
     if (audioSample) {
         lines.push(
             `#EXT-X-TUBELOCK-AUDIO:CHANNELS=${audioSample.audio_channels},LAYOUT=${audioSample.audio_layout || 'stereo'}`
@@ -1405,6 +1506,13 @@ function buildMasterM3U8(qualities) {
                 : `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0`;
             lines.push(
                 `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height},CODECS="${codecs}",VIDEO-RANGE=${videoRange}`
+            );
+        } else if (hasFmp4) {
+            // Dual-tier SDR H.264 rendition inside an fMP4 master playlist (seamless SourceBuffer.changeType)
+            const avcHex = q.height >= 1080 ? '2a' : q.height >= 720 ? '1f' : q.height >= 360 ? '1e' : '15';
+            const codecs = hasAudioTrack ? `avc1.6400${avcHex},mp4a.40.2` : `avc1.6400${avcHex}`;
+            lines.push(
+                `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height},CODECS="${codecs}",VIDEO-RANGE=SDR`
             );
         } else {
             lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height}`);
@@ -1490,19 +1598,30 @@ async function runHighQualityPass({
         audioLabel,
     } = meta;
     const audioArgs = buildAudioEncodeArgs(meta);
+    // YouTube-style Smart Dual-Range Tiering:
+    // - 1080p / 1440p / 2160p on HDR source (or 720p when source itself < 1080p) -> True AV1 10-bit HDR10 (MDCV/CLL + Multi-Tile fast-decode)
+    // - 720p on >= 1080p HDR source -> Hable Tone-Mapped H.264 8-bit SDR in fMP4 (0% drop-frame smooth fallback for SDR monitors / older devices!)
+    const encodeAsHdr = Boolean(isHdr && (height >= 1080 || meta.srcHeight < 1080));
+    const useFmp4 = Boolean(isHdr);
+    const svtParams = encodeAsHdr ? buildSvtAv1Params(meta, height) : null;
+    const toneMapSuffix = isHdr && !encodeAsHdr ? `,${buildHdrToSdrToneMapChain(meta)}` : '';
+
     await logger.log(
-        isHdr
-            ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} HDR (${hdrType} • AV1 10-bit fMP4 + ${bitrateK}k • เสียง ${audioLabel})...`
-            : `⚡ ${passLabel}: กำลังหั่น ${qualityName} (preset fast + lanczos + ${bitrateK}k • เสียง ${audioLabel})...`
+        encodeAsHdr
+            ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} True HDR (${hdrType} • AV1 10-bit fMP4 + Multi-Tile fast-decode + ${bitrateK}k • เสียง ${audioLabel})...`
+            : isHdr
+                ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} SDR (H.264 fMP4 + Hable HDR→SDR Tone-Map + ${bitrateK}k • เสียง ${audioLabel})...`
+                : `⚡ ${passLabel}: กำลังหั่น ${qualityName} (preset fast + lanczos + ${bitrateK}k • เสียง ${audioLabel})...`
     );
 
-    const ffmpegArgs = isHdr
+    const ffmpegArgs = encodeAsHdr
         ? [
             '-y', '-threads', '0', '-i', rawFilePath,
             '-vf', `scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos`,
             '-sws_flags', 'lanczos',
             '-pix_fmt', 'yuv420p10le',
             '-c:v', 'libsvtav1', '-preset', '8',
+            '-svtav1-params', svtParams,
             '-g', gopSize,
             '-b:v', `${bitrateK}k`,
             '-color_primaries', 'bt2020',
@@ -1518,7 +1637,7 @@ async function runHighQualityPass({
         ]
         : [
             '-y', '-threads', '0', '-i', rawFilePath,
-            '-vf', `scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos`,
+            '-vf', `scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos${toneMapSuffix},format=yuv420p`,
             '-sws_flags', 'lanczos',
             '-pix_fmt', 'yuv420p',
             '-c:v', 'libx264', '-preset', 'fast',
@@ -1527,10 +1646,20 @@ async function runHighQualityPass({
             '-force_key_frames', 'expr:gte(t,n_forced*4)',
             '-x264-params', 'deblock=-1,-1',
             '-b:v', `${bitrateK}k`, '-maxrate', `${maxrateK}k`, '-bufsize', `${bufsizeK}k`,
+            ...(isHdr ? ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv'] : []),
             ...audioArgs,
             '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-            '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
-            '-hls_segment_filename', `stream_${qualityName}_%03d.ts`,
+            '-hls_flags', 'independent_segments',
+            ...(useFmp4
+                ? [
+                    '-hls_segment_type', 'fmp4',
+                    '-hls_fmp4_init_filename', `init_${qualityName}.mp4`,
+                    '-hls_segment_filename', `stream_${qualityName}_%03d.m4s`,
+                ]
+                : [
+                    '-hls_segment_type', 'mpegts',
+                    '-hls_segment_filename', `stream_${qualityName}_%03d.ts`,
+                ]),
             `${qualityName}.m3u8`,
         ];
 
@@ -1551,7 +1680,7 @@ async function runHighQualityPass({
                     lane,
                     lanePct,
                     status: 'TRANSCODING',
-                    stageDetail: `${stagePrefix}${isHdr ? ' [HDR AV1]' : ''}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+                    stageDetail: `${stagePrefix}${encodeAsHdr ? ' [HDR AV1]' : isHdr ? ' [SDR Tone-Map]' : ''}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                 }).finally(() => {
                     progressInFlight = false;
                 });
@@ -1574,8 +1703,9 @@ async function runHighQualityPass({
             width,
             height,
             bitrate: manifestBitrate,
-            is_hdr: isHdr,
-            hdr_type: hdrType,
+            is_hdr: encodeAsHdr,
+            is_fmp4: useFmp4,
+            hdr_type: encodeAsHdr ? hdrType : null,
             audio_channels: audioChannels,
             audio_layout: audioLayout,
         },
@@ -1653,10 +1783,13 @@ async function runLaneFastSd({
     } else if (!existingThumbnailUrl) {
         shouldSetThumbUrl = true;
         const rawPosterPath = path.join(hlsOutputDir, 'poster_raw.jpg');
+        const posterVf = isHdr
+            ? `scale=w=1280:h=720:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,${buildHdrToSdrToneMapChain(meta)},format=yuvj420p`
+            : 'format=yuvj420p';
         try {
             await runFFmpeg([
                 '-y', '-threads', '0', '-ss', seekTime, '-i', rawFilePath,
-                '-vf', 'format=yuvj420p',
+                '-vf', posterVf,
                 '-vframes', '1', '-update', '1', '-q:v', '2', rawPosterPath,
             ]);
             const posterDims = await new Promise((resolve) => {
@@ -1708,7 +1841,7 @@ async function runLaneFastSd({
             lane: 'fast_sd',
             lanePct: 15,
             status: 'PROCESSING',
-            stageDetail: `วิเคราะห์สเปกสำเร็จ: ${srcWidth}x${srcHeight} (${resolutionLabel}), ${duration}s, ${fps}fps • เริ่มหั่นขนาน 3 เครื่อง`,
+            stageDetail: `วิเคราะห์สเปกสำเร็จ: ${srcWidth}x${srcHeight} (${resolutionLabel}), ${duration}s, ${fps}fps • เริ่มหั่นขนาน 5 เครื่อง`,
             invalidateCache: shouldPromotePosterUrl,
             extra: {
                 duration,
@@ -1725,102 +1858,71 @@ async function runLaneFastSd({
         }),
     ]);
 
-    // PASS 1: Single-Pass (144p + Two-Tier Storyboards SD & HD Simultaneously!)
+    // PASS 1: Single-Pass (144p H.264 SDR + Two-Tier Storyboards SD & HD Simultaneously!)
+    // On HDR sources, 144p/360p/480p/720p are Hable tone-mapped H.264 SDR in fMP4 so 144p unlocks in ~30s and SDR displays have zero lag!
+    const sdToneMapChain = isHdr ? `,${buildHdrToSdrToneMapChain(meta)}` : '';
+    const sdColorArgs = isHdr ? ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv'] : [];
+    const buildSdHlsOutputArgs = (qName) =>
+        isHdr
+            ? [
+                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
+                '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
+                '-hls_fmp4_init_filename', `init_${qName}.mp4`,
+                '-hls_segment_filename', `stream_${qName}_%03d.m4s`,
+                `${qName}.m3u8`,
+            ]
+            : [
+                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
+                '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
+                '-hls_segment_filename', `stream_${qName}_%03d.ts`,
+                `${qName}.m3u8`,
+            ];
+
     await logger.log(
         isHdr
-            ? `⚡ Pass 1: กำลังหั่น HLS 144p HDR (${hdrType} • AV1 10-bit fMP4) + Storyboard SD/HD...`
+            ? '⚡ Pass 1: กำลังหั่น HLS 144p SDR (H.264 fMP4 + Hable Tone-Map ปลดล็อกไว) + Storyboard SD/HD...'
             : '⚡ Pass 1: กำลังหั่น HLS 144p + Storyboard SD/HD (Ultra-fast unlock)...'
     );
     let lastProgressUpdate = 0;
     let progressInFlight = false;
     let hasStoryboard = false;
 
-    const pass1CombinedArgs = isHdr
-        ? [
-            '-y', '-threads', '0',
-            '-i', rawFilePath,
-            '-filter_complex',
-            '[0:v]split=3[v144][vsd][vhd];' +
-            '[v144]scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos,format=yuv420p10le[out144];' +
-            '[vsd]fps=1/5,scale=160:90,format=yuvj420p,tile=10x10[outsd];' +
-            '[vhd]fps=1/5,scale=320:180,format=yuvj420p,tile=5x5[outhd]',
-            // Output 1: 144p AV1 10-bit HDR fMP4 (คง bitrate เดิม 200k)
-            '-map', '[out144]', ...mapAudioArgs,
-            '-pix_fmt', 'yuv420p10le',
-            '-c:v', 'libsvtav1', '-preset', '10',
-            '-g', gopSize,
-            '-b:v', '200k',
-            '-color_primaries', 'bt2020',
-            '-color_trc', hdrColorTrc,
-            '-colorspace', 'bt2020nc',
-            '-color_range', 'tv',
-            ...audioArgs,
-            '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-            '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
-            '-hls_fmp4_init_filename', 'init_144p.mp4',
-            '-hls_segment_filename', 'stream_144p_%03d.m4s',
-            '144p.m3u8',
-            // Output 2 & 3: Storyboard Sprites (JPEG 8-bit)
-            '-map', '[outsd]', '-q:v', '3', 'sprite_sd_%03d.jpg',
-            '-map', '[outhd]', '-q:v', '2', 'sprite_hd_%03d.jpg',
-        ]
-        : [
-            '-y', '-threads', '0',
-            '-i', rawFilePath,
-            '-filter_complex',
-            '[0:v]split=3[v144][vsd][vhd];' +
-            '[v144]scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2[out144];' +
-            '[vsd]fps=1/5,scale=160:90,format=yuvj420p,tile=10x10[outsd];' +
-            '[vhd]fps=1/5,scale=320:180,format=yuvj420p,tile=5x5[outhd]',
-            // Output 1: 144p HLS (คง bitrate เดิม 200k/250k/400k)
-            '-map', '[out144]', ...mapAudioArgs,
-            '-pix_fmt', 'yuv420p',
-            '-c:v', 'libx264', '-preset', 'ultrafast',
-            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-            '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
-            ...audioArgs,
-            '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-            '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
-            '-hls_segment_filename', 'stream_144p_%03d.ts',
-            '144p.m3u8',
-            // Output 2: SD Storyboard Sprites
-            '-map', '[outsd]', '-q:v', '3', 'sprite_sd_%03d.jpg',
-            // Output 3: HD Storyboard Sprites
-            '-map', '[outhd]', '-q:v', '2', 'sprite_hd_%03d.jpg',
-        ];
+    const pass1CombinedArgs = [
+        '-y', '-threads', '0',
+        '-i', rawFilePath,
+        '-filter_complex',
+        '[0:v]split=3[v144][vsd][vhd];' +
+        `[v144]scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2${sdToneMapChain},format=yuv420p[out144];` +
+        `[vsd]fps=1/5,scale=160:90${sdToneMapChain},format=yuvj420p,tile=10x10[outsd];` +
+        `[vhd]fps=1/5,scale=320:180${sdToneMapChain},format=yuvj420p,tile=5x5[outhd]`,
+        // Output 1: 144p HLS (H.264 ultra-fast unlock — fMP4 when HDR source, MPEG-TS when SDR source)
+        '-map', '[out144]', ...mapAudioArgs,
+        '-pix_fmt', 'yuv420p',
+        '-c:v', 'libx264', '-preset', 'ultrafast',
+        '-profile:v', 'high', '-level', '2.1',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
+        ...sdColorArgs,
+        ...audioArgs,
+        ...buildSdHlsOutputArgs('144p'),
+        // Output 2: SD Storyboard Sprites
+        '-map', '[outsd]', '-q:v', '3', 'sprite_sd_%03d.jpg',
+        // Output 3: HD Storyboard Sprites
+        '-map', '[outhd]', '-q:v', '2', 'sprite_hd_%03d.jpg',
+    ];
 
-    const pass1FallbackArgs = isHdr
-        ? [
-            '-y', '-threads', '0', '-i', rawFilePath,
-            '-vf', 'scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos',
-            '-pix_fmt', 'yuv420p10le',
-            '-c:v', 'libsvtav1', '-preset', '10',
-            '-g', gopSize,
-            '-b:v', '200k',
-            '-color_primaries', 'bt2020',
-            '-color_trc', hdrColorTrc,
-            '-colorspace', 'bt2020nc',
-            '-color_range', 'tv',
-            ...audioArgs,
-            '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-            '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
-            '-hls_fmp4_init_filename', 'init_144p.mp4',
-            '-hls_segment_filename', 'stream_144p_%03d.m4s',
-            '144p.m3u8',
-        ]
-        : [
-            '-y', '-threads', '0', '-i', rawFilePath,
-            '-vf', 'scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2',
-            '-pix_fmt', 'yuv420p',
-            '-c:v', 'libx264', '-preset', 'ultrafast',
-            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-            '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
-            ...audioArgs,
-            '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-            '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
-            '-hls_segment_filename', 'stream_144p_%03d.ts',
-            '144p.m3u8',
-        ];
+    const pass1FallbackArgs = [
+        '-y', '-threads', '0', '-i', rawFilePath,
+        '-vf', `scale=w=256:h=144:force_original_aspect_ratio=decrease:force_divisible_by=2${sdToneMapChain},format=yuv420p`,
+        '-pix_fmt', 'yuv420p',
+        '-c:v', 'libx264', '-preset', 'ultrafast',
+        '-profile:v', 'high', '-level', '2.1',
+        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
+        ...sdColorArgs,
+        ...audioArgs,
+        ...buildSdHlsOutputArgs('144p'),
+    ];
 
     try {
         await runFFmpeg(
@@ -1882,15 +1984,16 @@ async function runLaneFastSd({
             width: 256,
             height: 144,
             bitrate: 200000,
-            is_hdr: isHdr,
-            hdr_type: hdrType,
+            is_hdr: false,
+            is_fmp4: isHdr,
+            hdr_type: null,
             audio_channels: audioChannels,
             audio_layout: audioLayout,
         },
     ]);
     const readyAfter144Text = mergedAfter144.map((q) => q.name).join(', ');
 
-    await logger.log(`🎉 144p${isHdr ? ' HDR' : ''} + Storyboard พร้อมเล่นแล้ว! (พร้อมแล้ว: ${readyAfter144Text})`, { level: 'success' });
+    await logger.log(`🎉 144p + Storyboard พร้อมเล่นแล้ว! (พร้อมแล้ว: ${readyAfter144Text})`, { level: 'success' });
     await updateLaneProgress({
         lane: 'fast_sd',
         lanePct: 45,
@@ -1912,86 +2015,42 @@ async function runLaneFastSd({
         },
     });
 
-    // PASS 2 & 3 COMBINED: 360p + 480p in a SINGLE Decode Pass (คง bitrate เดิม 600k / 1000k)
+    // PASS 2 & 3 COMBINED: 360p + 480p in a SINGLE Decode Pass (H.264 SDR — Hable tone-mapped fMP4 on HDR sources, MPEG-TS on SDR sources)
     if (srcHeight >= 480) {
         await logger.log(
             isHdr
-                ? `⚡ Pass 2/3: กำลังหั่น 360p + 480p HDR (${hdrType} • AV1 10-bit fMP4) พร้อมกัน...`
+                ? '⚡ Pass 2/3: กำลังหั่น 360p + 480p SDR (H.264 fMP4 + Hable Tone-Map) พร้อมกัน...'
                 : '⚡ Pass 2/3: กำลังหั่น 360p + 480p SD พร้อมกัน...'
         );
-        const pass23Args = isHdr
-            ? [
-                '-y', '-threads', '0',
-                '-i', rawFilePath,
-                '-filter_complex',
-                '[0:v]split=2[v360][v480];' +
-                '[v360]scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[out360];' +
-                '[v480]scale=w=854:h=480:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[out480]',
-                '-sws_flags', 'lanczos',
-                // 360p Output (AV1 10-bit HDR fMP4)
-                '-map', '[out360]', ...mapAudioArgs,
-                '-pix_fmt', 'yuv420p10le',
-                '-c:v', 'libsvtav1', '-preset', '9',
-                '-g', gopSize,
-                '-b:v', '600k',
-                '-color_primaries', 'bt2020',
-                '-color_trc', hdrColorTrc,
-                '-colorspace', 'bt2020nc',
-                '-color_range', 'tv',
-                ...audioArgs,
-                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-                '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
-                '-hls_fmp4_init_filename', 'init_360p.mp4',
-                '-hls_segment_filename', 'stream_360p_%03d.m4s',
-                '360p.m3u8',
-                // 480p Output (AV1 10-bit HDR fMP4)
-                '-map', '[out480]', ...mapAudioArgs,
-                '-pix_fmt', 'yuv420p10le',
-                '-c:v', 'libsvtav1', '-preset', '9',
-                '-g', gopSize,
-                '-b:v', '1000k',
-                '-color_primaries', 'bt2020',
-                '-color_trc', hdrColorTrc,
-                '-colorspace', 'bt2020nc',
-                '-color_range', 'tv',
-                ...audioArgs,
-                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-                '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
-                '-hls_fmp4_init_filename', 'init_480p.mp4',
-                '-hls_segment_filename', 'stream_480p_%03d.m4s',
-                '480p.m3u8',
-            ]
-            : [
-                '-y', '-threads', '0',
-                '-i', rawFilePath,
-                '-filter_complex',
-                '[0:v]split=2[v360][v480];' +
-                '[v360]scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[out360];' +
-                '[v480]scale=w=854:h=480:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[out480]',
-                '-sws_flags', 'lanczos',
-                // 360p Output
-                '-map', '[out360]', ...mapAudioArgs,
-                '-pix_fmt', 'yuv420p',
-                '-c:v', 'libx264', '-preset', 'veryfast',
-                '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-                '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
-                ...audioArgs,
-                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-                '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
-                '-hls_segment_filename', 'stream_360p_%03d.ts',
-                '360p.m3u8',
-                // 480p Output
-                '-map', '[out480]', ...mapAudioArgs,
-                '-pix_fmt', 'yuv420p',
-                '-c:v', 'libx264', '-preset', 'veryfast',
-                '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-                '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
-                ...audioArgs,
-                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-                '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
-                '-hls_segment_filename', 'stream_480p_%03d.ts',
-                '480p.m3u8',
-            ];
+        const pass23Args = [
+            '-y', '-threads', '0',
+            '-i', rawFilePath,
+            '-filter_complex',
+            '[0:v]split=2[v360][v480];' +
+            `[v360]scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos${sdToneMapChain},format=yuv420p[out360];` +
+            `[v480]scale=w=854:h=480:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos${sdToneMapChain},format=yuv420p[out480]`,
+            '-sws_flags', 'lanczos',
+            // 360p Output (H.264 SDR)
+            '-map', '[out360]', ...mapAudioArgs,
+            '-pix_fmt', 'yuv420p',
+            '-c:v', 'libx264', '-preset', 'veryfast',
+            '-profile:v', 'high', '-level', '3.0',
+            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+            '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
+            ...sdColorArgs,
+            ...audioArgs,
+            ...buildSdHlsOutputArgs('360p'),
+            // 480p Output (H.264 SDR)
+            '-map', '[out480]', ...mapAudioArgs,
+            '-pix_fmt', 'yuv420p',
+            '-c:v', 'libx264', '-preset', 'veryfast',
+            '-profile:v', 'high', '-level', '3.0',
+            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+            '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
+            ...sdColorArgs,
+            ...audioArgs,
+            ...buildSdHlsOutputArgs('480p'),
+        ];
 
         await runFFmpeg(
             pass23Args,
@@ -2004,7 +2063,7 @@ async function runLaneFastSd({
                         lane: 'fast_sd',
                         lanePct: Math.min(98, 45 + Math.round(pct * 0.53)),
                         status: 'READY',
-                        stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 360p & 480p${isHdr ? ' [HDR AV1]' : ' SD'}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+                        stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 360p & 480p${isHdr ? ' [SDR Tone-Map]' : ' SD'}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                     }).finally(() => {
                         progressInFlight = false;
                     });
@@ -2026,8 +2085,9 @@ async function runLaneFastSd({
                 width: 640,
                 height: 360,
                 bitrate: 600000,
-                is_hdr: isHdr,
-                hdr_type: hdrType,
+                is_hdr: false,
+                is_fmp4: isHdr,
+                hdr_type: null,
                 audio_channels: audioChannels,
                 audio_layout: audioLayout,
             },
@@ -2036,8 +2096,9 @@ async function runLaneFastSd({
                 width: 854,
                 height: 480,
                 bitrate: 1000000,
-                is_hdr: isHdr,
-                hdr_type: hdrType,
+                is_hdr: false,
+                is_fmp4: isHdr,
+                hdr_type: null,
                 audio_channels: audioChannels,
                 audio_layout: audioLayout,
             },
@@ -2056,41 +2117,20 @@ async function runLaneFastSd({
             level: 'success',
         });
     } else if (srcHeight >= 360) {
-        await logger.log(isHdr ? `⚡ Pass 2: กำลังหั่น 360p HDR (${hdrType} • AV1 10-bit fMP4)...` : '⚡ Pass 2: กำลังหั่น 360p SD...');
-        const pass2OnlyArgs = isHdr
-            ? [
-                '-y', '-threads', '0', '-i', rawFilePath,
-                '-vf', 'scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos',
-                '-sws_flags', 'lanczos',
-                '-pix_fmt', 'yuv420p10le',
-                '-c:v', 'libsvtav1', '-preset', '9',
-                '-g', gopSize,
-                '-b:v', '600k',
-                '-color_primaries', 'bt2020',
-                '-color_trc', hdrColorTrc,
-                '-colorspace', 'bt2020nc',
-                '-color_range', 'tv',
-                ...audioArgs,
-                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-                '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
-                '-hls_fmp4_init_filename', 'init_360p.mp4',
-                '-hls_segment_filename', 'stream_360p_%03d.m4s',
-                '360p.m3u8',
-            ]
-            : [
-                '-y', '-threads', '0', '-i', rawFilePath,
-                '-vf', 'scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos',
-                '-sws_flags', 'lanczos',
-                '-pix_fmt', 'yuv420p',
-                '-c:v', 'libx264', '-preset', 'veryfast',
-                '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
-                '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
-                ...audioArgs,
-                '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
-                '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
-                '-hls_segment_filename', 'stream_360p_%03d.ts',
-                '360p.m3u8',
-            ];
+        await logger.log(isHdr ? '⚡ Pass 2: กำลังหั่น 360p SDR (H.264 fMP4 + Hable Tone-Map)...' : '⚡ Pass 2: กำลังหั่น 360p SD...');
+        const pass2OnlyArgs = [
+            '-y', '-threads', '0', '-i', rawFilePath,
+            '-vf', `scale=w=640:h=360:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos${sdToneMapChain},format=yuv420p`,
+            '-sws_flags', 'lanczos',
+            '-pix_fmt', 'yuv420p',
+            '-c:v', 'libx264', '-preset', 'veryfast',
+            '-profile:v', 'high', '-level', '3.0',
+            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+            '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
+            ...sdColorArgs,
+            ...audioArgs,
+            ...buildSdHlsOutputArgs('360p'),
+        ];
         await runFFmpeg(
             pass2OnlyArgs,
             null,
@@ -2108,8 +2148,9 @@ async function runLaneFastSd({
                 width: 640,
                 height: 360,
                 bitrate: 600000,
-                is_hdr: isHdr,
-                hdr_type: hdrType,
+                is_hdr: false,
+                is_fmp4: isHdr,
+                hdr_type: null,
                 audio_channels: audioChannels,
                 audio_layout: audioLayout,
             },
@@ -2150,8 +2191,9 @@ async function runLaneFastSd({
                     width: 256,
                     height: 144,
                     bitrate: 200000,
-                    is_hdr: isHdr,
-                    hdr_type: hdrType,
+                    is_hdr: false,
+                    is_fmp4: isHdr,
+                    hdr_type: null,
                     audio_channels: audioChannels,
                     audio_layout: audioLayout,
                     hires_audio: hiResInfo,
@@ -2618,7 +2660,9 @@ async function main() {
         ]);
 
         const meta = parseProbeMeta(probeData);
-        const hdrTag = meta.isHdr ? ` | 🌈 HDR (${meta.hdrType} • ${meta.pixFmt}) -> AV1 10-bit fMP4` : ` | SDR (${meta.pixFmt}) -> H.264`;
+        const hdrTag = meta.isHdr
+            ? ` | 🌈 True HDR (${meta.hdrType} • ${meta.pixFmt}${meta.hdrMaxNits ? ` • ${meta.hdrMaxNits}nit / MaxCLL ${meta.hdrMaxCll}` : ''}) -> 144p–720p H.264 SDR + 1080p–4K AV1 10-bit HDR10 fMP4`
+            : ` | SDR (${meta.pixFmt}) -> H.264`;
         const hiResTag = meta.hiResEligible
             ? ` + 🎧 Hi-Res ${meta.hiResBitDepth}-bit/${(meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1)}kHz ${meta.hiResFormat.toUpperCase()}${meta.hiResFallbackReason ? ' (Auto-FLAC >1.5GB)' : ''}`
             : '';

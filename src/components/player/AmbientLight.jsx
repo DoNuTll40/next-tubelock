@@ -13,6 +13,7 @@ export default function AmbientLight({
   poster = null,
   enabled = true,
   variant = 'halo',
+  preferStoryboardOnly = false,
   className = '',
 }) {
   const isEnabled = Boolean(enabled);
@@ -160,8 +161,20 @@ export default function AmbientLight({
         return;
       }
 
-      // 1. ดึงจาก <video> โดยตรง (หากไม่ติด CORS) — ทดสอบ getImageData แค่ครั้งเดียว ไม่ readback ทุกวินาที
-      if (canUseDirectVideoRef.current && video.readyState >= 2 && video.videoWidth > 0) {
+      // 1. ดึงจาก <video> โดยตรงเฉพาะคลิปความละเอียดต่ำกว่า 1080p และไม่ใช่ HDR
+      //    สำหรับ 1080p / 2K / 4K / HDR ให้ข้ามไปใช้ Storyboard/Poster แทนเพื่อป้องกัน GPU Readback stall (drop frames)
+      //    และรักษา Hardware HDR Overlay บน Windows DX11 / Android SurfaceFlinger ให้ทำงานเต็มประสิทธิภาพ
+      const hasStoryboardOrPoster = Boolean(
+        (storyboard?.cuesSD && storyboard.cuesSD.length > 0) ||
+        (storyboard?.cues && storyboard.cues.length > 0) ||
+        (storyboard?.spriteMap && Object.keys(storyboard.spriteMap).length > 0) ||
+        poster
+      );
+      const avoidVideoReadback =
+        preferStoryboardOnly ||
+        (hasStoryboardOrPoster && (video.videoWidth >= 1920 || video.videoHeight >= 1080));
+
+      if (!avoidVideoReadback && canUseDirectVideoRef.current && video.readyState >= 2 && video.videoWidth > 0) {
         const timeBucket = Math.floor(video.currentTime * 1.2);
         const videoKey = `video_frame_${timeBucket}`;
         if (lastKeyRef.current !== videoKey) {
@@ -254,7 +267,7 @@ export default function AmbientLight({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [isEnabled, videoRef, storyboard, poster]);
+  }, [isEnabled, videoRef, storyboard, poster, preferStoryboardOnly]);
 
   if (!isEnabled) return null;
 
