@@ -151,7 +151,7 @@ export async function POST(request) {
         );
       }
 
-      const subtitleJobId = `sub_${videoId}_${Date.now().toString(36)}-ai`;
+      const subtitleJobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-ai`;
       await sql`
         UPDATE videos
         SET audio_status = 'extracting',

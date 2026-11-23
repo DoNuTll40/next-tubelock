@@ -26,15 +26,20 @@ async function findRun(github, video) {
   const jobId = video.subtitle_job_id;
   const params = new URLSearchParams({ branch: process.env.GITHUB_BRANCH || 'main', event: 'workflow_dispatch', per_page: '30' });
   if (jobId) {
-    params.set('created', `>=${new Date(Number(jobId.split('-')[0]) - 60000).toISOString()}`);
+    const rawTs = Number(String(jobId).split('-')[0]);
+    if (Number.isFinite(rawTs) && rawTs > 1_000_000_000_000) {
+      params.set('created', `>=${new Date(rawTs - 60000).toISOString()}`);
+    }
   }
-  const { workflow_runs: runs } = await github(`workflows/${WORKFLOW}/runs?${params}`);
-  if (jobId) return runs.find((run) => run.display_title === `${prefix} / ${jobId}`);
+  const { workflow_runs: runs = [] } = await github(`workflows/${WORKFLOW}/runs?${params}`);
+  if (jobId) {
+    return runs.find((run) => run.display_title === `${prefix} / ${jobId}`) || null;
+  }
 
   // Older workflow runs identify the video in the job name instead of the run title.
   const updated = Date.parse(video.updated_at);
   const candidates = runs.filter((run) =>
-    (run.status !== 'completed' || Date.parse(run.updated_at) >= updated - 5000) &&
+    (run.status !== 'completed' || !Number.isFinite(updated) || Date.parse(run.updated_at) >= updated - 5000) &&
     (!run.display_title?.startsWith('TubeLock subtitles #') || run.display_title === `${prefix} /`)
   );
   for (let index = 0; index < candidates.length; index += 5) {
@@ -61,8 +66,15 @@ export async function reconcileSubtitleWorkflow(sql, video, { cancel = false } =
   const github = githubClient();
   const run = await findRun(github, video);
   if (!run) {
-    if (cancel) throw new Error('ยังไม่พบงานซับใน GitHub Actions ลองอีกครั้งหลัง GitHub รับงาน');
-    if (Date.now() - Date.parse(video.updated_at) < 2 * 60 * 60 * 1000) return video;
+    const ageMs = Date.now() - Date.parse(video.updated_at);
+    if (cancel) {
+      if (!Number.isFinite(ageMs) || ageMs < 20000) {
+        throw new Error('ยังไม่พบงานซับใน GitHub Actions ลองอีกครั้งหลัง GitHub รับงาน');
+      }
+      // Run already disappeared or was cancelled externally — clear the stuck DB status
+    } else if (Number.isFinite(ageMs) && ageMs < 2 * 60 * 60 * 1000) {
+      return video;
+    }
   } else if (run.status !== 'completed') {
     if (cancel) {
       try {
@@ -76,16 +88,15 @@ export async function reconcileSubtitleWorkflow(sql, video, { cancel = false } =
     return video;
   }
 
-  const subtitleStatus = run?.conclusion === 'cancelled' ? 'cancelled' : 'failed';
+  const subtitleStatus = cancel || run?.conclusion === 'cancelled' ? 'cancelled' : 'failed';
   const [updated] = await sql`
     UPDATE videos v
     SET subtitle_status = ${subtitleStatus},
-        audio_status = CASE WHEN audio_status = 'extracting' THEN ${subtitleStatus} ELSE audio_status END
+        audio_status = CASE WHEN audio_status = 'extracting' THEN ${subtitleStatus} ELSE audio_status END,
+        updated_at = NOW()
     WHERE id = ${video.id}
-      AND date_trunc('milliseconds', updated_at) IS NOT DISTINCT FROM date_trunc('milliseconds', ${video.updated_at}::timestamptz)
       AND (to_jsonb(v)->>'subtitle_job_id') IS NOT DISTINCT FROM ${video.subtitle_job_id ?? null}
-      AND subtitle_status IS NOT DISTINCT FROM ${video.subtitle_status}
-      AND audio_status IS NOT DISTINCT FROM ${video.audio_status}
+      AND (subtitle_status IN ('extracting', 'processing') OR audio_status = 'extracting')
     RETURNING subtitle_status, audio_status
   `;
   return updated ? { ...video, ...updated } : video;

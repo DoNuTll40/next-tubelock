@@ -1196,12 +1196,17 @@ async function main() {
     UPDATE videos
     SET subtitle_status = 'processing', updated_at = NOW()
     WHERE id = ${vidNum} AND subtitle_job_id = ${jobId}
-      AND subtitle_status = 'extracting' AND audio_status = 'extracting'
+      AND subtitle_status = 'extracting' AND audio_status IN ('extracting', 'ready')
     RETURNING id, title, raw_file_name, onedrive_folder_id, master_playlist_path,
       COALESCE(source_language, '') AS source_language
   `;
   if (!video) {
-    console.log('ข้ามงานซับที่เริ่มไปแล้วหรือไม่อยู่ในคิวอัปโหลด');
+    const [cur] = await sql`
+      SELECT subtitle_job_id, subtitle_status, audio_status FROM videos WHERE id = ${vidNum} LIMIT 1
+    `;
+    console.log(
+      `ข้ามงานซับที่เริ่มไปแล้วหรือไม่อยู่ในคิวอัปโหลด (input job=${jobId} | db job=${cur?.subtitle_job_id || 'null'}, sub=${cur?.subtitle_status || 'null'}, audio=${cur?.audio_status || 'null'})`
+    );
     return;
   }
 
