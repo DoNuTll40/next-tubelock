@@ -25,22 +25,14 @@ async function findRun(github, video) {
   const prefix = `TubeLock subtitles #${video.id}`;
   const jobId = video.subtitle_job_id;
   const params = new URLSearchParams({ branch: process.env.GITHUB_BRANCH || 'main', event: 'workflow_dispatch', per_page: '30' });
-  if (jobId) {
-    const rawTs = Number(String(jobId).split('-')[0]);
-    if (Number.isFinite(rawTs) && rawTs > 1_000_000_000_000) {
-      params.set('created', `>=${new Date(rawTs - 60000).toISOString()}`);
-    }
-  }
   const { workflow_runs: runs = [] } = await github(`workflows/${WORKFLOW}/runs?${params}`);
   if (jobId) {
     return runs.find((run) => run.display_title === `${prefix} / ${jobId}`) || null;
   }
 
   // Older workflow runs identify the video in the job name instead of the run title.
-  const updated = Date.parse(video.updated_at);
   const candidates = runs.filter((run) =>
-    (run.status !== 'completed' || !Number.isFinite(updated) || Date.parse(run.updated_at) >= updated - 5000) &&
-    (!run.display_title?.startsWith('TubeLock subtitles #') || run.display_title === `${prefix} /`)
+    !run.display_title?.startsWith('TubeLock subtitles #') || run.display_title === `${prefix} /`
   );
   for (let index = 0; index < candidates.length; index += 5) {
     const matches = await Promise.all(candidates.slice(index, index + 5).map(async (run) => {
@@ -66,13 +58,19 @@ export async function reconcileSubtitleWorkflow(sql, video, { cancel = false } =
   const github = githubClient();
   const run = await findRun(github, video);
   if (!run) {
-    const ageMs = Date.now() - Date.parse(video.updated_at);
+    // Use Postgres server clock instead of local Date.now() to avoid local PC clock skew
+    const [clockRow] = await sql`
+      SELECT EXTRACT(EPOCH FROM (NOW() - updated_at)) * 1000 AS age_ms
+      FROM videos
+      WHERE id = ${video.id}
+      LIMIT 1
+    `;
+    const ageMs = Number(clockRow?.age_ms ?? 0);
     if (cancel) {
-      if (!Number.isFinite(ageMs) || ageMs < 20000) {
+      if (ageMs < 15000) {
         throw new Error('ยังไม่พบงานซับใน GitHub Actions ลองอีกครั้งหลัง GitHub รับงาน');
       }
-      // Run already disappeared or was cancelled externally — clear the stuck DB status
-    } else if (Number.isFinite(ageMs) && ageMs < 2 * 60 * 60 * 1000) {
+    } else if (ageMs < 2 * 60 * 60 * 1000) {
       return video;
     }
   } else if (run.status !== 'completed') {
