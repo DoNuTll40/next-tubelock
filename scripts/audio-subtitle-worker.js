@@ -397,8 +397,8 @@ function parseJsonResponseSafe(rawText) {
 const GEMINI_REQUEST_TIMEOUT_MS = 120000;
 const VAD_MAX_CHUNK_SECONDS = 28; // Short speech-anchored chunks eliminate cumulative LLM timestamp drift
 const VAD_FALLBACK_CHUNK_SECONDS = 25;
-const VAD_SILENCE_DB = '-34dB';
-const VAD_MIN_SILENCE_SEC = 0.45;
+const VAD_SILENCE_DB = '-38dB';
+const VAD_MIN_SILENCE_SEC = 0.5;
 const VAD_PAD_SEC = 0.25;
 const VAD_MERGE_GAP_SEC = 1.2;
 const TRANSCRIBE_CONCURRENCY = 8;
@@ -1027,8 +1027,8 @@ async function transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt,
     `This short audio clip is ${chunkDurationSec} seconds long (timestamps MUST be relative to this clip: 0.0 to ${chunkDurationSec}).`,
     'Rules:',
     '- Return JSON matching the schema with a "cues" array.',
-    '- Listen carefully for quiet speech, soft voices, and whispers — transcribe every clearly spoken word verbatim, including short replies and interjections.',
-    '- Do NOT invent dialogue during pure silence, music, non-verbal breathing/moaning, or background noise. If there are no spoken words, return {"cues": []}.',
+    '- Transcribe ONLY clearly recognizable spoken words verbatim (including natural short replies).',
+    '- Do NOT guess, force, or invent dialogue from silence, faint background noise, cloth rustling, music, breathing, or moaning. If there is no clear spoken dialogue, return {"cues": []}.',
     '- Split speech into concise subtitle cues of 1 to 5 seconds each (around 15–55 characters max per cue) with tight, accurate start_sec and end_sec.',
     '- Timestamps must be strictly chronological with end_sec > start_sec and never exceed clip duration.',
     '- Set "speaker" to "M" (male), "F" (female), "M1"/"M2"/"F1"/"F2" when clearly distinguishable by voice, otherwise "".',
@@ -1461,19 +1461,14 @@ async function main() {
         sourceOptions = ['-protocol_whitelist', 'file'];
       }
     }
-    const rawAudioArgs = ['-map', '0:a:0', '-af', 'aresample=async=1:first_pts=0', '-ac', '1', '-ar', '16000'];
-    const vadBoostAudioArgs = [
-      '-map', '0:a:0',
-      '-af', 'aresample=async=1:first_pts=0,highpass=f=80,dynaudnorm=f=150:g=15:p=0.9:m=10',
-      '-ac', '1', '-ar', '16000',
-    ];
+    const audioArgs = ['-map', '0:a:0', '-af', 'aresample=async=1:first_pts=0', '-ac', '1', '-ar', '16000'];
     await runFFmpegWithProgress(
       [
         '-y', ...sourceOptions, '-i', audioSource,
-        ...vadBoostAudioArgs, '-c:a', 'pcm_s16le', seekAudioPath,
-        ...(!existingAudio ? [...rawAudioArgs, '-c:a', 'libmp3lame', '-b:a', '32k', localAudioPath] : []),
+        ...audioArgs, '-c:a', 'pcm_s16le', seekAudioPath,
+        ...(!existingAudio ? [...audioArgs, '-c:a', 'libmp3lame', '-b:a', '32k', localAudioPath] : []),
       ],
-      { durationSec: await probeMediaDuration(audioSource, sourceOptions), stepLabel: 'เตรียมเสียงสำหรับถอดซับ (เร่งเสียงกระซิบ)', logger }
+      { durationSec: await probeMediaDuration(audioSource, sourceOptions), stepLabel: 'เตรียมเสียงสำหรับถอดซับ', logger }
     );
     if (audioSource === localVideoPath) await fs.promises.rm(localVideoPath, { force: true });
     if (sourceOptions.length) await fs.promises.rm(path.dirname(audioSource), { recursive: true, force: true });
