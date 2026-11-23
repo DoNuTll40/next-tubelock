@@ -51,6 +51,55 @@ html.dark body {
   background: #FF7A00;
 }
 
+/* Hide scrollbars cleanly where requested (e.g. Docs left sidebar) */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Subtle hairline scrollbar for Docs right-hand Table of Contents */
+.docs-toc-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.docs-toc-scroll:hover {
+  scrollbar-color: rgba(140, 133, 123, 0.28) transparent;
+}
+
+.dark .docs-toc-scroll:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.docs-toc-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+
+.docs-toc-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.docs-toc-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+}
+
+.docs-toc-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(140, 133, 123, 0.32);
+}
+
+.dark .docs-toc-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.docs-toc-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 122, 0, 0.65);
+}
+
 @keyframes slideRight {
   from {
     transform: translateX(-100%);

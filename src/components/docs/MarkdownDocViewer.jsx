@@ -4,6 +4,24 @@ import fs from 'fs/promises';
 import path from 'path';
 import { marked } from 'marked';
 import { Edit3, ChevronRight, ArrowLeft, ArrowRight, Clock } from 'lucide-react';
+import DocsTableOfContents from './DocsTableOfContents';
+
+function decodeHtmlEntities(str = '') {
+  return String(str)
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'");
+}
+
+function slugifyHeading(text = '') {
+  return String(text)
+    .toLowerCase()
+    .replace(/[^\w\u0E00-\u0E7F]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 function formatThaiDate(dateInput) {
   if (!dateInput) return null;
@@ -58,29 +76,19 @@ export default async function MarkdownDocViewer({
   // Strip frontmatter metadata (--- ... ---) from display content
   markdown = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 
-  // Extract H2 headings for "On this page" TOC
-  const headingRegex = /^##\s+(.+)$/gm;
-  const toc = [];
-  let match;
-  while ((match = headingRegex.exec(markdown)) !== null) {
-    const rawTitle = match[1].trim();
-    const id = rawTitle
-      .toLowerCase()
-      .replace(/[^\w\u0E00-\u0E7F]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    toc.push({ id, title: rawTitle });
-  }
-
   // Parse Markdown to standard HTML (Use marked default without broken renderer overrides)
   let htmlContent = marked.parse(markdown);
 
-  // Inject id to <h2> tags so TOC anchor links jump directly to sections
-  htmlContent = htmlContent.replace(/<h2[^>]*>(.*?)<\/h2>/gi, (fullMatch, headingInner) => {
-    const plainText = headingInner.replace(/<[^>]+>/g, '').trim();
-    const id = plainText
-      .toLowerCase()
-      .replace(/[^\w\u0E00-\u0E7F]+/g, '-')
-      .replace(/^-+|-+$/g, '');
+  // Extract clean plain-text H2 titles and inject matching anchor IDs in one pass
+  const toc = [];
+  const usedIds = new Map();
+  htmlContent = htmlContent.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (fullMatch, headingInner) => {
+    const plainText = decodeHtmlEntities(headingInner.replace(/<[^>]+>/g, '')).trim();
+    const baseId = slugifyHeading(plainText) || `section-${toc.length + 1}`;
+    const count = usedIds.get(baseId) || 0;
+    usedIds.set(baseId, count + 1);
+    const id = count === 0 ? baseId : `${baseId}-${count + 1}`;
+    toc.push({ id, title: plainText });
     return `<h2 id="${id}" class="scroll-mt-20">${headingInner}</h2>`;
   });
 
@@ -186,38 +194,12 @@ export default async function MarkdownDocViewer({
         </div>
       </article>
 
-      {/* 🧭 Right Sidebar: "On this page" TOC extracted from markdown headings */}
-      {toc.length > 0 && (
-        <aside className="hidden xl:flex flex-col w-56 shrink-0 sticky top-20 h-[calc(100vh-6rem)] overflow-y-auto no-scrollbar text-xs">
-          <span className="font-bold text-[11px] uppercase tracking-wider text-[#8C857B] dark:text-[#777777] mb-3">
-            On this page
-          </span>
-          <ul className="flex flex-col gap-2 border-l border-[#EFECE6] dark:border-white/10 pl-3">
-            {toc.map((item, idx) => (
-              <li key={idx}>
-                <a
-                  href={`#${item.id}`}
-                  className="text-[#666666] dark:text-[#999999] hover:text-[#1F1E1C] dark:hover:text-white transition-colors block py-0.5 line-clamp-1"
-                >
-                  {item.title}
-                </a>
-              </li>
-            ))}
-          </ul>
-
-          <div className="mt-8 pt-4 border-t border-[#EFECE6] dark:border-white/10 flex flex-col gap-2.5">
-            <a
-              href={githubEditUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-[#ec4899] hover:text-[#f472b6] transition"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span>Edit this page on GitHub</span>
-            </a>
-          </div>
-        </aside>
-      )}
+      {/* 🧭 Right Sidebar: Sleek Interactive Table of Contents with Scrollspy */}
+      <DocsTableOfContents
+        items={toc}
+        docSlug={docSlug}
+        githubEditUrl={githubEditUrl}
+      />
     </div>
   );
 }
