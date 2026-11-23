@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
 import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
+import { normalizeVideoLanguageCode, getVideoLanguage } from '@/lib/videoLanguages';
 
 async function ensureAiColumns(sql) {
   try {
@@ -11,6 +12,8 @@ async function ensureAiColumns(sql) {
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_model VARCHAR(100) DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_job_id VARCHAR(120) DEFAULT '';`;
+    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_language VARCHAR(20) DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_status VARCHAR(50) DEFAULT 'waiting';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_preview_url TEXT DEFAULT '';`;
     await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS content_rating VARCHAR(50) DEFAULT 'all';`;
@@ -77,6 +80,8 @@ export async function POST(request) {
       model = '',
       userRating = 'auto',
       autoApply = true,
+      sourceLanguage = '',
+      customPrompt = '',
     } = body;
     const parsedVersionId = versionId != null ? parseInt(versionId, 10) : null;
 
@@ -93,17 +98,13 @@ export async function POST(request) {
       );
     }
 
-    if (workflowType === 'audio_subtitles') {
-      return NextResponse.json({ success: false, error: 'สร้างซับได้เฉพาะตอนอัปโหลดวิดีโอ' }, { status: 403 });
-    }
-
     const sql = getDb();
     const userId = await getSessionUserId(sql);
     if (userId == null) return accessError(401);
     await ensureAiColumns(sql);
 
     const rows = await sql`
-      SELECT id, title, raw_file_name, content_rating, audio_status, subtitle_status, sprite_status, rating_check_status, thumbnail_status, status, updated_at
+      SELECT id, title, raw_file_name, content_rating, audio_status, subtitle_status, source_language, sprite_status, rating_check_status, thumbnail_status, status, updated_at
       FROM videos
       WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
       LIMIT 1;
@@ -122,6 +123,85 @@ export async function POST(request) {
     const nowMs = Date.now();
     const updatedMs = video.updated_at ? new Date(video.updated_at).getTime() : 0;
     const isRecent = (nowMs - updatedMs) < 45000;
+
+    if (workflowType === 'audio_subtitles') {
+      if (
+        isRecent &&
+        (video.subtitle_status === 'extracting' ||
+          video.subtitle_status === 'processing' ||
+          video.audio_status === 'extracting')
+      ) {
+        return NextResponse.json({
+          success: true,
+          videoId,
+          workflowType,
+          audioStatus: video.audio_status,
+          subtitleStatus: video.subtitle_status,
+          alreadyRunning: true,
+          message: 'GitHub Action กำลังถอดเสียงและสร้างซับไตเติลอยู่แล้ว ไม่ต้องส่งซ้ำ',
+        });
+      }
+
+      const resolvedLang = normalizeVideoLanguageCode(sourceLanguage || video.source_language || '');
+      const langMeta = getVideoLanguage(resolvedLang);
+      if (langMeta?.isNone) {
+        return NextResponse.json(
+          { success: false, error: 'วิดีโอนี้ตั้งค่าภาษาเสียงพูดเป็น "ไม่มีเสียงพูด" กรุณาเลือกภาษาเสียงพูดก่อนสร้างซับ' },
+          { status: 400 }
+        );
+      }
+
+      const subtitleJobId = `sub_${videoId}_${Date.now().toString(36)}-ai`;
+      await sql`
+        UPDATE videos
+        SET audio_status = 'extracting',
+            subtitle_status = 'extracting',
+            subtitle_job_id = ${subtitleJobId},
+            source_language = CASE WHEN ${resolvedLang} <> '' THEN ${resolvedLang} ELSE source_language END,
+            updated_at = NOW()
+        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+      `;
+
+      try {
+        await triggerGitHubWorkflow('extract-audio-subtitles.yml', {
+          job_id: subtitleJobId,
+          video_id: String(videoId),
+          raw_file_name: String(effectiveRawName),
+          source_language: String(resolvedLang),
+          custom_prompt: String(customPrompt || '').trim(),
+        });
+        await appendWorkerLog(sql, videoId, {
+          source: 'sub',
+          label: 'เสียง & ซับไตเติล AI',
+          message: `🚀 ส่งคำสั่งทำซับใหม่ (ภาษา: ${langMeta ? langMeta.label : 'ตรวจอัตโนมัติ'}) เข้าคิว GitHub Actions — รอ Runner รับงาน...`,
+        });
+      } catch (wfErr) {
+        await sql`
+          UPDATE videos
+          SET audio_status = CASE WHEN audio_status = 'extracting' THEN 'failed' ELSE audio_status END,
+              subtitle_status = 'failed',
+              updated_at = NOW()
+          WHERE id = ${videoId} AND subtitle_job_id = ${subtitleJobId};
+        `;
+        await appendWorkerLog(sql, videoId, {
+          source: 'sub',
+          label: 'เสียง & ซับไตเติล AI',
+          level: 'error',
+          message: `❌ ส่งคำสั่ง extract-audio-subtitles.yml ล้มเหลว: ${wfErr.message}`,
+        });
+        throw wfErr;
+      }
+
+      return NextResponse.json({
+        success: true,
+        videoId,
+        workflowType,
+        subtitleJobId,
+        audioStatus: 'extracting',
+        subtitleStatus: 'extracting',
+        message: 'ส่งคำสั่งถอดเสียงและสร้างซับไตเติลใหม่ไปยัง GitHub Actions เรียบร้อยแล้ว',
+      });
+    }
 
     if (workflowType === 'sprite_rating') {
       if (isRecent && (video.sprite_status === 'generating' || video.rating_check_status === 'analyzing')) {

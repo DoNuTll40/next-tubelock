@@ -157,6 +157,7 @@ function StudioEditorInner() {
   // Workflow dispatch states
   const [isDispatchingThumbs, setIsDispatchingThumbs] = useState(false);
   const [isDispatchingRating, setIsDispatchingRating] = useState(false);
+  const [isDispatchingSubtitles, setIsDispatchingSubtitles] = useState(false);
   const [isRetranscoding, setIsRetranscoding] = useState(false);
 
   // Delete modal
@@ -382,6 +383,13 @@ function StudioEditorInner() {
         }
         if (latest.status !== 'TRANSCODING' && latest.status !== 'PROCESSING' && latest.status !== 'QUEUED') {
           setIsRetranscoding(false);
+        }
+        if (
+          latest.subtitleStatus !== 'extracting' &&
+          latest.subtitleStatus !== 'processing' &&
+          latest.audioStatus !== 'extracting'
+        ) {
+          setIsDispatchingSubtitles(false);
         }
 
         // Safely sync newly produced worker assets only when payload arrived and user hasn't unsaved local edits
@@ -638,6 +646,27 @@ function StudioEditorInner() {
       status: 'TRANSCODING',
       transcodeProgress: 5,
     });
+
+  const handleDispatchSubtitles = ({ sourceLanguage: chosenLang = '', customPrompt = '' } = {}) => {
+    statusRevisionsRef.current = {
+      ...(statusRevisionsRef.current || {}),
+      logs: '',
+      subtitles: '',
+    };
+    return dispatchStudioWorkflow(
+      {
+        workflowType: 'audio_subtitles',
+        sourceLanguage: chosenLang || sourceLanguage || '',
+        customPrompt: customPrompt || '',
+      },
+      setIsDispatchingSubtitles,
+      {
+        audioStatus: 'extracting',
+        subtitleStatus: 'extracting',
+        ...(chosenLang ? { sourceLanguage: chosenLang } : {}),
+      }
+    );
+  };
 
   const handleConfirmDelete = async () => {
     if (!video || isDeleting) return;
@@ -1011,6 +1040,10 @@ function StudioEditorInner() {
                   subtitleStatus={video.subtitleStatus || 'waiting'}
                   audioStatus={video.audioStatus || 'waiting'}
                   workerDetail={video.stageDetail || ''}
+                  sourceLanguage={sourceLanguage || video.sourceLanguage || ''}
+                  workerLogs={Array.isArray(video.workerLogs) ? video.workerLogs : []}
+                  isDispatchingSubtitles={isDispatchingSubtitles}
+                  onRegenerateSubtitles={handleDispatchSubtitles}
                 />
               )}
 

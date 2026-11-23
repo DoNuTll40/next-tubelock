@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useDeferredValue, useState, useRef, useMemo } from 'react';
+import { Fragment, useDeferredValue, useEffect, useState, useRef, useMemo } from 'react';
 import {
   Captions,
   Plus,
@@ -15,6 +15,11 @@ import {
   X,
   Search,
   RotateCcw,
+  Sparkles,
+  Terminal,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import SubtitleGenerationCard from '@/components/SubtitleGenerationCard';
 import {
@@ -188,6 +193,10 @@ export default function StudioSubtitlesTab({
   subtitleStatus = 'waiting',
   audioStatus = 'waiting',
   workerDetail = '',
+  sourceLanguage = '',
+  workerLogs = [],
+  isDispatchingSubtitles = false,
+  onRegenerateSubtitles = null,
 }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [viewMode, setViewMode] = useState('editor'); // 'editor' | 'timeline'
@@ -199,8 +208,18 @@ export default function StudioSubtitlesTab({
   const [newCueComposer, setNewCueComposer] = useState(null); // { trackKey, srtSnapshot, insertAfterIdx, start, end, text, error }
   const [undoSnapshot, setUndoSnapshot] = useState(null); // { trackKey, previousSrt, label }
   const [statusNotice, setStatusNotice] = useState('');
+  const [showLogsOverride, setShowLogsOverride] = useState(null); // null = auto (open while running/failed)
+  const logBoxRef = useRef(null);
   const replaceInputRef = useRef(null);
   const newTrackInputRef = useRef(null);
+
+  const subtitleLogs = useMemo(() => {
+    if (!Array.isArray(workerLogs)) return [];
+    return workerLogs.filter((entry) => {
+      const src = String(entry?.source || '').toLowerCase();
+      return src === 'sub' || src === 'subtitles' || src === 'audio';
+    });
+  }, [workerLogs]);
 
   const safeIdx = selectedIdx >= 0 && selectedIdx < tracks.length ? selectedIdx : 0;
   const activeTrack = tracks[safeIdx] || null;
@@ -471,8 +490,39 @@ export default function StudioSubtitlesTab({
   };
 
   const isAiRunning =
-    audioStatus === 'extracting' || ['extracting', 'processing'].includes(subtitleStatus);
+    isDispatchingSubtitles ||
+    audioStatus === 'extracting' ||
+    ['extracting', 'processing'].includes(subtitleStatus);
+  const isLogsVisible =
+    showLogsOverride !== null
+      ? showLogsOverride
+      : isAiRunning || subtitleStatus === 'failed';
   const safeBaseName = (videoTitle || 'subtitles').replace(/[^a-zA-Z0-9ก-๙_-]/g, '_').slice(0, 50);
+
+  useEffect(() => {
+    if (isLogsVisible && logBoxRef.current) {
+      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
+    }
+  }, [subtitleLogs.length, isLogsVisible]);
+
+  const handleStartRegenerate = async () => {
+    if (!onRegenerateSubtitles || isAiRunning) return;
+    setShowLogsOverride(true);
+    await onRegenerateSubtitles({
+      sourceLanguage: sourceLanguage || '',
+    });
+  };
+
+  const formatLogClock = (ts) => {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleTimeString('th-TH', { hour12: false });
+    } catch {
+      return '';
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -513,6 +563,32 @@ export default function StudioSubtitlesTab({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {onRegenerateSubtitles && (
+              <button
+                type="button"
+                disabled={isAiRunning}
+                onClick={handleStartRegenerate}
+                className="px-3 py-1.5 rounded-xl border bg-[#FF7A00]/10 hover:bg-[#FF7A00]/18 border-[#FF7A00]/30 text-[#FF7A00] text-xs font-semibold inline-flex items-center gap-1.5 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isAiRunning ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                <span>{isAiRunning ? 'กำลังทำซับใหม่...' : 'ทำซับใหม่ด้วย AI'}</span>
+              </button>
+            )}
+            {subtitleLogs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowLogsOverride((prev) => (prev === null ? !isLogsVisible : !prev))}
+                className="px-3 py-1.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] border border-[#EFECE6] dark:border-white/10 text-xs font-semibold text-[#6C655D] dark:text-[#CCCCCC] inline-flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Terminal className="w-3.5 h-3.5 text-[#FF7A00]" />
+                <span>Log ({subtitleLogs.length})</span>
+                {isLogsVisible ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => newTrackInputRef.current?.click()}
@@ -531,6 +607,71 @@ export default function StudioSubtitlesTab({
             </button>
           </div>
         </div>
+
+        {/* Active AI Subtitle Job Card */}
+        {isAiRunning && (
+          <SubtitleGenerationCard
+            cancelUrl={videoId ? `/api/videos/${videoId}/cancel-subtitles` : undefined}
+            workerDetail={workerDetail}
+          />
+        )}
+
+        {/* Live Subtitle Worker Log Console */}
+        {isLogsVisible && (isAiRunning || subtitleLogs.length > 0) && (
+          <div className="rounded-xl border border-[#EFECE6] dark:border-white/10 bg-[#141416] text-zinc-200 overflow-hidden">
+            <div className="flex items-center justify-between px-3.5 py-2 border-b border-white/10 bg-[#1B1B1F]">
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-zinc-300">
+                <Terminal className="w-3.5 h-3.5 text-[#FF7A00]" />
+                <span>Log การถอดเสียงและสร้างซับไตเติล</span>
+                {isAiRunning && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-[#FF7A00]/20 text-[#FF9E40] text-[10px]">
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                    กำลังทำงาน
+                  </span>
+                )}
+                {!isAiRunning && subtitleStatus === 'failed' && (
+                  <span className="px-1.5 py-0.5 rounded-md bg-rose-500/20 text-rose-400 text-[10px]">
+                    ล้มเหลว
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLogsOverride(false)}
+                className="text-[11px] text-zinc-400 hover:text-white transition cursor-pointer"
+              >
+                ซ่อน
+              </button>
+            </div>
+            <div
+              ref={logBoxRef}
+              className="max-h-56 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed space-y-1"
+            >
+              {subtitleLogs.length === 0 ? (
+                <div className="text-zinc-500">⏳ กำลังรอ Log จาก GitHub Actions Worker...</div>
+              ) : (
+                subtitleLogs.map((entry, idx) => {
+                  const lvl = String(entry?.level || 'info').toLowerCase();
+                  const colorClass =
+                    lvl === 'error'
+                      ? 'text-rose-400'
+                      : lvl === 'warn'
+                        ? 'text-amber-300'
+                        : lvl === 'success'
+                          ? 'text-emerald-400'
+                          : 'text-zinc-300';
+                  const clock = formatLogClock(entry?.ts || entry?.time || entry?.createdAt);
+                  return (
+                    <div key={`${entry?.ts || idx}-${idx}`} className="flex items-start gap-2 break-words">
+                      {clock && <span className="text-zinc-500 shrink-0 select-none">[{clock}]</span>}
+                      <span className={colorClass}>{entry?.message || ''}</span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Track Pills */}
         {tracks.length > 0 ? (
@@ -962,14 +1103,6 @@ export default function StudioSubtitlesTab({
           </div>
         )}
       </section>
-
-      {/* Upload subtitle job status */}
-      {isAiRunning && (
-        <SubtitleGenerationCard
-          cancelUrl={videoId ? `/api/videos/${videoId}/cancel-subtitles` : undefined}
-          workerDetail={workerDetail}
-        />
-      )}
     </div>
   );
 }

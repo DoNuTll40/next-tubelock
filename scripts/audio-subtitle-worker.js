@@ -19,7 +19,6 @@ import { neon } from '@neondatabase/serverless';
 import { SUBTITLE_THAI_TRANSLATE_PROMPT } from '../src/lib/subtitlePrompts.js';
 import { getVideoLanguage, normalizeVideoLanguageCode } from '../src/lib/videoLanguages.js';
 import { transcribeAudio, TRANSCRIBE_MODEL } from './gemini-transcribe.js';
-import { transcribeAudioWithGroq, GROQ_TRANSCRIBE_MODELS } from './groq-transcribe.js';
 import {
   cuesToSrt,
   convertSrtToVtt,
@@ -52,8 +51,6 @@ const GEMINI_API_KEY = (
   process.env.GOOGLE_API_KEY ||
   ''
 ).replace(/['"]/g, '').trim();
-
-const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').replace(/['"]/g, '').trim();
 
 if (!VIDEO_ID) {
   console.error('❌ Missing required parameter: VIDEO_ID');
@@ -398,10 +395,13 @@ function parseJsonResponseSafe(rawText) {
 }
 
 const GEMINI_REQUEST_TIMEOUT_MS = 120000;
-const AUDIO_CHUNK_SECONDS = 180; // 3-minute chunks for Gemini LLM fallback
-const GROQ_AUDIO_CHUNK_SECONDS = 600; // 10-minute chunks (~2.4 MB @ 32k MP3) for Groq Whisper ASR
-const TRANSCRIBE_CONCURRENCY = 5;
-const GROQ_TRANSCRIBE_CONCURRENCY = 4; // Well within Groq Free Plan 20 RPM
+const VAD_MAX_CHUNK_SECONDS = 28; // Short speech-anchored chunks eliminate cumulative LLM timestamp drift
+const VAD_FALLBACK_CHUNK_SECONDS = 25;
+const VAD_SILENCE_DB = '-34dB';
+const VAD_MIN_SILENCE_SEC = 0.45;
+const VAD_PAD_SEC = 0.25;
+const VAD_MERGE_GAP_SEC = 1.2;
+const TRANSCRIBE_CONCURRENCY = 8;
 const TRANSLATE_CONCURRENCY = 4;
 // Safety-fallback ASR (gemini-3.5-transcribe) is capped at ~10k input TPM on Tier 1; pace from request start when used.
 const TRANSCRIBE_FALLBACK_INTERVAL_MS = 60500;
@@ -711,43 +711,186 @@ async function sliceAudioToMp3Chunk(sourceAudioPath, startSec, lenSec, outPath, 
   return outPath;
 }
 
+function detectSilenceIntervals(audioPath, { noiseDb = VAD_SILENCE_DB, minSilenceSec = VAD_MIN_SILENCE_SEC } = {}) {
+  return new Promise((resolve) => {
+    const proc = spawn('ffmpeg', [
+      '-hide_banner',
+      '-nostats',
+      '-i', audioPath,
+      '-af', `silencedetect=noise=${noiseDb}:d=${minSilenceSec}`,
+      '-f', 'null',
+      '-',
+    ]);
+    let stderr = '';
+    proc.stderr.on('data', (d) => {
+      stderr += d.toString();
+    });
+    proc.on('close', () => {
+      const silences = [];
+      let currentStart = null;
+      for (const line of stderr.split(/\r?\n/)) {
+        const startMatch = line.match(/silence_start:\s*([0-9.]+)/);
+        if (startMatch) {
+          currentStart = parseFloat(startMatch[1]);
+          continue;
+        }
+        const endMatch = line.match(/silence_end:\s*([0-9.]+)/);
+        if (endMatch) {
+          const endVal = parseFloat(endMatch[1]);
+          const startVal = currentStart !== null ? currentStart : Math.max(0, endVal - minSilenceSec);
+          if (Number.isFinite(startVal) && Number.isFinite(endVal) && endVal > startVal) {
+            silences.push({ start: startVal, end: endVal });
+          }
+          currentStart = null;
+        }
+      }
+      if (currentStart !== null && Number.isFinite(currentStart)) {
+        silences.push({ start: currentStart, end: Infinity });
+      }
+      resolve(silences);
+    });
+    proc.on('error', () => resolve([]));
+  });
+}
+
+export function planVadSpeechWindows(audioDurationSec, silences, {
+  maxChunkSec = VAD_MAX_CHUNK_SECONDS,
+  fallbackChunkSec = VAD_FALLBACK_CHUNK_SECONDS,
+  padSec = VAD_PAD_SEC,
+  mergeGapSec = VAD_MERGE_GAP_SEC,
+  minSpeechSec = 0.35,
+} = {}) {
+  const dur = Math.max(0, Number(audioDurationSec) || 0);
+  if (!dur) return [];
+  if (dur <= maxChunkSec) {
+    return [{ startSec: 0, endSec: Number(dur.toFixed(3)) }];
+  }
+
+  // 1. Invert silence intervals into active speech segments
+  const sortedSilences = (Array.isArray(silences) ? silences : [])
+    .map((s) => ({
+      start: Math.max(0, Math.min(dur, Number(s.start) || 0)),
+      end: Math.max(0, Math.min(dur, Number.isFinite(s.end) ? Number(s.end) : dur)),
+    }))
+    .filter((s) => s.end > s.start)
+    .sort((a, b) => a.start - b.start);
+
+  const rawSpeech = [];
+  let cursor = 0;
+  for (const sil of sortedSilences) {
+    if (sil.start - cursor >= minSpeechSec) {
+      rawSpeech.push({
+        start: Math.max(0, cursor - padSec),
+        end: Math.min(dur, sil.start + padSec),
+      });
+    }
+    cursor = Math.max(cursor, sil.end);
+  }
+  if (dur - cursor >= minSpeechSec) {
+    rawSpeech.push({
+      start: Math.max(0, cursor - padSec),
+      end: dur,
+    });
+  }
+
+  // Fallback to uniform short windows if VAD saw no usable silence breaks
+  if (rawSpeech.length === 0) {
+    const fixed = [];
+    for (let s = 0; s < dur; s += fallbackChunkSec) {
+      const e = Math.min(dur, s + fallbackChunkSec);
+      if (e - s >= 0.4) {
+        fixed.push({ startSec: Number(s.toFixed(3)), endSec: Number(e.toFixed(3)) });
+      }
+    }
+    return fixed;
+  }
+
+  // 2. Group adjacent speech segments up to maxChunkSec, splitting any long continuous speech cleanly
+  const windows = [];
+  let curStart = null;
+  let curEnd = null;
+
+  const pushWindow = (start, end) => {
+    let s = start;
+    while (end - s > maxChunkSec + 1.5) {
+      const cut = s + fallbackChunkSec;
+      windows.push({ startSec: Number(s.toFixed(3)), endSec: Number(cut.toFixed(3)) });
+      s = cut;
+    }
+    if (end - s >= 0.35) {
+      windows.push({ startSec: Number(s.toFixed(3)), endSec: Number(end.toFixed(3)) });
+    }
+  };
+
+  for (const seg of rawSpeech) {
+    if (curStart === null) {
+      curStart = seg.start;
+      curEnd = seg.end;
+      continue;
+    }
+    const gap = seg.start - curEnd;
+    const mergedLen = seg.end - curStart;
+    if (gap <= mergeGapSec && mergedLen <= maxChunkSec) {
+      curEnd = Math.max(curEnd, seg.end);
+    } else {
+      pushWindow(curStart, curEnd);
+      curStart = seg.start;
+      curEnd = seg.end;
+    }
+  }
+  if (curStart !== null) {
+    pushWindow(curStart, curEnd);
+  }
+
+  return windows;
+}
+
 async function buildAudioChunks(
   localAudioPath,
   seekAudioPath,
   tempDir,
   audioDurationSec,
   logger,
-  { chunkSeconds = AUDIO_CHUNK_SECONDS, concurrency = TRANSCRIBE_CONCURRENCY } = {}
+  { concurrency = TRANSCRIBE_CONCURRENCY } = {}
 ) {
-  if (!audioDurationSec || audioDurationSec <= chunkSeconds) {
+  if (!audioDurationSec || audioDurationSec <= VAD_MAX_CHUNK_SECONDS) {
+    const singleChunkPath = path.join(tempDir, 'chunk_001.mp3');
+    const lenSec = Math.max(0.5, Number((audioDurationSec || VAD_MAX_CHUNK_SECONDS).toFixed(3)));
+    await sliceAudioToMp3Chunk(seekAudioPath, 0, lenSec, singleChunkPath, {
+      stepLabel: 'เตรียมช่วงเสียงเดี่ยว',
+      logger: null,
+      logIntervalMs: 10000,
+    });
     return [
       {
         index: 1,
         total: 1,
         startSec: 0,
         endSec: audioDurationSec || 0,
-        path: localAudioPath,
+        path: singleChunkPath,
       },
     ];
   }
 
-  const totalChunks = Math.ceil(audioDurationSec / chunkSeconds);
+  const silences = await detectSilenceIntervals(seekAudioPath);
+  const windows = planVadSpeechWindows(audioDurationSec, silences);
+  const totalChunks = windows.length;
+  const activeSpeechSec = windows.reduce((sum, w) => sum + (w.endSec - w.startSec), 0);
+
   await logger.log(
-    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — แบ่งเสียงออกเป็น ${totalChunks} ช่วง (ช่วงละไม่เกิน ${Math.round(chunkSeconds / 60)} นาที • ประมวลผลขนาน ${Math.min(concurrency, totalChunks)} ช่วงพร้อมกัน)`,
+    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — VAD ตรวจจับช่วงเสียงพูดได้ ${totalChunks} ก้อนสั้น (ช่วงละไม่เกิน ${VAD_MAX_CHUNK_SECONDS} วิ • รวมเสียงพูด ${formatDurationShort(activeSpeechSec)} • ประมวลผลขนาน ${Math.min(concurrency, totalChunks)} ก้อนพร้อมกัน)`,
     { toDb: true }
   );
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
-    const startSec = i * chunkSeconds;
-    const lenSec = Math.max(0, Number(Math.min(chunkSeconds, audioDurationSec - startSec).toFixed(3)));
-    if (lenSec <= 0) break;
-
+    const { startSec, endSec } = windows[i];
+    const lenSec = Math.max(0.35, Number((endSec - startSec).toFixed(3)));
     const chunkPath = path.join(tempDir, `chunk_${String(i + 1).padStart(3, '0')}.mp3`);
     await sliceAudioToMp3Chunk(seekAudioPath, startSec, lenSec, chunkPath, {
-      stepLabel: `ตัดช่วงเสียง ${i + 1}/${totalChunks}`,
-      logger,
-      logIntervalMs: 6000,
+      stepLabel: `ตัดช่วงเสียงพูด ${i + 1}/${totalChunks}`,
+      logger: null,
+      logIntervalMs: 10000,
     });
 
     chunks.push({
@@ -796,7 +939,7 @@ function parseAndValidateLlmChunkCues(rawText, chunk, sourceLangMeta) {
     return { error: 'โครงสร้าง JSON cues ไม่ถูกต้อง' };
   }
 
-  const chunkDurationSec = Math.max(0.5, Number(chunk.endSec - chunk.startSec) || AUDIO_CHUNK_SECONDS);
+  const chunkDurationSec = Math.max(0.5, Number(chunk.endSec - chunk.startSec) || VAD_MAX_CHUNK_SECONDS);
   const offsetMs = Math.round(chunk.startSec * 1000);
   const maxChunkMs = Math.round(chunkDurationSec * 1000);
   const rawCues = [];
@@ -881,11 +1024,12 @@ async function transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt,
   const prompt = [
     'You are a precision speech-to-subtitle transcription engine for video closed captions.',
     languageInstruction,
-    `This audio clip is ${chunkDurationSec} seconds long (timestamps MUST be relative to this clip: 0.0 to ${chunkDurationSec}).`,
+    `This short audio clip is ${chunkDurationSec} seconds long (timestamps MUST be relative to this clip: 0.0 to ${chunkDurationSec}).`,
     'Rules:',
     '- Return JSON matching the schema with a "cues" array.',
-    '- Do NOT hallucinate or invent words during silence, music, moaning, breathing, or background noise. If there is no clear spoken dialogue, return {"cues": []}.',
-    '- Split speech into concise subtitle cues of 1 to 5 seconds each (around 15–55 characters max per cue) with accurate start_sec and end_sec.',
+    '- Listen carefully for quiet speech, soft voices, and whispers — transcribe every clearly spoken word verbatim, including short replies and interjections.',
+    '- Do NOT invent dialogue during pure silence, music, non-verbal breathing/moaning, or background noise. If there are no spoken words, return {"cues": []}.',
+    '- Split speech into concise subtitle cues of 1 to 5 seconds each (around 15–55 characters max per cue) with tight, accurate start_sec and end_sec.',
     '- Timestamps must be strictly chronological with end_sec > start_sec and never exceed clip duration.',
     '- Set "speaker" to "M" (male), "F" (female), "M1"/"M2"/"F1"/"F2" when clearly distinguishable by voice, otherwise "".',
     customPrompt ? `Additional user instructions:\n${customPrompt}` : '',
@@ -997,14 +1141,10 @@ async function generateSubtitlesWithGemini(
   logger,
   { seekAudioPath = localAudioPath } = {}
 ) {
-  if (!GROQ_API_KEY && !GEMINI_API_KEY) throw new Error('Missing GROQ_API_KEY and GEMINI_API_KEY');
+  if (!GEMINI_API_KEY) throw new Error('Missing GEMINI_API_KEY');
   if (!Number.isFinite(audioDurationSec) || audioDurationSec <= 0) throw new Error('Cannot determine audio duration');
-  const useGroqPrimary = Boolean(GROQ_API_KEY);
-  const activeChunkSec = useGroqPrimary ? GROQ_AUDIO_CHUNK_SECONDS : AUDIO_CHUNK_SECONDS;
-  const activeConcurrency = useGroqPrimary ? GROQ_TRANSCRIBE_CONCURRENCY : TRANSCRIBE_CONCURRENCY;
   const chunks = await buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger, {
-    chunkSeconds: activeChunkSec,
-    concurrency: activeConcurrency,
+    concurrency: TRANSCRIBE_CONCURRENCY,
   });
 
   // Serialized pacing queue for rare safety-blocked chunks that fall back to gemini-3.5-transcribe
@@ -1042,66 +1182,35 @@ async function generateSubtitlesWithGemini(
   };
 
   let completedChunks = 0;
-  const primaryTranscribeLabel = useGroqPrimary ? GROQ_TRANSCRIBE_MODELS[0] : TRANSCRIBE_LLM_MODEL;
-  const chunkResults = await runWithConcurrency(chunks, activeConcurrency, async (chunk) => {
+  const chunkResults = await runWithConcurrency(chunks, TRANSCRIBE_CONCURRENCY, async (chunk) => {
     const range = `${chunk.index}/${chunk.total} (${formatDurationShort(chunk.startSec)}–${formatDurationShort(chunk.endSec)})`;
-    await logger.log(
-      `🎙️ [1/2] ${primaryTranscribeLabel} (${sourceLangMeta ? sourceLangMeta.shortLabel : 'auto'}): ${range}`,
-      { toDb: true }
-    );
     let result;
-    if (useGroqPrimary) {
+    try {
+      result = await transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt, logger);
+    } catch (llmErr) {
+      // Rescue blocked / failed chunk with dedicated verbatim ASR model
       try {
-        const audio = await fs.promises.readFile(chunk.path);
-        const chunkDurationSec = Math.max(1, chunk.endSec - chunk.startSec);
-        result = await transcribeAudioWithGroq(
-          audio,
-          Math.round(chunk.startSec * 1000),
-          GROQ_API_KEY,
-          fetchWithRetry,
-          {
-            languageCode: sourceLangMeta?.code || '',
-            chunkDurationSec,
-            logger,
-            stepLabel: `ถอดเสียง ${range}`,
-          }
+        result = await rescueChunkWithAsr(chunk, range);
+      } catch (asrErr) {
+        throw new Error(
+          `Transcription failed for audio chunk ${range}: LLM(${llmErr.message}) / ASR(${asrErr.message})`,
+          { cause: asrErr }
         );
-      } catch (groqErr) {
-        if (!GEMINI_API_KEY) {
-          throw new Error(`Groq transcription failed for audio chunk ${range}: ${groqErr.message}`, { cause: groqErr });
-        }
-        await logger.log(
-          `⚠️ [1/2] ช่วง ${range} Groq ขัดข้อง (${groqErr.message}) — สลับไปใช้ Gemini สำรอง...`,
-          { level: 'warn', toDb: true }
-        );
-      }
-    }
-    if (!result) {
-      try {
-        result = await transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt, logger);
-      } catch (llmErr) {
-        // Rescue blocked / failed chunk with dedicated verbatim ASR model
-        try {
-          result = await rescueChunkWithAsr(chunk, range);
-        } catch (asrErr) {
-          throw new Error(
-            `Transcription failed for audio chunk ${range}: LLM(${llmErr.message}) / ASR(${asrErr.message})`,
-            { cause: asrErr }
-          );
-        }
       }
     }
     completedChunks += 1;
-    await logger.log(
-      `✅ [1/2] ถอดเสียงช่วง ${range} สำเร็จ (${result.cues.length} ประโยค • ${result.modelUsed} • คืบหน้า ${completedChunks}/${chunks.length})`,
-      { toDb: true }
-    );
+    if (completedChunks % 5 === 0 || completedChunks === chunks.length || chunks.length <= 12) {
+      await logger.log(
+        `✅ [1/2] ถอดเสียงคืบหน้า ${completedChunks}/${chunks.length} ก้อน (ล่าสุด ${range} • ${result.cues.length} ประโยค • ${result.modelUsed})`,
+        { toDb: true }
+      );
+    }
     return result;
   });
 
   const allOriginalCues = chunkResults.flatMap((r) => r.cues || []);
   const chunkLangVotes = chunkResults.map((r) => r.detectedCode).filter(Boolean);
-  const usedTranscribeModel = chunkResults.find((r) => r?.modelUsed)?.modelUsed || primaryTranscribeLabel;
+  const usedTranscribeModel = chunkResults.find((r) => r?.modelUsed)?.modelUsed || TRANSCRIBE_LLM_MODEL;
 
   if (!allOriginalCues.length) {
     throw new Error('ไม่พบเสียงพูดในคลิปสำหรับสร้างซับไตเติล');
@@ -1306,11 +1415,10 @@ async function main() {
   }
 
   try {
-    const activeTranscribeModel = GROQ_API_KEY ? GROQ_TRANSCRIBE_MODELS[0] : TRANSCRIBE_LLM_MODEL;
     const primaryModel =
-      sourceLangMeta?.isThai || activeTranscribeModel === TRANSLATE_MODEL
-        ? activeTranscribeModel
-        : `${activeTranscribeModel} + ${TRANSLATE_MODEL}`;
+      sourceLangMeta?.isThai || TRANSCRIBE_LLM_MODEL === TRANSLATE_MODEL
+        ? TRANSCRIBE_LLM_MODEL
+        : `${TRANSCRIBE_LLM_MODEL} (VAD ${VAD_MAX_CHUNK_SECONDS}s) + ${TRANSLATE_MODEL}`;
     const langBanner = sourceLangMeta ? ` • ภาษาตั้งต้น: ${sourceLangMeta.label}` : ' • ภาษา: ตรวจอัตโนมัติ';
     await logger.log(`🎬 เริ่มงานสกัดเสียงและสร้างซับไตเติล (วิดีโอ #${vidNum}, โมเดล ${primaryModel}${langBanner})...`, { toDb: true });
 
@@ -1353,14 +1461,19 @@ async function main() {
         sourceOptions = ['-protocol_whitelist', 'file'];
       }
     }
-    const audioArgs = ['-map', '0:a:0', '-af', 'aresample=async=1:first_pts=0', '-ac', '1', '-ar', '16000'];
+    const rawAudioArgs = ['-map', '0:a:0', '-af', 'aresample=async=1:first_pts=0', '-ac', '1', '-ar', '16000'];
+    const vadBoostAudioArgs = [
+      '-map', '0:a:0',
+      '-af', 'aresample=async=1:first_pts=0,highpass=f=80,dynaudnorm=f=150:g=15:p=0.9:m=10',
+      '-ac', '1', '-ar', '16000',
+    ];
     await runFFmpegWithProgress(
       [
         '-y', ...sourceOptions, '-i', audioSource,
-        ...audioArgs, '-c:a', 'pcm_s16le', seekAudioPath,
-        ...(!existingAudio ? [...audioArgs, '-c:a', 'libmp3lame', '-b:a', '32k', localAudioPath] : []),
+        ...vadBoostAudioArgs, '-c:a', 'pcm_s16le', seekAudioPath,
+        ...(!existingAudio ? [...rawAudioArgs, '-c:a', 'libmp3lame', '-b:a', '32k', localAudioPath] : []),
       ],
-      { durationSec: await probeMediaDuration(audioSource, sourceOptions), stepLabel: 'เตรียมเสียงสำหรับถอดซับ', logger }
+      { durationSec: await probeMediaDuration(audioSource, sourceOptions), stepLabel: 'เตรียมเสียงสำหรับถอดซับ (เร่งเสียงกระซิบ)', logger }
     );
     if (audioSource === localVideoPath) await fs.promises.rm(localVideoPath, { force: true });
     if (sourceOptions.length) await fs.promises.rm(path.dirname(audioSource), { recursive: true, force: true });
