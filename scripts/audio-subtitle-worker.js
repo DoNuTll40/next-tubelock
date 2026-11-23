@@ -395,13 +395,14 @@ function parseJsonResponseSafe(rawText) {
 }
 
 const GEMINI_REQUEST_TIMEOUT_MS = 120000;
-const VAD_MAX_CHUNK_SECONDS = 28; // Short speech-anchored chunks eliminate cumulative LLM timestamp drift
-const VAD_FALLBACK_CHUNK_SECONDS = 25;
+const VAD_MAX_CHUNK_SECONDS = 45; // 45s max speech-anchored chunks: zero drift + ~6x fewer API calls
+const VAD_FALLBACK_CHUNK_SECONDS = 40;
 const VAD_SILENCE_DB = '-38dB';
-const VAD_MIN_SILENCE_SEC = 0.5;
+const VAD_MIN_SILENCE_SEC = 0.6;
 const VAD_PAD_SEC = 0.25;
-const VAD_MERGE_GAP_SEC = 1.2;
-const TRANSCRIBE_CONCURRENCY = 8;
+const VAD_MERGE_GAP_SEC = 4.5; // Merge conversational pauses up to 4.5s into one chunk instead of spamming 1-2s requests
+const VAD_MIN_SPEECH_SEC = 0.6;
+const TRANSCRIBE_CONCURRENCY = 6;
 const TRANSLATE_CONCURRENCY = 4;
 // Safety-fallback ASR (gemini-3.5-transcribe) is capped at ~10k input TPM on Tier 1; pace from request start when used.
 const TRANSCRIBE_FALLBACK_INTERVAL_MS = 60500;
@@ -758,7 +759,7 @@ export function planVadSpeechWindows(audioDurationSec, silences, {
   fallbackChunkSec = VAD_FALLBACK_CHUNK_SECONDS,
   padSec = VAD_PAD_SEC,
   mergeGapSec = VAD_MERGE_GAP_SEC,
-  minSpeechSec = 0.35,
+  minSpeechSec = VAD_MIN_SPEECH_SEC,
 } = {}) {
   const dur = Math.max(0, Number(audioDurationSec) || 0);
   if (!dur) return [];
