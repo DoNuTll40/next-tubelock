@@ -435,8 +435,8 @@ async function updateLaneProgress({
                           )
                       END,
                       status = CASE
-                        WHEN status = 'READY' THEN 'READY'
-                        ELSE CAST(${status} AS TEXT)
+                        WHEN status = 'READY'::video_status THEN 'READY'::video_status
+                        ELSE CAST(${status} AS video_status)
                       END,
                       stage_detail = COALESCE(CAST(${stageDetail || null} AS TEXT), stage_detail),
                       error_message = CASE
@@ -451,6 +451,7 @@ async function updateLaneProgress({
                       source_cache_expires_at = CASE WHEN CAST(${invalidateCache} AS BOOLEAN) THEN 0 ELSE source_cache_expires_at END,
                       thumbnail_url = COALESCE(CAST(${extra.thumbnail_url ?? null} AS TEXT), thumbnail_url),
                       onedrive_folder_id = COALESCE(CAST(${extra.onedrive_folder_id ?? null} AS TEXT), onedrive_folder_id),
+                      hls_folder_path = COALESCE(CAST(${extra.hls_folder_path ?? null} AS TEXT), hls_folder_path),
                       master_playlist_path = COALESCE(CAST(${extra.master_playlist_path ?? null} AS TEXT), master_playlist_path),
                       storyboard_vtt_path = COALESCE(CAST(${extra.storyboard_vtt_path ?? null} AS TEXT), storyboard_vtt_path),
                       duration = COALESCE(CAST(${safeDuration} AS INTEGER), duration),
@@ -495,6 +496,7 @@ async function updateLaneProgress({
 async function setFinalDbStatus({ status, progress, stageDetail, errorMsg = '', extra = {} }) {
     await ensureDbSchemaOnce();
     const safeProgress = Number.isFinite(Number(progress)) ? Math.max(0, Math.min(100, Math.round(Number(progress)))) : 0;
+    const { safeAudioChannels } = sanitizeExtra(extra);
 
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -505,32 +507,36 @@ async function setFinalDbStatus({ status, progress, stageDetail, errorMsg = '', 
                 const updatedRows = await sql`
                     UPDATE video_versions
                     SET
-                      status = ${status},
-                      transcode_progress = ${safeProgress},
-                      stage_detail = ${stageDetail},
-                      error_message = ${errorMsg},
+                      status = CAST(${status} AS TEXT),
+                      transcode_progress = CAST(${safeProgress} AS INTEGER),
+                      stage_detail = CAST(${stageDetail} AS TEXT),
+                      error_message = CAST(${errorMsg} AS TEXT),
                       source_cache_br = NULL,
                       m3u8_cache_br = NULL,
                       source_cache_items_count = 0,
                       source_cache_expires_at = 0,
-                      thumbnail_url = COALESCE(${extra.thumbnail_url ?? null}, thumbnail_url),
-                      onedrive_folder_id = COALESCE(${extra.onedrive_folder_id ?? null}, onedrive_folder_id),
-                      master_playlist_path = COALESCE(${extra.master_playlist_path ?? null}, master_playlist_path),
+                      thumbnail_url = COALESCE(CAST(${extra.thumbnail_url ?? null} AS TEXT), thumbnail_url),
+                      onedrive_folder_id = COALESCE(CAST(${extra.onedrive_folder_id ?? null} AS TEXT), onedrive_folder_id),
+                      hls_folder_path = COALESCE(CAST(${extra.hls_folder_path ?? null} AS TEXT), hls_folder_path),
+                      master_playlist_path = COALESCE(CAST(${extra.master_playlist_path ?? null} AS TEXT), master_playlist_path),
+                      codec = COALESCE(CAST(${extra.codec ?? null} AS TEXT), codec),
+                      audio_channels = COALESCE(CAST(${safeAudioChannels} AS INTEGER), audio_channels),
                       updated_at = NOW()
                     WHERE id = ${versionNum} AND video_id = ${vidNum}
-                    RETURNING is_default, duration, resolution, fps, codec, bitrate, file_size_bytes;
+                    RETURNING is_default, duration, resolution, fps, codec, bitrate, audio_channels, file_size_bytes;
                 `;
 
                 if (status === 'READY' && safeProgress === 100 && updatedRows?.[0]?.is_default) {
                     const dv = updatedRows[0];
                     await sql`
                         UPDATE videos
-                        SET duration = COALESCE(${dv.duration}, duration),
-                            resolution = COALESCE(${dv.resolution}, resolution),
-                            fps = COALESCE(${dv.fps}, fps),
-                            codec = COALESCE(${dv.codec}, codec),
-                            bitrate = COALESCE(${dv.bitrate}, bitrate),
-                            file_size_bytes = COALESCE(${dv.file_size_bytes}, file_size_bytes),
+                        SET duration = COALESCE(CAST(${dv.duration ?? null} AS INTEGER), duration),
+                            resolution = COALESCE(CAST(${dv.resolution ?? null} AS TEXT), resolution),
+                            fps = COALESCE(CAST(${dv.fps ?? null} AS NUMERIC), fps),
+                            codec = COALESCE(CAST(${dv.codec ?? null} AS TEXT), codec),
+                            bitrate = COALESCE(CAST(${dv.bitrate ?? null} AS INTEGER), bitrate),
+                            audio_channels = COALESCE(CAST(${dv.audio_channels ?? null} AS INTEGER), audio_channels),
+                            file_size_bytes = COALESCE(CAST(${dv.file_size_bytes ?? null} AS BIGINT), file_size_bytes),
                             source_cache = NULL,
                             source_cache_br = NULL,
                             m3u8_cache_br = NULL,
@@ -544,18 +550,21 @@ async function setFinalDbStatus({ status, progress, stageDetail, errorMsg = '', 
                 await sql`
                     UPDATE videos
                     SET
-                      status = ${status},
-                      transcode_progress = ${safeProgress},
-                      stage_detail = ${stageDetail},
-                      error_message = ${errorMsg},
+                      status = CAST(${status} AS video_status),
+                      transcode_progress = CAST(${safeProgress} AS INTEGER),
+                      stage_detail = CAST(${stageDetail} AS TEXT),
+                      error_message = CAST(${errorMsg} AS TEXT),
                       source_cache = NULL,
                       source_cache_br = NULL,
                       m3u8_cache_br = NULL,
                       source_cache_items_count = 0,
                       source_cache_expires_at = 0,
-                      thumbnail_url = COALESCE(${extra.thumbnail_url ?? null}, thumbnail_url),
-                      onedrive_folder_id = COALESCE(${extra.onedrive_folder_id ?? null}, onedrive_folder_id),
-                      master_playlist_path = COALESCE(${extra.master_playlist_path ?? null}, master_playlist_path),
+                      thumbnail_url = COALESCE(CAST(${extra.thumbnail_url ?? null} AS TEXT), thumbnail_url),
+                      onedrive_folder_id = COALESCE(CAST(${extra.onedrive_folder_id ?? null} AS TEXT), onedrive_folder_id),
+                      hls_folder_path = COALESCE(CAST(${extra.hls_folder_path ?? null} AS TEXT), hls_folder_path),
+                      master_playlist_path = COALESCE(CAST(${extra.master_playlist_path ?? null} AS TEXT), master_playlist_path),
+                      codec = COALESCE(CAST(${extra.codec ?? null} AS TEXT), codec),
+                      audio_channels = COALESCE(CAST(${safeAudioChannels} AS INTEGER), audio_channels),
                       updated_at = NOW()
                     WHERE id = ${vidNum};
                 `;
@@ -1351,11 +1360,13 @@ async function runHighQualityPass({
         ];
 
     let lastProgressUpdate = 0;
+    let progressInFlight = false;
     await runFFmpeg(
         ffmpegArgs,
         (sec) => {
-            if (Date.now() - lastProgressUpdate > 4000 && duration > 0) {
+            if (!progressInFlight && Date.now() - lastProgressUpdate > 4000 && duration > 0) {
                 lastProgressUpdate = Date.now();
+                progressInFlight = true;
                 const pct = Math.min(99, Math.round((sec / duration) * 100));
                 const lanePct = Math.min(
                     lanePctEnd - 2,
@@ -1366,6 +1377,8 @@ async function runHighQualityPass({
                     lanePct,
                     status: 'TRANSCODING',
                     stageDetail: `${stagePrefix}${isHdr ? ' [HDR AV1]' : ''}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+                }).finally(() => {
+                    progressInFlight = false;
                 });
             }
         },
@@ -1544,6 +1557,7 @@ async function runLaneFastSd({
             : '⚡ Pass 1: กำลังหั่น HLS 144p + Storyboard SD/HD (Ultra-fast unlock)...'
     );
     let lastProgressUpdate = 0;
+    let progressInFlight = false;
     let hasStoryboard = false;
 
     const pass1CombinedArgs = isHdr
@@ -1637,14 +1651,17 @@ async function runLaneFastSd({
         await runFFmpeg(
             pass1CombinedArgs,
             (sec) => {
-                if (Date.now() - lastProgressUpdate > 4000 && duration > 0) {
+                if (!progressInFlight && Date.now() - lastProgressUpdate > 4000 && duration > 0) {
                     lastProgressUpdate = Date.now();
+                    progressInFlight = true;
                     const pct = Math.min(99, Math.round((sec / duration) * 100));
                     updateLaneProgress({
                         lane: 'fast_sd',
                         lanePct: Math.min(43, 15 + Math.round(pct * 0.28)),
                         status: 'TRANSCODING',
                         stageDetail: `กำลังหั่น 144p${isHdr ? ' HDR' : ''} + Storyboard (เร็วสุด): ${pct}% (${formatTime(sec)} / ${formatTime(duration)})`,
+                    }).finally(() => {
+                        progressInFlight = false;
                     });
                 }
             },
@@ -1715,6 +1732,7 @@ async function runLaneFastSd({
             fps,
             codec,
             bitrate,
+            audio_channels: audioChannels,
             thumbnail_url: shouldPromotePosterUrl ? thumbnailUrl : null,
         },
     });
@@ -1803,14 +1821,17 @@ async function runLaneFastSd({
         await runFFmpeg(
             pass23Args,
             (sec) => {
-                if (Date.now() - lastProgressUpdate > 4000 && duration > 0) {
+                if (!progressInFlight && Date.now() - lastProgressUpdate > 4000 && duration > 0) {
                     lastProgressUpdate = Date.now();
+                    progressInFlight = true;
                     const pct = Math.min(99, Math.round((sec / duration) * 100));
                     updateLaneProgress({
                         lane: 'fast_sd',
                         lanePct: Math.min(98, 45 + Math.round(pct * 0.53)),
                         status: 'READY',
                         stageDetail: `⚡ เปิดดูได้แล้ว • กำลังหั่น 360p & 480p${isHdr ? ' [HDR AV1]' : ' SD'}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+                    }).finally(() => {
+                        progressInFlight = false;
                     });
                 }
             },
@@ -2190,16 +2211,22 @@ async function runFinalize({ driveId, streamFolderName, masterPlaylistPath, temp
         );
     }
 
+    const finalAudioSample = readyQualities.find((q) => q.audio_channels != null) || null;
+    const finalExtra = {
+        onedrive_folder_id: streamFolderId,
+        hls_folder_path: `/streams/${streamFolderName}`,
+        master_playlist_path: masterPlaylistPath,
+        codec: readyQualities.some((q) => q.is_hdr) ? 'av01' : null,
+        audio_channels: finalAudioSample ? finalAudioSample.audio_channels : null,
+    };
+
     if (allLanesSucceeded) {
         await setFinalDbStatus({
             status: 'READY',
             progress: 100,
             stageDetail: `เสร็จสมบูรณ์ทุกความละเอียด (${finalQualitiesText}) พร้อมรับชมแบบเต็มประสิทธิภาพ`,
             errorMsg: '',
-            extra: {
-                onedrive_folder_id: streamFolderId,
-                master_playlist_path: masterPlaylistPath,
-            },
+            extra: finalExtra,
         });
         await logger.log(`🎉 เสร็จสมบูรณ์ 100% (${finalQualitiesText}) พร้อมรับชมแล้ว!`, { level: 'success' });
     } else {
@@ -2209,10 +2236,7 @@ async function runFinalize({ driveId, streamFolderName, masterPlaylistPath, temp
             progress: 100,
             stageDetail: `พร้อมรับชมบางความละเอียด (${finalQualitiesText}) • บาง Lane ล้มเหลว (เก็บไฟล์ต้นฉบับไว้ให้ลองใหม่)`,
             errorMsg: partialWarn,
-            extra: {
-                onedrive_folder_id: streamFolderId,
-                master_playlist_path: masterPlaylistPath,
-            },
+            extra: finalExtra,
         });
         await logger.log(`⚠️ Finalize: พร้อมรับชม (${finalQualitiesText}) แต่ ${partialWarn}`, { level: 'warn' });
         process.exit(1);
