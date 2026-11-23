@@ -56,6 +56,8 @@ export default function VideoPlayer({
   aspectRatio: initialRatioProp,
   fps,
   codec = 'h264',
+  audioChannels = null,
+  audioLayout = null,
   videoId,
   videoSlug,
   videoCategory,
@@ -2995,6 +2997,8 @@ export default function VideoPlayer({
           isPlaying={isPlaying}
           fps={fps}
           codec={codec}
+          audioChannels={audioChannels}
+          audioLayout={audioLayout}
           videoId={videoId}
           videoSlug={videoSlug}
           videoCategory={videoCategory}

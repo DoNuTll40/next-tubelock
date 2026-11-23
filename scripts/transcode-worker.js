@@ -195,9 +195,11 @@ async function ensureDbSchemaOnce() {
         () => sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS m3u8_cache_br TEXT;`,
         () => sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS ready_qualities JSONB DEFAULT '[]'::jsonb;`,
         () => sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS lane_progress JSONB DEFAULT '{}'::jsonb;`,
+        () => sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS audio_channels INTEGER;`,
         () => sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS m3u8_cache_br TEXT;`,
         () => sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS ready_qualities JSONB DEFAULT '[]'::jsonb;`,
         () => sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS lane_progress JSONB DEFAULT '{}'::jsonb;`,
+        () => sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS audio_channels INTEGER;`,
     ];
     for (const fn of alters) {
         try { await fn(); } catch (_) { }
@@ -250,6 +252,10 @@ function sanitizeExtra(extra = {}) {
             extra.file_size_bytes != null && Number.isFinite(Number(extra.file_size_bytes))
                 ? Math.max(0, Math.round(Number(extra.file_size_bytes)))
                 : null,
+        safeAudioChannels:
+            extra.audio_channels != null && Number.isFinite(Number(extra.audio_channels))
+                ? Math.max(0, Math.round(Number(extra.audio_channels)))
+                : null,
     };
 }
 
@@ -271,7 +277,7 @@ async function updateLaneProgress({
 }) {
     await ensureDbSchemaOnce();
     const clampedPct = Math.max(0, Math.min(100, Math.round(Number(lanePct) || 0)));
-    const { safeDuration, safeFps, safeBitrate, safeFileSize } = sanitizeExtra(extra);
+    const { safeDuration, safeFps, safeBitrate, safeFileSize, safeAudioChannels } = sanitizeExtra(extra);
     const laneKey = ['fast_sd', 'hd', 'fhd'].includes(lane) ? lane : 'fast_sd';
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -360,6 +366,7 @@ async function updateLaneProgress({
                       fps = COALESCE(CAST(${safeFps} AS NUMERIC), fps),
                       codec = COALESCE(CAST(${extra.codec ?? null} AS TEXT), codec),
                       bitrate = COALESCE(CAST(${safeBitrate} AS INTEGER), bitrate),
+                      audio_channels = COALESCE(CAST(${safeAudioChannels} AS INTEGER), audio_channels),
                       file_size_bytes = COALESCE(CAST(${safeFileSize} AS BIGINT), file_size_bytes),
                       updated_at = NOW()
                     WHERE id = ${versionNum} AND video_id = ${vidNum}
@@ -451,6 +458,7 @@ async function updateLaneProgress({
                       fps = COALESCE(CAST(${safeFps} AS NUMERIC), fps),
                       codec = COALESCE(CAST(${extra.codec ?? null} AS TEXT), codec),
                       bitrate = COALESCE(CAST(${safeBitrate} AS INTEGER), bitrate),
+                      audio_channels = COALESCE(CAST(${safeAudioChannels} AS INTEGER), audio_channels),
                       file_size_bytes = COALESCE(CAST(${safeFileSize} AS BIGINT), file_size_bytes),
                       updated_at = NOW()
                     WHERE id = ${vidNum}
@@ -606,6 +614,8 @@ function normalizeQualitiesList(rawList) {
             bitrate: Number(item.bitrate) || 0,
             is_hdr: Boolean(item.is_hdr),
             hdr_type: item.hdr_type || null,
+            audio_channels: item.audio_channels != null ? Number(item.audio_channels) : null,
+            audio_layout: item.audio_layout || null,
         });
     }
     return Array.from(byName.values()).sort((a, b) => a.bitrate - b.bitrate);
@@ -633,6 +643,8 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
         bitrate: q.bitrate,
         is_hdr: Boolean(q.is_hdr),
         hdr_type: q.hdr_type || null,
+        audio_channels: q.audio_channels != null ? Number(q.audio_channels) : null,
+        audio_layout: q.audio_layout || null,
         run_id: TRANSCODE_RUN_ID,
     }));
     const namesToReplace = withRun.map((q) => q.name);
@@ -984,8 +996,7 @@ function probeVideo(inputTarget, timeoutMs = 30000) {
 
         const proc = spawn('ffprobe', [
             '-v', 'error',
-            '-select_streams', 'v:0',
-            '-show_entries', 'stream=width,height,duration,r_frame_rate,codec_name,pix_fmt,color_range,color_space,color_transfer,color_primaries',
+            '-show_entries', 'stream=codec_type,width,height,duration,r_frame_rate,codec_name,pix_fmt,color_range,color_space,color_transfer,color_primaries,channels,channel_layout,sample_rate',
             '-show_entries', 'format=duration,bit_rate',
             '-of', 'json',
             inputTarget,
@@ -1005,8 +1016,84 @@ function probeVideo(inputTarget, timeoutMs = 30000) {
     });
 }
 
+function resolveAudioProfile(aStream) {
+    if (!aStream) {
+        return {
+            hasAudio: false,
+            srcAudioChannels: 0,
+            srcAudioLayout: 'none',
+            audioChannels: 0,
+            audioLayout: 'none',
+            audioBitrateK: 0,
+            audioLabel: 'No Audio',
+        };
+    }
+
+    const srcChannels = Number(aStream.channels) || 2;
+    const srcLayout = String(aStream.channel_layout || '').trim();
+
+    if (srcChannels === 1) {
+        return {
+            hasAudio: true,
+            srcAudioChannels: srcChannels,
+            srcAudioLayout: srcLayout || 'mono',
+            audioChannels: 1,
+            audioLayout: 'mono',
+            audioBitrateK: 128,
+            audioLabel: '1.0 Mono',
+        };
+    }
+    if (srcChannels === 2) {
+        return {
+            hasAudio: true,
+            srcAudioChannels: srcChannels,
+            srcAudioLayout: srcLayout || 'stereo',
+            audioChannels: 2,
+            audioLayout: 'stereo',
+            audioBitrateK: 192,
+            audioLabel: '2.0 Stereo',
+        };
+    }
+    if (srcChannels >= 3 && srcChannels <= 6) {
+        return {
+            hasAudio: true,
+            srcAudioChannels: srcChannels,
+            srcAudioLayout: srcLayout || '5.1',
+            audioChannels: 6,
+            audioLayout: '5.1',
+            audioBitrateK: 384,
+            audioLabel: '5.1 Surround',
+        };
+    }
+    return {
+        hasAudio: true,
+        srcAudioChannels: srcChannels,
+        srcAudioLayout: srcLayout || '7.1',
+        audioChannels: 8,
+        audioLayout: '7.1',
+        audioBitrateK: 512,
+        audioLabel: '7.1 Surround',
+    };
+}
+
+function buildAudioEncodeArgs(meta) {
+    if (!meta?.hasAudio || !meta.audioChannels) {
+        return ['-an'];
+    }
+    return [
+        '-filter:a', `aformat=channel_layouts=${meta.audioLayout}`,
+        '-c:a', 'aac',
+        '-b:a', `${meta.audioBitrateK}k`,
+        '-ar', '48000',
+        '-ac', String(meta.audioChannels),
+    ];
+}
+
 function parseProbeMeta(probeData) {
-    const vStream = (probeData.streams || []).find((s) => s.codec_type === 'video') || (probeData.streams || [])[0] || {};
+    const streams = probeData.streams || [];
+    const vStream = streams.find((s) => s.codec_type === 'video') || streams[0] || {};
+    const aStream = streams.find((s) => s.codec_type === 'audio') || null;
+    const audioProfile = resolveAudioProfile(aStream);
     const srcWidth = Number(vStream.width) || 1920;
     const srcHeight = Number(vStream.height) || 1080;
     const hasDimensions = Number(vStream.width) > 0 && Number(vStream.height) > 0;
@@ -1067,6 +1154,7 @@ function parseProbeMeta(probeData) {
         isHdr,
         hdrType,
         hdrColorTrc,
+        ...audioProfile,
     };
 }
 
@@ -1115,13 +1203,22 @@ function runFFmpeg(args, onProgress, stepLabel = '', durationSec = 0, options = 
 function buildMasterM3U8(qualities) {
     const sorted = [...qualities].sort((a, b) => a.bitrate - b.bitrate);
     const hasHdr = sorted.some((q) => q.is_hdr);
+    const audioSample = sorted.find((q) => q.audio_channels != null) || null;
     const lines = ['#EXTM3U', `#EXT-X-VERSION:${hasHdr ? 7 : 3}`];
+    if (audioSample) {
+        lines.push(
+            `#EXT-X-TUBELOCK-AUDIO:CHANNELS=${audioSample.audio_channels},LAYOUT=${audioSample.audio_layout || 'stereo'}`
+        );
+    }
+    const hasAudioTrack = !audioSample || audioSample.audio_channels > 0;
     for (const q of sorted) {
         if (q.is_hdr) {
             const videoRange = q.hdr_type === 'HLG' ? 'HLG' : 'PQ';
             const trcCode = q.hdr_type === 'HLG' ? '18' : '16';
             const av1Level = q.height >= 1440 ? '12' : q.height >= 1080 ? '08' : q.height >= 720 ? '05' : '04';
-            const codecs = `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0,mp4a.40.2`;
+            const codecs = hasAudioTrack
+                ? `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0,mp4a.40.2`
+                : `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0`;
             lines.push(
                 `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height},CODECS="${codecs}",VIDEO-RANGE=${videoRange}`
             );
@@ -1194,11 +1291,25 @@ async function runHighQualityPass({
     lanePctEnd,
     stagePrefix,
 }) {
-    const { duration, gopSize, resolutionLabel, fps, codec, bitrate, isHdr, hdrType, hdrColorTrc } = meta;
+    const {
+        duration,
+        gopSize,
+        resolutionLabel,
+        fps,
+        codec,
+        bitrate,
+        isHdr,
+        hdrType,
+        hdrColorTrc,
+        audioChannels,
+        audioLayout,
+        audioLabel,
+    } = meta;
+    const audioArgs = buildAudioEncodeArgs(meta);
     await logger.log(
         isHdr
-            ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} HDR (${hdrType} • AV1 10-bit fMP4 + lanczos + ${bitrateK}k)...`
-            : `⚡ ${passLabel}: กำลังหั่น ${qualityName} (preset fast + lanczos + ${bitrateK}k)...`
+            ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} HDR (${hdrType} • AV1 10-bit fMP4 + ${bitrateK}k • เสียง ${audioLabel})...`
+            : `⚡ ${passLabel}: กำลังหั่น ${qualityName} (preset fast + lanczos + ${bitrateK}k • เสียง ${audioLabel})...`
     );
 
     const ffmpegArgs = isHdr
@@ -1214,7 +1325,7 @@ async function runHighQualityPass({
             '-color_trc', hdrColorTrc,
             '-colorspace', 'bt2020nc',
             '-color_range', 'tv',
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+            ...audioArgs,
             '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
             '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
             '-hls_fmp4_init_filename', `init_${qualityName}.mp4`,
@@ -1232,7 +1343,7 @@ async function runHighQualityPass({
             '-force_key_frames', 'expr:gte(t,n_forced*4)',
             '-x264-params', 'deblock=-1,-1',
             '-b:v', `${bitrateK}k`, '-maxrate', `${maxrateK}k`, '-bufsize', `${bufsizeK}k`,
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+            ...audioArgs,
             '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
             '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
             '-hls_segment_filename', `stream_${qualityName}_%03d.ts`,
@@ -1270,7 +1381,16 @@ async function runHighQualityPass({
     await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, passFiles, true, passLabel);
 
     const merged = await registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOutputDir, [
-        { name: qualityName, width, height, bitrate: manifestBitrate, is_hdr: isHdr, hdr_type: hdrType },
+        {
+            name: qualityName,
+            width,
+            height,
+            bitrate: manifestBitrate,
+            is_hdr: isHdr,
+            hdr_type: hdrType,
+            audio_channels: audioChannels,
+            audio_layout: audioLayout,
+        },
     ]);
 
     const readyNames = merged.map((q) => q.name).join(', ');
@@ -1289,6 +1409,7 @@ async function runHighQualityPass({
             fps,
             codec,
             bitrate,
+            audio_channels: audioChannels,
         },
     });
     await logger.log(`✅ อัปโหลด ${qualityName} และซิงก์ master.m3u8 เรียบร้อย (พร้อมแล้ว: ${readyNames})`, {
@@ -1321,7 +1442,12 @@ async function runLaneFastSd({
         isHdr,
         hdrType,
         hdrColorTrc,
+        hasAudio,
+        audioChannels,
+        audioLayout,
     } = meta;
+    const audioArgs = buildAudioEncodeArgs(meta);
+    const mapAudioArgs = hasAudio ? ['-map', '0:a?'] : [];
     const posterPath = path.join(hlsOutputDir, 'poster.jpg');
     const thumbnailUrl = `/streams/${streamFolderName}/poster.jpg`;
     const seekTime = duration > 3 ? '00:00:03' : '00:00:01';
@@ -1402,6 +1528,7 @@ async function runLaneFastSd({
                 fps,
                 codec,
                 bitrate,
+                audio_channels: audioChannels,
                 thumbnail_url: shouldPromotePosterUrl ? thumbnailUrl : null,
                 onedrive_folder_id: streamFolderId,
                 hls_folder_path: `/streams/${streamFolderName}`,
@@ -1429,7 +1556,7 @@ async function runLaneFastSd({
             '[vsd]fps=1/5,scale=160:90,format=yuvj420p,tile=10x10[outsd];' +
             '[vhd]fps=1/5,scale=320:180,format=yuvj420p,tile=5x5[outhd]',
             // Output 1: 144p AV1 10-bit HDR fMP4 (คง bitrate เดิม 200k)
-            '-map', '[out144]', '-map', '0:a?',
+            '-map', '[out144]', ...mapAudioArgs,
             '-pix_fmt', 'yuv420p10le',
             '-c:v', 'libsvtav1', '-preset', '10',
             '-g', gopSize,
@@ -1438,7 +1565,7 @@ async function runLaneFastSd({
             '-color_trc', hdrColorTrc,
             '-colorspace', 'bt2020nc',
             '-color_range', 'tv',
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+            ...audioArgs,
             '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
             '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
             '-hls_fmp4_init_filename', 'init_144p.mp4',
@@ -1457,12 +1584,12 @@ async function runLaneFastSd({
             '[vsd]fps=1/5,scale=160:90,format=yuvj420p,tile=10x10[outsd];' +
             '[vhd]fps=1/5,scale=320:180,format=yuvj420p,tile=5x5[outhd]',
             // Output 1: 144p HLS (คง bitrate เดิม 200k/250k/400k)
-            '-map', '[out144]', '-map', '0:a?',
+            '-map', '[out144]', ...mapAudioArgs,
             '-pix_fmt', 'yuv420p',
             '-c:v', 'libx264', '-preset', 'ultrafast',
             '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
             '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+            ...audioArgs,
             '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
             '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
             '-hls_segment_filename', 'stream_144p_%03d.ts',
@@ -1485,7 +1612,7 @@ async function runLaneFastSd({
             '-color_trc', hdrColorTrc,
             '-colorspace', 'bt2020nc',
             '-color_range', 'tv',
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+            ...audioArgs,
             '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
             '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
             '-hls_fmp4_init_filename', 'init_144p.mp4',
@@ -1499,7 +1626,7 @@ async function runLaneFastSd({
             '-c:v', 'libx264', '-preset', 'ultrafast',
             '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
             '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+            ...audioArgs,
             '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
             '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
             '-hls_segment_filename', 'stream_144p_%03d.ts',
@@ -1558,7 +1685,16 @@ async function runLaneFastSd({
     await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass1Files, true, 'Pass 1 (144p)');
 
     const mergedAfter144 = await registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOutputDir, [
-        { name: '144p', width: 256, height: 144, bitrate: 200000, is_hdr: isHdr, hdr_type: hdrType },
+        {
+            name: '144p',
+            width: 256,
+            height: 144,
+            bitrate: 200000,
+            is_hdr: isHdr,
+            hdr_type: hdrType,
+            audio_channels: audioChannels,
+            audio_layout: audioLayout,
+        },
     ]);
     const readyAfter144Text = mergedAfter144.map((q) => q.name).join(', ');
 
@@ -1600,7 +1736,7 @@ async function runLaneFastSd({
                 '[v480]scale=w=854:h=480:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[out480]',
                 '-sws_flags', 'lanczos',
                 // 360p Output (AV1 10-bit HDR fMP4)
-                '-map', '[out360]', '-map', '0:a?',
+                '-map', '[out360]', ...mapAudioArgs,
                 '-pix_fmt', 'yuv420p10le',
                 '-c:v', 'libsvtav1', '-preset', '9',
                 '-g', gopSize,
@@ -1609,14 +1745,14 @@ async function runLaneFastSd({
                 '-color_trc', hdrColorTrc,
                 '-colorspace', 'bt2020nc',
                 '-color_range', 'tv',
-                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+                ...audioArgs,
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
                 '-hls_fmp4_init_filename', 'init_360p.mp4',
                 '-hls_segment_filename', 'stream_360p_%03d.m4s',
                 '360p.m3u8',
                 // 480p Output (AV1 10-bit HDR fMP4)
-                '-map', '[out480]', '-map', '0:a?',
+                '-map', '[out480]', ...mapAudioArgs,
                 '-pix_fmt', 'yuv420p10le',
                 '-c:v', 'libsvtav1', '-preset', '9',
                 '-g', gopSize,
@@ -1625,7 +1761,7 @@ async function runLaneFastSd({
                 '-color_trc', hdrColorTrc,
                 '-colorspace', 'bt2020nc',
                 '-color_range', 'tv',
-                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+                ...audioArgs,
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
                 '-hls_fmp4_init_filename', 'init_480p.mp4',
@@ -1641,23 +1777,23 @@ async function runLaneFastSd({
                 '[v480]scale=w=854:h=480:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos[out480]',
                 '-sws_flags', 'lanczos',
                 // 360p Output
-                '-map', '[out360]', '-map', '0:a?',
+                '-map', '[out360]', ...mapAudioArgs,
                 '-pix_fmt', 'yuv420p',
                 '-c:v', 'libx264', '-preset', 'veryfast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
-                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+                ...audioArgs,
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', 'stream_360p_%03d.ts',
                 '360p.m3u8',
                 // 480p Output
-                '-map', '[out480]', '-map', '0:a?',
+                '-map', '[out480]', ...mapAudioArgs,
                 '-pix_fmt', 'yuv420p',
                 '-c:v', 'libx264', '-preset', 'veryfast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
-                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+                ...audioArgs,
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', 'stream_480p_%03d.ts',
@@ -1689,8 +1825,26 @@ async function runLaneFastSd({
         await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, sdFiles, true, '360p & 480p');
 
         const merged = await registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOutputDir, [
-            { name: '360p', width: 640, height: 360, bitrate: 600000, is_hdr: isHdr, hdr_type: hdrType },
-            { name: '480p', width: 854, height: 480, bitrate: 1000000, is_hdr: isHdr, hdr_type: hdrType },
+            {
+                name: '360p',
+                width: 640,
+                height: 360,
+                bitrate: 600000,
+                is_hdr: isHdr,
+                hdr_type: hdrType,
+                audio_channels: audioChannels,
+                audio_layout: audioLayout,
+            },
+            {
+                name: '480p',
+                width: 854,
+                height: 480,
+                bitrate: 1000000,
+                is_hdr: isHdr,
+                hdr_type: hdrType,
+                audio_channels: audioChannels,
+                audio_layout: audioLayout,
+            },
         ]);
         const readyNames = merged.map((q) => q.name).join(', ');
         await updateLaneProgress({
@@ -1718,7 +1872,7 @@ async function runLaneFastSd({
                 '-color_trc', hdrColorTrc,
                 '-colorspace', 'bt2020nc',
                 '-color_range', 'tv',
-                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+                ...audioArgs,
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4',
                 '-hls_fmp4_init_filename', 'init_360p.mp4',
@@ -1733,7 +1887,7 @@ async function runLaneFastSd({
                 '-c:v', 'libx264', '-preset', 'veryfast',
                 '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
                 '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
-                '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
+                ...audioArgs,
                 '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
                 '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
                 '-hls_segment_filename', 'stream_360p_%03d.ts',
@@ -1751,7 +1905,16 @@ async function runLaneFastSd({
         await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, pass2Files, true, '360p');
 
         const merged = await registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOutputDir, [
-            { name: '360p', width: 640, height: 360, bitrate: 600000, is_hdr: isHdr, hdr_type: hdrType },
+            {
+                name: '360p',
+                width: 640,
+                height: 360,
+                bitrate: 600000,
+                is_hdr: isHdr,
+                hdr_type: hdrType,
+                audio_channels: audioChannels,
+                audio_layout: audioLayout,
+            },
         ]);
         const readyNames = merged.map((q) => q.name).join(', ');
         await updateLaneProgress({
@@ -2154,8 +2317,9 @@ async function main() {
 
         const meta = parseProbeMeta(probeData);
         const hdrTag = meta.isHdr ? ` | 🌈 HDR (${meta.hdrType} • ${meta.pixFmt}) -> AV1 10-bit fMP4` : ` | SDR (${meta.pixFmt}) -> H.264`;
+        const audioTag = meta.hasAudio ? ` | 🔊 Audio: ${meta.audioLabel} (${meta.audioBitrateK}k AAC)` : ' | 🔇 No Audio';
         await logger.log(
-            `📐 สเปกจาก ffprobe: ${meta.srcWidth}x${meta.srcHeight} (${meta.resolutionLabel}), ยาว ${formatDurationShort(meta.duration)}, ${meta.fps} fps, Source: ${meta.sourceCodec}, Bitrate: ${Math.round(meta.bitrate / 1000)} kbps${hdrTag}`
+            `📐 สเปกจาก ffprobe: ${meta.srcWidth}x${meta.srcHeight} (${meta.resolutionLabel}), ยาว ${formatDurationShort(meta.duration)}, ${meta.fps} fps, Source: ${meta.sourceCodec}, Bitrate: ${Math.round(meta.bitrate / 1000)} kbps${hdrTag}${audioTag}`
         );
 
         const laneCtx = {

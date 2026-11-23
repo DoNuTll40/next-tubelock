@@ -11,6 +11,28 @@ updated: 23 พฤศจิกายน 2026
 
 ---
 
+## เวอร์ชัน 1.2.8 Patch v1 (Build 1.2.8.20261123 — 23 พฤศจิกายน 2026) — Multi-Channel Surround Audio (Mono–7.1) & Docs TOC Redesign
+
+### 1. รองรับเสียงหลายแชนเนลเต็มระบบ (1.0 Mono → 7.1 Surround)
+- **Auto Multi-Channel Uniform Audio (`scripts/transcode-worker.js`):**
+  - อัปเกรด `ffprobe` ให้วิเคราะห์แทร็กเสียงต้นฉบับอัตโนมัติ (ทั้งจำนวนแชนเนลและ `channel_layout` เช่น `mono`, `stereo`, `5.1(side)`, `7.1(wide)` รวมถึงไฟล์ไม่มีเสียง)
+  - เข้ารหัสเสียง AAC-LC 48 kHz แบบ Uniform Audio เท่ากันทุกความละเอียด (`144p`–`2160p`) เพื่อไม่ให้ MSE สะดุดเวลาสลับความชัด:
+    - **1.0 Mono:** `aformat=channel_layouts=mono` (`-ac 1`, `128k`)
+    - **2.0 Stereo:** `aformat=channel_layouts=stereo` (`-ac 2`, `192k`)
+    - **5.1 Surround (3–6ch):** `aformat=channel_layouts=5.1` (`-ac 6`, `384k`)
+    - **7.1 Surround (7–8+ch):** `aformat=channel_layouts=7.1` (`-ac 8`, `512k`)
+    - **Silent (ไม่มีเสียง):** ส่ง `-an` ข้ามแทร็กเสียงอัตโนมัติ
+  - บันทึก `audio_channels` ลงตาราง `videos` / `video_versions` และฝังแท็ก `#EXT-X-TUBELOCK-AUDIO` ใน `master.m3u8`
+- **แสดงข้อมูลเสียงใน Stats for Nerds (`playbackResolver.js`, `GlobalPlayerContext.jsx`, `VideoPlayer.jsx`, `PlayerStatsModal.jsx`):**
+  - เพิ่มแถว **`Audio`** แสดงระบบเสียงจริงของสตรีม (เช่น `AAC • 5.1 Surround (6ch)`, `AAC • 7.1 Surround (8ch)`, `AAC • Stereo (2.0)`, `AAC • Mono (1.0)`) พร้อมไฮไลต์เมื่อเป็นระบบเสียง Surround
+
+### 2. ปรับโฉมแถบสารบัญด้านขวาของหน้าเอกสาร (Docs TOC Redesign)
+- **Release Timeline & Active Scrollspy (`DocsTableOfContents.jsx`, `MarkdownDocViewer.jsx`, `globals.css`):**
+  - แยกแถบ `ON THIS PAGE` เป็นคอมโพเนนต์แบบโต้ตอบได้ พร้อม Scrollspy เส้นส้ม `#FF7A00` ไฮไลต์หัวข้อที่กำลังอ่าน, ปุ่ม **กลับขึ้นด้านบน**, ล้างเครื่องหมาย backtick ดิบออกจากสารบัญ และแปลงหัวข้อ Patch Notes เป็นการ์ดไทม์ไลน์ 2 แถว (`เลขเวอร์ชัน + วันที่แบบย่อ + สรุป 1 บรรทัด`)
+  - เพิ่มคลาส `.no-scrollbar` และ `.docs-toc-scroll` แบบเส้นบาง `3px` เพื่อตัดปัญหาแถบ Scrollbar สีส้มขนาดใหญ่ที่ขอบขวา
+
+---
+
 ## เวอร์ชัน 1.2.8 (Build 1.2.8.20261123 — 23 พฤศจิกายน 2026) — 3x Parallel HLS Transcoder, Smart Hybrid AV1 10-bit True HDR (fMP4), Sharpness Upgrade & Playlist / AI Subtitle Improvements
 
 ### 1. สถาปัตยกรรมหั่น HLS ขนาน 3 เครื่อง (3x Parallel Runners + Finalize Job)

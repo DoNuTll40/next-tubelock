@@ -15,6 +15,8 @@ export default function PlayerStatsModal({
   isPlaying,
   fps = 30,
   codec = 'h264',
+  audioChannels = null,
+  audioLayout = null,
   videoId = '',
   videoSlug = '',
   videoCategory = '',
@@ -298,6 +300,24 @@ export default function PlayerStatsModal({
     return str;
   }, [videoId, videoSlug, videoCategory]);
 
+  const audioDisplay = useMemo(() => {
+    const ch = audioChannels != null ? Number(audioChannels) : null;
+    const layout = String(audioLayout || '').toLowerCase();
+    if (ch === 0 || layout === 'none') {
+      return { text: 'ไม่มีเสียง (Silent)', isSurround: false };
+    }
+    if (ch >= 7 || layout.includes('7.1')) {
+      return { text: 'AAC • 7.1 Surround (8ch)', isSurround: true };
+    }
+    if ((ch >= 3 && ch <= 6) || layout.includes('5.1')) {
+      return { text: 'AAC • 5.1 Surround (6ch)', isSurround: true };
+    }
+    if (ch === 1 || layout === 'mono') {
+      return { text: 'AAC • Mono (1.0)', isSurround: false };
+    }
+    return { text: 'AAC • Stereo (2.0)', isSurround: false };
+  }, [audioChannels, audioLayout]);
+
   if (!showStats) return null;
 
   const currentFpsNumber = parseFloat(realtimeFps) || 0;
@@ -310,6 +330,7 @@ export default function PlayerStatsModal({
       `Current / Optimal Res: ${stats.currentRes}@${fps || 30} / ${stats.optimalRes}@${fps || 30}`,
       `Volume / Normalized: ${stats.volumeNormalized}`,
       `Codecs: ${stats.activeCodec || codec} (${stats.protocol})`,
+      `Audio: ${audioDisplay.text}`,
       `Color: ${stats.colorInfo}`,
       `Connection Speed: ${stats.connectionSpeedKbps.toLocaleString()} Kbps`,
       `Stream Bitrate: ${stats.streamBitrateKbps.toLocaleString()} Kbps (VBR)`,
@@ -415,6 +436,14 @@ export default function PlayerStatsModal({
           <span className="text-zinc-100 font-medium">
             <span className="uppercase text-amber-300">{stats.activeCodec || codec}</span>
             <span className="text-zinc-400 text-[10px]"> ({stats.protocol})</span>
+          </span>
+        </div>
+
+        {/* Audio Format & Channels */}
+        <div className="flex justify-between items-center py-0.5 border-b border-white/5">
+          <span className="text-zinc-400">Audio</span>
+          <span className={`font-mono ${audioDisplay.isSurround ? 'text-sky-300 font-semibold' : 'text-zinc-300'}`}>
+            {audioDisplay.text}
           </span>
         </div>
 

@@ -311,6 +311,17 @@ export async function resolveClientPlaybackSource(sourceData) {
         }
       }
 
+      let audioChannels = null;
+      let audioLayout = null;
+      const audioMetaMatch = masterText.match(
+        /#EXT-X-TUBELOCK-AUDIO:CHANNELS=(\d+)(?:,LAYOUT=([^\s,]+))?/i
+      );
+      if (audioMetaMatch) {
+        audioChannels = parseInt(audioMetaMatch[1], 10);
+        if (!Number.isFinite(audioChannels)) audioChannels = null;
+        audioLayout = audioMetaMatch[2] ? audioMetaMatch[2].trim().toLowerCase() : null;
+      }
+
       const lines = masterText.split('\n');
       const rewrittenLines = [];
       let pendingStreamInf = null;
@@ -356,6 +367,8 @@ export async function resolveClientPlaybackSource(sourceData) {
           blobUrls: createdBlobUrls,
           storyboardPromise,
           aspectRatio: detectedAspect,
+          audioChannels,
+          audioLayout,
           segmentUrlMap,
           partial: isPartial,
           streamFolder,
@@ -373,6 +386,8 @@ export async function resolveClientPlaybackSource(sourceData) {
         blobUrls: createdBlobUrls,
         storyboardPromise,
         aspectRatio: detectedAspect,
+        audioChannels,
+        audioLayout,
         segmentUrlMap,
         partial: isPartial,
         streamFolder,

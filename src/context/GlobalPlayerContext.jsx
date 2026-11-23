@@ -238,6 +238,7 @@ export function GlobalPlayerProvider({ children }) {
   const [storyboard, setStoryboard] = useState(null);
   const [error, setError] = useState(null);
   const [detectedRatio, setDetectedRatio] = useState(null);
+  const [detectedAudio, setDetectedAudio] = useState(null);
   const [streamAttemptSeq, setStreamAttemptSeq] = useState(0);
 
   const [playerConfig, setPlayerConfig] = useState(readStoredPlayerConfig);
@@ -1107,6 +1108,11 @@ export function GlobalPlayerProvider({ children }) {
         if (resolved.aspectRatio) {
           setDetectedRatio(resolved.aspectRatio);
         }
+        setDetectedAudio(
+          resolved.audioChannels != null || resolved.audioLayout
+            ? { channels: resolved.audioChannels, layout: resolved.audioLayout }
+            : null
+        );
 
         // Two-Phase Cold-Batch Hydration (~2.2s later upgrade _002+.ts to direct CF Worker URLs)
         if (resolved.partial) {
@@ -1331,6 +1337,8 @@ export function GlobalPlayerProvider({ children }) {
                 aspectRatio={videoRatio}
                 fps={activeVersion?.fps || video?.fps}
                 codec={activeVersion?.codec || video?.codec}
+                audioChannels={detectedAudio?.channels ?? activeVersion?.audio_channels ?? video?.audio_channels ?? null}
+                audioLayout={detectedAudio?.layout ?? null}
                 videoId={video?.id}
                 videoSlug={videoSlugValue}
                 videoCategory={video?.category}
