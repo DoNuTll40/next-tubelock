@@ -6,7 +6,7 @@ import {
   animate, AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform,
 } from 'framer-motion';
 import {
-  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, RotateCcw, Layers
+  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, RotateCcw, Layers, Headphones
 } from 'lucide-react';
 import AmbientModeIcon from '../icons/AmbientModeIcon';
 import CcSubtitleIcon from '../icons/CcSubtitleIcon';
@@ -128,6 +128,12 @@ export default function PlayerSettingsModal({
   activeVersion = null,
   onSelectVersion = null,
   isSwitchingVersion = false,
+  hiResAudio = null,
+  isHiResActive = false,
+  hiResStatus = 'idle',
+  onSelectAudioMode = null,
+  audioChannels = null,
+  audioLayout = null,
 }) {
   const [mounted, setMounted] = useState(false);
   const [isClientSmall, setIsClientSmall] = useState(false);
@@ -278,11 +284,27 @@ export default function PlayerSettingsModal({
   const slideDir = navState.dir;
   const panelMotionProps = getPanelMotionProps(slideDir, reduceMotion);
 
+  const hasHiResAudio = Boolean(hiResAudio?.url);
+  const hiResFormatLabel = hiResAudio?.format === 'flac' ? 'FLAC' : 'WAV';
+  const hiResRateKhz = hiResAudio?.sampleRate
+    ? (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1)
+    : '48';
+  const hiResSizeMb = hiResAudio?.bytes > 0 ? `${(hiResAudio.bytes / (1024 * 1024)).toFixed(1)} MB` : '';
+  const channelShortLabel = (() => {
+    const ch = hiResAudio?.channels ?? audioChannels;
+    const lay = String(hiResAudio?.layout || audioLayout || '').toLowerCase();
+    if (ch >= 7 || lay.includes('7.1')) return '7.1 Surround';
+    if ((ch >= 3 && ch <= 6) || lay.includes('5.1')) return '5.1 Surround';
+    if (ch === 1 || lay === 'mono') return '1.0 Mono';
+    return '2.0 Stereo';
+  })();
+
   const getHeaderTitle = () => {
     if (activeSubOpt) return activeSubOpt.title;
     if (activeMenuTab === 'subtitle_options') return 'ตัวเลือก';
     if (activeMenuTab === 'subtitles') return 'คำบรรยาย';
     if (activeMenuTab === 'quality') return 'คุณภาพของวิดีโอ';
+    if (activeMenuTab === 'audio') return 'คุณภาพเสียง';
     if (activeMenuTab === 'speed') return 'ความเร็วในการเล่น';
     if (activeMenuTab === 'aspect') return 'สัดส่วนภาพ';
     if (activeMenuTab === 'version') return 'เวอร์ชันวิดีโอ';
@@ -465,6 +487,30 @@ export default function PlayerSettingsModal({
                         {levels.length > 1 && <ChevronRight className="w-4 h-4 text-zinc-400" />}
                       </div>
                     </button>
+
+                    {/* Audio Quality (Hi-Res Lossless WAV / FLAC Switcher — Mobile) */}
+                    {hasHiResAudio && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveMenuTab?.('audio')}
+                        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <Headphones className={`w-5 h-5 shrink-0 ${isHiResActive ? 'text-amber-400' : 'text-zinc-300'}`} />
+                          <span className="text-[14px] text-zinc-200 font-medium">คุณภาพเสียง</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-zinc-400">
+                          {isHiResActive ? (
+                            <span className="inline-flex items-center gap-1 text-[12px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
+                              {hiResStatus === 'loading' ? 'กำลังโหลด...' : `Hi-Res ${hiResFormatLabel}`}
+                            </span>
+                          ) : (
+                            <span className="text-[13px] text-zinc-300 font-medium">มาตรฐาน (AAC)</span>
+                          )}
+                          <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
+                        </div>
+                      </button>
+                    )}
 
                     {/* Subtitles (CC) */}
                     <button
@@ -758,6 +804,58 @@ export default function PlayerSettingsModal({
                   </motion.div>
                 )}
 
+                {/* Tab: Audio Quality Submenu (Mobile) */}
+                {activeMenuTab === 'audio' && hasHiResAudio && (
+                  <motion.div
+                    key="audio"
+                    {...panelMotionProps}
+                    className="flex flex-col py-1"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectAudioMode?.('hires');
+                        setShowSettingsMenu?.(false);
+                      }}
+                      className="w-full flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[14px] ${isHiResActive ? 'text-amber-300 font-bold' : 'text-zinc-200 font-medium'}`}>
+                            Hi-Res Lossless
+                          </span>
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
+                            {hiResFormatLabel}
+                          </span>
+                        </div>
+                        <span className="text-[11.5px] text-zinc-400 mt-0.5 font-mono">
+                          {hiResAudio.format === 'flac' ? 'FLAC' : 'PCM WAV'} {hiResAudio.bits}-bit / {hiResRateKhz} kHz • {channelShortLabel}{hiResSizeMb ? ` • ${hiResSizeMb}` : ''}
+                        </span>
+                      </div>
+                      {isHiResActive && <Check className="w-5 h-5 text-amber-400 shrink-0" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectAudioMode?.('standard');
+                        setShowSettingsMenu?.(false);
+                      }}
+                      className="w-full flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer border-t border-white/5"
+                    >
+                      <div className="flex flex-col min-w-0">
+                        <span className={`text-[14px] ${!isHiResActive ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                          มาตรฐาน (AAC)
+                        </span>
+                        <span className="text-[11.5px] text-zinc-400 mt-0.5">
+                          48 kHz • {channelShortLabel} • โหลดไวและประหยัดเน็ต
+                        </span>
+                      </div>
+                      {!isHiResActive && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
+                    </button>
+                  </motion.div>
+                )}
+
                 {/* Tab: Playback Speed Submenu */}
                 {activeMenuTab === 'speed' && (
                   <motion.div
@@ -962,6 +1060,30 @@ export default function PlayerSettingsModal({
                   {levels.length > 1 && <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />}
                 </div>
               </button>
+
+              {/* Audio Quality Item (Hi-Res Lossless WAV / FLAC — Desktop) */}
+              {hasHiResAudio && (
+                <button
+                  type="button"
+                  onClick={() => setActiveMenuTab?.('audio')}
+                  className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3.5 shrink-0">
+                    <Headphones className={`w-4.5 h-4.5 transition shrink-0 ${isHiResActive ? 'text-amber-400' : 'text-zinc-400 group-hover:text-zinc-200'}`} />
+                    <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">คุณภาพเสียง</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {isHiResActive ? (
+                      <span className="text-[11.5px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono whitespace-nowrap">
+                        {hiResStatus === 'loading' ? 'กำลังโหลด...' : `Hi-Res ${hiResFormatLabel}`}
+                      </span>
+                    ) : (
+                      <span className="text-[13px] text-zinc-300 font-medium whitespace-nowrap">มาตรฐาน (AAC)</span>
+                    )}
+                    <ChevronRight className="w-4 h-4 text-zinc-400 shrink-0" />
+                  </div>
+                </button>
+              )}
 
               {/* Subtitles (CC) Item */}
               <button
@@ -1300,6 +1422,68 @@ export default function PlayerSettingsModal({
                     )}
                   </div>
                   {currentLevelIndex === -1 && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Tab: Audio Quality Submenu (Desktop) */}
+          {activeMenuTab === 'audio' && hasHiResAudio && (
+            <motion.div key="audio" {...panelMotionProps} className="flex flex-col w-full">
+              <div className="px-2 py-1.5 border-b border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setActiveMenuTab?.('main')}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-zinc-300 hover:text-white hover:bg-white/10 transition cursor-pointer group text-left"
+                >
+                  <ArrowLeft className="w-4 h-4 text-zinc-400 group-hover:text-white transition shrink-0" />
+                  <span className="text-[13px] font-semibold text-zinc-200 group-hover:text-white">
+                    เลือกคุณภาพเสียง
+                  </span>
+                </button>
+              </div>
+              <div className="py-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectAudioMode?.('hires');
+                    setShowSettingsMenu?.(false);
+                  }}
+                  className="w-full flex items-center justify-between gap-3 px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer"
+                >
+                  <div className="flex flex-col min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className={`text-[13.5px] ${isHiResActive ? 'text-amber-300 font-bold' : 'text-zinc-200 font-medium'}`}>
+                        Hi-Res Lossless
+                      </span>
+                      <span className="text-[9.5px] font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
+                        {hiResFormatLabel}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-zinc-400 mt-0.5 font-mono">
+                      {hiResAudio.format === 'flac' ? 'FLAC' : 'PCM WAV'} {hiResAudio.bits}-bit / {hiResRateKhz} kHz • {channelShortLabel}{hiResSizeMb ? ` • ${hiResSizeMb}` : ''}
+                    </span>
+                  </div>
+                  {isHiResActive && <Check className="w-4.5 h-4.5 text-amber-400 shrink-0" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelectAudioMode?.('standard');
+                    setShowSettingsMenu?.(false);
+                  }}
+                  className="w-full flex items-center justify-between gap-3 px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5"
+                >
+                  <div className="flex flex-col min-w-0">
+                    <span className={`text-[13.5px] ${!isHiResActive ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                      มาตรฐาน (AAC)
+                    </span>
+                    <span className="text-[11px] text-zinc-400 mt-0.5">
+                      48 kHz • {channelShortLabel} • โหลดไวและประหยัดเน็ต
+                    </span>
+                  </div>
+                  {!isHiResActive && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
                 </button>
               </div>
             </motion.div>

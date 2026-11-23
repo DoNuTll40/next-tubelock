@@ -625,6 +625,7 @@ function normalizeQualitiesList(rawList) {
             hdr_type: item.hdr_type || null,
             audio_channels: item.audio_channels != null ? Number(item.audio_channels) : null,
             audio_layout: item.audio_layout || null,
+            hires_audio: item.hires_audio && typeof item.hires_audio === 'object' ? item.hires_audio : null,
         });
     }
     return Array.from(byName.values()).sort((a, b) => a.bitrate - b.bitrate);
@@ -654,6 +655,7 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
         hdr_type: q.hdr_type || null,
         audio_channels: q.audio_channels != null ? Number(q.audio_channels) : null,
         audio_layout: q.audio_layout || null,
+        ...(q.hires_audio ? { hires_audio: q.hires_audio } : {}),
         run_id: TRANSCODE_RUN_ID,
     }));
     const namesToReplace = withRun.map((q) => q.name);
@@ -713,9 +715,14 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
     }
 
     const masterPath = path.join(hlsOutputDir, 'master.m3u8');
+    const buildSyncKey = (list) => {
+        const namesKey = list.map((q) => q.name).join(',');
+        const hr = list.find((q) => q.hires_audio)?.hires_audio;
+        return hr ? `${namesKey}|hires:${hr.file}:${hr.bytes || 0}` : namesKey;
+    };
     let publishedKey = '';
     for (let syncTry = 0; syncTry < 3; syncTry++) {
-        const key = mergedQualities.map((q) => q.name).join(',');
+        const key = buildSyncKey(mergedQualities);
         if (key && key !== publishedKey) {
             fs.writeFileSync(masterPath, buildMasterM3U8(mergedQualities));
             await uploadFileToOneDrive(driveId, streamFolderId, 'master.m3u8', masterPath);
@@ -723,7 +730,7 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
         }
         // Re-check DB once in case another lane registered a new quality during our PUT
         const latest = await readRunQualitiesFromDb();
-        const latestKey = latest.map((q) => q.name).join(',');
+        const latestKey = buildSyncKey(latest);
         if (!latestKey || latestKey === publishedKey) {
             return latest.length > 0 ? latest : mergedQualities;
         }
@@ -860,10 +867,11 @@ async function ensureFolderExists(driveId, folderPath) {
 
 async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
     const token = await getGraphToken();
-    const fileBuffer = await fs.promises.readFile(filePath);
-    const fileSize = fileBuffer.length;
+    const stat = await fs.promises.stat(filePath);
+    const fileSize = stat.size;
 
     if (fileSize < 4 * 1024 * 1024) {
+        const fileBuffer = await fs.promises.readFile(filePath);
         const lowerName = fileName.toLowerCase();
         const contentType = lowerName.endsWith('.m3u8')
             ? 'application/vnd.apple.mpegurl'
@@ -875,7 +883,11 @@ async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
                         ? 'video/iso.segment'
                         : lowerName.endsWith('.mp4')
                             ? 'video/mp4'
-                            : 'video/mp2t';
+                            : lowerName.endsWith('.wav')
+                                ? 'audio/wav'
+                                : lowerName.endsWith('.flac')
+                                    ? 'audio/flac'
+                                    : 'video/mp2t';
 
         const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
         const res = await fetchWithRetry(url, {
@@ -895,7 +907,7 @@ async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
         return await res.json();
     }
 
-    // Files >= 4MB use upload session
+    // Files >= 4MB use chunked upload session streamed directly from disk (low RAM even for 1.5GB WAV)
     const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
     const sessionRes = await fetchWithRetry(sessionUrl, {
         method: 'POST',
@@ -918,31 +930,40 @@ async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
 
     const { uploadUrl } = await sessionRes.json();
     const CHUNK_SIZE = 10 * 1024 * 1024;
+    const chunkBuf = Buffer.allocUnsafe(CHUNK_SIZE);
     let offset = 0;
     let uploadResult = null;
+    const fh = await fs.promises.open(filePath, 'r');
 
-    while (offset < fileSize) {
-        const end = Math.min(offset + CHUNK_SIZE, fileSize);
-        const chunk = fileBuffer.subarray(offset, end);
+    try {
+        while (offset < fileSize) {
+            const toRead = Math.min(CHUNK_SIZE, fileSize - offset);
+            const { bytesRead } = await fh.read(chunkBuf, 0, toRead, offset);
+            if (bytesRead <= 0) break;
+            const end = offset + bytesRead;
+            const chunk = chunkBuf.subarray(0, bytesRead);
 
-        const putRes = await fetchWithRetry(uploadUrl, {
-            method: 'PUT',
-            headers: {
-                'Content-Length': chunk.length.toString(),
-                'Content-Range': `bytes ${offset}-${end - 1}/${fileSize}`,
-            },
-            body: chunk,
-        });
+            const putRes = await fetchWithRetry(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                    'Content-Length': bytesRead.toString(),
+                    'Content-Range': `bytes ${offset}-${end - 1}/${fileSize}`,
+                },
+                body: chunk,
+            });
 
-        if (putRes.status === 200 || putRes.status === 201) {
-            uploadResult = await putRes.json();
-            break;
-        } else if (putRes.status === 202) {
-            offset = end;
-        } else {
-            const err = await putRes.text();
-            throw new Error(`Failed to upload chunk for ${fileName} (${putRes.status}): ${err}`);
+            if (putRes.status === 200 || putRes.status === 201) {
+                uploadResult = await putRes.json();
+                break;
+            } else if (putRes.status === 202) {
+                offset = end;
+            } else {
+                const err = await putRes.text();
+                throw new Error(`Failed to upload chunk for ${fileName} (${putRes.status}): ${err}`);
+            }
         }
+    } finally {
+        await fh.close().catch(() => { });
     }
 
     return uploadResult;
@@ -1005,7 +1026,7 @@ function probeVideo(inputTarget, timeoutMs = 30000) {
 
         const proc = spawn('ffprobe', [
             '-v', 'error',
-            '-show_entries', 'stream=codec_type,width,height,duration,r_frame_rate,codec_name,pix_fmt,color_range,color_space,color_transfer,color_primaries,channels,channel_layout,sample_rate',
+            '-show_entries', 'stream=codec_type,width,height,duration,r_frame_rate,codec_name,profile,pix_fmt,color_range,color_space,color_transfer,color_primaries,channels,channel_layout,sample_rate,sample_fmt,bits_per_sample,bits_per_raw_sample',
             '-show_entries', 'format=duration,bit_rate',
             '-of', 'json',
             inputTarget,
@@ -1025,63 +1046,107 @@ function probeVideo(inputTarget, timeoutMs = 30000) {
     });
 }
 
-function resolveAudioProfile(aStream) {
+const LOSSLESS_AUDIO_CODEC_RE = /^(?:pcm_|flac|alac|truehd|mlp|wavpack|ape|tta|tak|dsd_|shorten|wmalossless)/i;
+const MAX_HIRES_WAV_BYTES = 1.5 * 1024 * 1024 * 1024; // 1.5 GB cap -> auto-fallback to bit-perfect FLAC
+
+function resolveAudioProfile(aStream, durationSec = 0) {
     if (!aStream) {
         return {
             hasAudio: false,
+            srcAudioCodec: 'none',
             srcAudioChannels: 0,
             srcAudioLayout: 'none',
+            srcSampleRate: 0,
+            srcBitDepth: 0,
             audioChannels: 0,
             audioLayout: 'none',
             audioBitrateK: 0,
             audioLabel: 'No Audio',
+            hiResEligible: false,
+            hiResFormat: null,
+            hiResFileName: null,
+            hiResBitDepth: 0,
+            hiResSampleRate: 0,
+            hiResEstimatedBytes: 0,
+            hiResFallbackReason: null,
         };
     }
 
+    const srcCodec = String(aStream.codec_name || '').toLowerCase();
+    const srcProfile = String(aStream.profile || '');
     const srcChannels = Number(aStream.channels) || 2;
     const srcLayout = String(aStream.channel_layout || '').trim();
+    const srcSampleRate = Number(aStream.sample_rate) || 48000;
+    const sampleFmt = String(aStream.sample_fmt || '').toLowerCase();
+    const rawBits = Number(aStream.bits_per_raw_sample) || Number(aStream.bits_per_sample) || 0;
+    const inferredBits = rawBits > 0
+        ? rawBits
+        : /(?:s24|s32|flt|dbl)/i.test(sampleFmt)
+            ? 24
+            : 16;
 
+    let baseProfile;
     if (srcChannels === 1) {
-        return {
-            hasAudio: true,
-            srcAudioChannels: srcChannels,
-            srcAudioLayout: srcLayout || 'mono',
+        baseProfile = {
             audioChannels: 1,
             audioLayout: 'mono',
             audioBitrateK: 128,
             audioLabel: '1.0 Mono',
         };
-    }
-    if (srcChannels === 2) {
-        return {
-            hasAudio: true,
-            srcAudioChannels: srcChannels,
-            srcAudioLayout: srcLayout || 'stereo',
+    } else if (srcChannels === 2) {
+        baseProfile = {
             audioChannels: 2,
             audioLayout: 'stereo',
             audioBitrateK: 192,
             audioLabel: '2.0 Stereo',
         };
-    }
-    if (srcChannels >= 3 && srcChannels <= 6) {
-        return {
-            hasAudio: true,
-            srcAudioChannels: srcChannels,
-            srcAudioLayout: srcLayout || '5.1',
+    } else if (srcChannels >= 3 && srcChannels <= 6) {
+        baseProfile = {
             audioChannels: 6,
             audioLayout: '5.1',
             audioBitrateK: 384,
             audioLabel: '5.1 Surround',
         };
+    } else {
+        baseProfile = {
+            audioChannels: 8,
+            audioLayout: '7.1',
+            audioBitrateK: 512,
+            audioLabel: '7.1 Surround',
+        };
     }
+
+    // Smart Auto-Detect: Export Hi-Res Lossless track ONLY when source is genuine Lossless or Hi-Res (>48kHz / >=24-bit)
+    const isLosslessCodec =
+        LOSSLESS_AUDIO_CODEC_RE.test(srcCodec) ||
+        (srcCodec === 'dts' && /(?:ma|lossless|hd)/i.test(srcProfile));
+    const hiResEligible = isLosslessCodec || srcSampleRate > 48000 || rawBits >= 24;
+
+    const hiResBitDepth = inferredBits >= 24 ? 24 : 16;
+    const hiResSampleRate = Math.min(192000, Math.max(44100, srcSampleRate));
+    const bytesPerSample = hiResBitDepth === 24 ? 3 : 2;
+    const hiResEstimatedBytes = hiResEligible
+        ? Math.round(hiResSampleRate * bytesPerSample * baseProfile.audioChannels * Math.max(1, Number(durationSec) || 0))
+        : 0;
+    const shouldFallbackFlac = hiResEligible && hiResEstimatedBytes > MAX_HIRES_WAV_BYTES;
+    const hiResFormat = hiResEligible ? (shouldFallbackFlac ? 'flac' : 'wav') : null;
+    const hiResFileName = hiResFormat ? `audio_hires.${hiResFormat}` : null;
+
     return {
         hasAudio: true,
+        srcAudioCodec: srcCodec || 'unknown',
         srcAudioChannels: srcChannels,
-        srcAudioLayout: srcLayout || '7.1',
-        audioChannels: 8,
-        audioLayout: '7.1',
-        audioBitrateK: 512,
-        audioLabel: '7.1 Surround',
+        srcAudioLayout: srcLayout || baseProfile.audioLayout,
+        srcSampleRate,
+        srcBitDepth: rawBits || inferredBits,
+        ...baseProfile,
+        hiResEligible,
+        hiResFormat,
+        hiResFileName,
+        hiResBitDepth: hiResEligible ? hiResBitDepth : 0,
+        hiResSampleRate: hiResEligible ? hiResSampleRate : 0,
+        hiResEstimatedBytes,
+        hiResFallbackReason: shouldFallbackFlac ? 'wav_exceeds_1.5gb' : null,
     };
 }
 
@@ -1098,15 +1163,89 @@ function buildAudioEncodeArgs(meta) {
     ];
 }
 
+function buildHiResAudioEncodeArgs(meta, inputPath, outputPath) {
+    if (meta.hiResFormat === 'flac') {
+        const is24 = meta.hiResBitDepth >= 24;
+        return [
+            '-y', '-threads', '0', '-i', inputPath,
+            '-vn', '-map', '0:a:0',
+            '-filter:a', `aformat=channel_layouts=${meta.audioLayout}`,
+            '-c:a', 'flac', '-compression_level', '5',
+            '-sample_fmt', is24 ? 's32' : 's16',
+            ...(is24 ? ['-bits_per_raw_sample', '24'] : []),
+            '-ar', String(meta.hiResSampleRate),
+            '-ac', String(meta.audioChannels),
+            outputPath,
+        ];
+    }
+    const pcmCodec = meta.hiResBitDepth >= 24 ? 'pcm_s24le' : 'pcm_s16le';
+    return [
+        '-y', '-threads', '0', '-i', inputPath,
+        '-vn', '-map', '0:a:0',
+        '-filter:a', `aformat=channel_layouts=${meta.audioLayout}`,
+        '-c:a', pcmCodec,
+        '-ar', String(meta.hiResSampleRate),
+        '-ac', String(meta.audioChannels),
+        '-rf64', 'auto',
+        outputPath,
+    ];
+}
+
+async function exportAndUploadHiResAudio({ driveId, streamFolderId, hlsOutputDir, rawFilePath, meta }) {
+    if (!meta?.hiResEligible || !meta.hiResFileName) return null;
+
+    const outPath = path.join(hlsOutputDir, meta.hiResFileName);
+    const rateKhz = (meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1);
+    const fmtUpper = meta.hiResFormat === 'flac' ? 'FLAC Lossless' : 'Full PCM WAV';
+    const fallbackNote = meta.hiResFallbackReason === 'wav_exceeds_1.5gb' ? ' (WAV > 1.5GB → Auto-FLAC)' : '';
+
+    try {
+        await logger.log(
+            `🎧 Hi-Res Audio: กำลังสกัดเสียง ${fmtUpper} (${meta.hiResBitDepth}-bit / ${rateKhz} kHz • ${meta.audioLabel})${fallbackNote}...`
+        );
+        const args = buildHiResAudioEncodeArgs(meta, rawFilePath, outPath);
+        await runFFmpeg(args, null, `Hi-Res Audio (${fmtUpper})`, meta.duration);
+
+        const stat = await fs.promises.stat(outPath);
+        const sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
+        await logger.log(`⬆️ Hi-Res Audio: กำลังอัปโหลด ${meta.hiResFileName} (${sizeMb} MB) ขึ้น OneDrive...`);
+        await uploadFileToOneDrive(driveId, streamFolderId, meta.hiResFileName, outPath);
+
+        const hiResInfo = {
+            format: meta.hiResFormat,
+            file: meta.hiResFileName,
+            bits: meta.hiResBitDepth,
+            rate: meta.hiResSampleRate,
+            channels: meta.audioChannels,
+            layout: meta.audioLayout,
+            bytes: stat.size,
+        };
+        await logger.log(
+            `✅ อัปโหลดเสียง Hi-Res Lossless สำเร็จ: ${meta.hiResFileName} (${meta.hiResBitDepth}-bit/${rateKhz}kHz • ${meta.audioLabel} • ${sizeMb} MB)`,
+            { level: 'success' }
+        );
+        return hiResInfo;
+    } catch (err) {
+        await logger.log(`⚠️ ข้ามการสกัดเสียง Hi-Res Lossless (${err.message}) — สตรีม AAC หลักยังทำงานปกติ`, {
+            level: 'warn',
+        });
+        return null;
+    } finally {
+        if (fs.existsSync(outPath)) {
+            try { fs.unlinkSync(outPath); } catch (_) { }
+        }
+    }
+}
+
 function parseProbeMeta(probeData) {
     const streams = probeData.streams || [];
     const vStream = streams.find((s) => s.codec_type === 'video') || streams[0] || {};
     const aStream = streams.find((s) => s.codec_type === 'audio') || null;
-    const audioProfile = resolveAudioProfile(aStream);
     const srcWidth = Number(vStream.width) || 1920;
     const srcHeight = Number(vStream.height) || 1080;
     const hasDimensions = Number(vStream.width) > 0 && Number(vStream.height) > 0;
     const duration = Math.round(parseFloat(probeData.format?.duration || vStream.duration || '0')) || 0;
+    const audioProfile = resolveAudioProfile(aStream, duration);
 
     let fps = 30;
     if (vStream.r_frame_rate) {
@@ -1213,10 +1352,16 @@ function buildMasterM3U8(qualities) {
     const sorted = [...qualities].sort((a, b) => a.bitrate - b.bitrate);
     const hasHdr = sorted.some((q) => q.is_hdr);
     const audioSample = sorted.find((q) => q.audio_channels != null) || null;
+    const hiResSample = sorted.find((q) => q.hires_audio && q.hires_audio.file)?.hires_audio || null;
     const lines = ['#EXTM3U', `#EXT-X-VERSION:${hasHdr ? 7 : 3}`];
     if (audioSample) {
         lines.push(
             `#EXT-X-TUBELOCK-AUDIO:CHANNELS=${audioSample.audio_channels},LAYOUT=${audioSample.audio_layout || 'stereo'}`
+        );
+    }
+    if (hiResSample) {
+        lines.push(
+            `#EXT-X-TUBELOCK-HIRES:FORMAT=${hiResSample.format || 'wav'},FILE=${hiResSample.file},BITS=${hiResSample.bits || 24},RATE=${hiResSample.rate || 48000},CHANNELS=${hiResSample.channels || 2},LAYOUT=${hiResSample.layout || 'stereo'},BYTES=${hiResSample.bytes || 0}`
         );
     }
     const hasAudioTrack = !audioSample || audioSample.audio_channels > 0;
@@ -1870,9 +2015,11 @@ async function runLaneFastSd({
         const readyNames = merged.map((q) => q.name).join(', ');
         await updateLaneProgress({
             lane: 'fast_sd',
-            lanePct: 100,
+            lanePct: meta.hiResEligible ? 96 : 100,
             status: 'READY',
-            stageDetail: `⚡ พร้อมรับชม (${readyNames}) • Lane 1 (SD) เสร็จสมบูรณ์`,
+            stageDetail: meta.hiResEligible
+                ? `⚡ พร้อมรับชม (${readyNames}) • กำลังสกัดเสียง Hi-Res Lossless (${meta.hiResFormat?.toUpperCase()})...`
+                : `⚡ พร้อมรับชม (${readyNames}) • Lane 1 (SD) เสร็จสมบูรณ์`,
             invalidateCache: true,
         });
         await logger.log(`✅ อัปโหลด 360p + 480p และซิงก์ master.m3u8 เรียบร้อย (พร้อมแล้ว: ${readyNames})`, {
@@ -1940,19 +2087,62 @@ async function runLaneFastSd({
         const readyNames = merged.map((q) => q.name).join(', ');
         await updateLaneProgress({
             lane: 'fast_sd',
-            lanePct: 100,
+            lanePct: meta.hiResEligible ? 96 : 100,
             status: 'READY',
-            stageDetail: `⚡ พร้อมรับชม (${readyNames}) • Lane 1 (SD) เสร็จสมบูรณ์`,
+            stageDetail: meta.hiResEligible
+                ? `⚡ พร้อมรับชม (${readyNames}) • กำลังสกัดเสียง Hi-Res Lossless (${meta.hiResFormat?.toUpperCase()})...`
+                : `⚡ พร้อมรับชม (${readyNames}) • Lane 1 (SD) เสร็จสมบูรณ์`,
             invalidateCache: true,
         });
         await logger.log(`✅ อัปโหลด 360p สำเร็จ (พร้อมแล้ว: ${readyNames})`, { level: 'success' });
-    } else {
+    } else if (!meta.hiResEligible) {
         await updateLaneProgress({
             lane: 'fast_sd',
             lanePct: 100,
             status: 'READY',
             stageDetail: `⚡ พร้อมรับชม (${readyAfter144Text}) • Lane 1 (SD) เสร็จสมบูรณ์`,
         });
+    }
+
+    // SMART HI-RES LOSSLESS AUDIO EXPORT (Runs after SD passes so 144p instant READY is never delayed!)
+    if (meta.hiResEligible) {
+        const hiResInfo = await exportAndUploadHiResAudio({
+            driveId,
+            streamFolderId,
+            hlsOutputDir,
+            rawFilePath,
+            meta,
+        });
+        if (hiResInfo) {
+            const mergedWithHiRes = await registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOutputDir, [
+                {
+                    name: '144p',
+                    width: 256,
+                    height: 144,
+                    bitrate: 200000,
+                    is_hdr: isHdr,
+                    hdr_type: hdrType,
+                    audio_channels: audioChannels,
+                    audio_layout: audioLayout,
+                    hires_audio: hiResInfo,
+                },
+            ]);
+            const readyNames = mergedWithHiRes.map((q) => q.name).join(', ');
+            await updateLaneProgress({
+                lane: 'fast_sd',
+                lanePct: 100,
+                status: 'READY',
+                stageDetail: `⚡ พร้อมรับชม (${readyNames}) + 🎧 Hi-Res ${hiResInfo.format.toUpperCase()} • Lane 1 เสร็จสมบูรณ์`,
+                invalidateCache: true,
+            });
+        } else {
+            await updateLaneProgress({
+                lane: 'fast_sd',
+                lanePct: 100,
+                status: 'READY',
+                stageDetail: `⚡ พร้อมรับชม • Lane 1 (SD) เสร็จสมบูรณ์`,
+            });
+        }
     }
 }
 
@@ -2341,7 +2531,12 @@ async function main() {
 
         const meta = parseProbeMeta(probeData);
         const hdrTag = meta.isHdr ? ` | 🌈 HDR (${meta.hdrType} • ${meta.pixFmt}) -> AV1 10-bit fMP4` : ` | SDR (${meta.pixFmt}) -> H.264`;
-        const audioTag = meta.hasAudio ? ` | 🔊 Audio: ${meta.audioLabel} (${meta.audioBitrateK}k AAC)` : ' | 🔇 No Audio';
+        const hiResTag = meta.hiResEligible
+            ? ` + 🎧 Hi-Res ${meta.hiResBitDepth}-bit/${(meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1)}kHz ${meta.hiResFormat.toUpperCase()}${meta.hiResFallbackReason ? ' (Auto-FLAC >1.5GB)' : ''}`
+            : '';
+        const audioTag = meta.hasAudio
+            ? ` | 🔊 Audio: ${meta.audioLabel} (${meta.srcAudioCodec} -> ${meta.audioBitrateK}k AAC${hiResTag})`
+            : ' | 🔇 No Audio';
         await logger.log(
             `📐 สเปกจาก ffprobe: ${meta.srcWidth}x${meta.srcHeight} (${meta.resolutionLabel}), ยาว ${formatDurationShort(meta.duration)}, ${meta.fps} fps, Source: ${meta.sourceCodec}, Bitrate: ${Math.round(meta.bitrate / 1000)} kbps${hdrTag}${audioTag}`
         );

@@ -11,11 +11,21 @@ updated: 23 พฤศจิกายน 2026
 
 ---
 
-## เวอร์ชัน 1.2.8 Patch v1 (Build 1.2.8.20261123 — 23 พฤศจิกายน 2026) — Multi-Channel Surround Audio (Mono–7.1) & Docs TOC Redesign
+## เวอร์ชัน 1.2.8 Patch v1 (Build 1.2.8.20261123 — 23 พฤศจิกายน 2026) — Hi-Res Lossless Audio (Full WAV / Auto-FLAC), Multi-Channel Surround (Mono–7.1) & Docs TOC Redesign
 
-### 1. รองรับเสียงหลายแชนเนลเต็มระบบ (1.0 Mono → 7.1 Surround)
+### 1. ระบบเสียง Hi-Res Lossless แท้ (Full PCM WAV 16/24-bit สูงสุด 192 kHz + Auto-FLAC Fallback)
+- **Smart Auto-Detect & Lossless Extraction (`scripts/transcode-worker.js`):**
+  - ขยาย `ffprobe` ให้ตรวจสอบ `codec_name`, `profile`, `sample_fmt`, `sample_rate`, `bits_per_sample` และ `bits_per_raw_sample` ของแทร็กเสียงต้นฉบับอัตโนมัติ
+  - **Smart Auto-Detect:** สกัดแทร็กเสียง Hi-Res Lossless เฉพาะเมื่อต้นฉบับเป็นเสียง Lossless / Hi-Res จริง (`FLAC`, `WAV/PCM`, `ALAC`, `TrueHD`, `MLP`, `DTS-HD MA`, `WavPack`, `APE`, `DSD` หรือ Sample Rate `> 48 kHz` / Bit-Depth `>= 24-bit`) โดยคง Sample Rate ต้นฉบับ (`44.1–192 kHz`) และ Bit-Depth (`16-bit / 24-bit`) แท้ไม่ทำ fake upsample และรันหลัง Pass SD ใน Lane 1 เพื่อไม่ให้หน่วงเวลาปลดล็อก `144p READY`
+  - **Full PCM WAV + 1.5 GB Auto-FLAC Fallback:** สกัดไฟล์ดิบไร้การบีบอัด **`audio_hires.wav`** (`pcm_s24le` / `pcm_s16le`, รองรับ 1.0 Mono → 7.1 Surround) และหากขนาดประมาณการของ WAV เกิน `1.5 GB` ระบบจะสลับเป็น **`audio_hires.flac`** (Bit-Perfect Lossless คุณภาพตรงกับ WAV 100% ทุกบิตแต่ไฟล์เล็กกว่าเกือบครึ่ง) ให้อัตโนมัติ พร้อมอัปเกรด `uploadFileToOneDrive()` เป็นการอ่านสตรีมจากดิสก์ทีละ `10 MB` ไม่กิน RAM
+  - ฝังแท็ก `#EXT-X-TUBELOCK-HIRES:FORMAT=...,FILE=...,BITS=...,RATE=...,CHANNELS=...,LAYOUT=...,BYTES=...` ลงใน `master.m3u8` และรวมชื่อไฟล์ Hi-Res เข้า Cold-Batch Fetch ของ `src/lib/videoSourceService.js` เพื่อพร้อมใช้งานทันทีโดยยิงตรงจาก OneDrive (รองรับ HTTP Byte-Range Seeking)
+- **Synced Hi-Res Player Engine & Audiophile UI (`playbackResolver.js`, `GlobalPlayerContext.jsx`, `VideoPlayer.jsx`, `PlayerSettingsModal.jsx`, `PlayerStatsModal.jsx`):**
+  - เพิ่มเอ็นจินเล่นไฟล์เสียง Hi-Res ผ่าน `<audio>` แบบซิงก์เวลาตรงเฟรมคู่กับ `<video>` (ปิดเสียงแทร็ก AAC ของ `<video>` อัตโนมัติกันเสียงซ้อน, ซิงก์ Play/Pause/Seek/Speed/Volume/Mute + Drift Watchdog `<= 120ms`, จดจำค่าเลือกผ่าน `localStorage` และสลับกลับเป็น AAC อัตโนมัติหากเน็ตไม่พอหรือโหลดไม่สำเร็จ)
+  - เพิ่มเมนู **`คุณภาพเสียง`** พร้อมป้ายทอง **`Hi-Res WAV` / `Hi-Res FLAC`** ในเมนูตั้งค่า (เฟือง) ทั้ง Desktop และ Mobile ให้สลับระหว่าง **Hi-Res Lossless** กับ **มาตรฐาน (AAC)** ได้ทันที
+  - อัปเกรดแถว **`Audio`** ใน Stats for Nerds ให้ไฮไลต์สีทองพร้อมแสดงสเปกจริง (เช่น `PCM WAV 24-bit/96kHz • 5.1 Surround (Lossless)`) และอ่านค่าระดับเสียงจริงจากแทร็ก Hi-Res
+
+### 2. รองรับเสียงหลายแชนเนลเต็มระบบ (1.0 Mono → 7.1 Surround) & แก้บั๊ก DB Enum
 - **Auto Multi-Channel Uniform Audio (`scripts/transcode-worker.js`):**
-  - อัปเกรด `ffprobe` ให้วิเคราะห์แทร็กเสียงต้นฉบับอัตโนมัติ (ทั้งจำนวนแชนเนลและ `channel_layout` เช่น `mono`, `stereo`, `5.1(side)`, `7.1(wide)` รวมถึงไฟล์ไม่มีเสียง)
   - เข้ารหัสเสียง AAC-LC 48 kHz แบบ Uniform Audio เท่ากันทุกความละเอียด (`144p`–`2160p`) เพื่อไม่ให้ MSE สะดุดเวลาสลับความชัด:
     - **1.0 Mono:** `aformat=channel_layouts=mono` (`-ac 1`, `128k`)
     - **2.0 Stereo:** `aformat=channel_layouts=stereo` (`-ac 2`, `192k`)
@@ -23,10 +33,10 @@ updated: 23 พฤศจิกายน 2026
     - **7.1 Surround (7–8+ch):** `aformat=channel_layouts=7.1` (`-ac 8`, `512k`)
     - **Silent (ไม่มีเสียง):** ส่ง `-an` ข้ามแทร็กเสียงอัตโนมัติ
   - บันทึก `audio_channels` ลงตาราง `videos` / `video_versions` และฝังแท็ก `#EXT-X-TUBELOCK-AUDIO` ใน `master.m3u8`
-- **แสดงข้อมูลเสียงใน Stats for Nerds (`playbackResolver.js`, `GlobalPlayerContext.jsx`, `VideoPlayer.jsx`, `PlayerStatsModal.jsx`):**
-  - เพิ่มแถว **`Audio`** แสดงระบบเสียงจริงของสตรีม (เช่น `AAC • 5.1 Surround (6ch)`, `AAC • 7.1 Surround (8ch)`, `AAC • Stereo (2.0)`, `AAC • Mono (1.0)`) พร้อมไฮไลต์เมื่อเป็นระบบเสียง Surround
+- **แก้ไข `video_status` ENUM Cast ใน Worker (`scripts/transcode-worker.js`):**
+  - แก้การอัปเดตคอลัมน์ `videos.status` ใน `updateLaneProgress` และ `setFinalDbStatus` ให้ cast เป็น `video_status` ENUM อย่างถูกต้อง (แก้ error `column "status" is of type video_status but expression is of type text`), เพิ่ม `hls_folder_path` และเพิ่ม guard ป้องกัน progress ping ซ้อนกัน
 
-### 2. ปรับโฉมแถบสารบัญด้านขวาของหน้าเอกสาร (Docs TOC Redesign)
+### 3. ปรับโฉมแถบสารบัญด้านขวาของหน้าเอกสาร (Docs TOC Redesign)
 - **Release Timeline & Active Scrollspy (`DocsTableOfContents.jsx`, `MarkdownDocViewer.jsx`, `globals.css`):**
   - แยกแถบ `ON THIS PAGE` เป็นคอมโพเนนต์แบบโต้ตอบได้ พร้อม Scrollspy เส้นส้ม `#FF7A00` ไฮไลต์หัวข้อที่กำลังอ่าน, ปุ่ม **กลับขึ้นด้านบน**, ล้างเครื่องหมาย backtick ดิบออกจากสารบัญ และแปลงหัวข้อ Patch Notes เป็นการ์ดไทม์ไลน์ 2 แถว (`เลขเวอร์ชัน + วันที่แบบย่อ + สรุป 1 บรรทัด`)
   - เพิ่มคลาส `.no-scrollbar` และ `.docs-toc-scroll` แบบเส้นบาง `3px` เพื่อตัดปัญหาแถบ Scrollbar สีส้มขนาดใหญ่ที่ขอบขวา

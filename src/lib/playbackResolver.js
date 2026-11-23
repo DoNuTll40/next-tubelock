@@ -234,6 +234,7 @@ export async function resolveClientPlaybackSource(sourceData) {
     // ⚡ Non-blocking Storyboard: Download & parse VTT thumbnails in the background so video begins buffering immediately
     const storyboardPromise = resolveStoryboard(items);
     const segmentUrlMap = {};
+    const hiResFileUrlMap = {};
     const subPlaylistItems = {};
     let masterPlaylistItem = null;
     const createdBlobUrls = [];
@@ -247,6 +248,14 @@ export async function resolveClientPlaybackSource(sourceData) {
         if (item.content || downloadUrl) masterPlaylistItem = item;
       } else if (lowerName.endsWith('.m3u8')) {
         if (item.content || downloadUrl) subPlaylistItems[item.name] = item;
+      } else if (
+        (lowerName.endsWith('.wav') || lowerName.endsWith('.flac')) &&
+        downloadUrl
+      ) {
+        const cleanName = item.name.replace(/^\.?\//, '');
+        hiResFileUrlMap[item.name] = downloadUrl;
+        hiResFileUrlMap[cleanName] = downloadUrl;
+        hiResFileUrlMap[cleanName.toLowerCase()] = downloadUrl;
       } else if (
         (lowerName.endsWith('.ts') || lowerName.endsWith('.m4s') || lowerName.endsWith('.mp4')) &&
         downloadUrl
@@ -322,6 +331,53 @@ export async function resolveClientPlaybackSource(sourceData) {
         audioLayout = audioMetaMatch[2] ? audioMetaMatch[2].trim().toLowerCase() : null;
       }
 
+      let hiResAudio = null;
+      const hiResLineMatch = masterText.match(/#EXT-X-TUBELOCK-HIRES:([^\r\n]+)/i);
+      if (hiResLineMatch) {
+        const attrs = {};
+        for (const pair of hiResLineMatch[1].split(',')) {
+          const eqIdx = pair.indexOf('=');
+          if (eqIdx > 0) {
+            attrs[pair.slice(0, eqIdx).trim().toUpperCase()] = pair.slice(eqIdx + 1).trim();
+          }
+        }
+        const hrFile = (attrs.FILE || '').replace(/^\.?\//, '');
+        const hrFormat = (attrs.FORMAT || (hrFile.toLowerCase().endsWith('.flac') ? 'flac' : 'wav')).toLowerCase();
+        const hrUrl =
+          (hrFile && (hiResFileUrlMap[hrFile] || hiResFileUrlMap[hrFile.toLowerCase()])) ||
+          (hrFile && fallbackBaseUrl ? `${fallbackBaseUrl}/${encodeURIComponent(hrFile)}` : null);
+        if (hrFile && hrUrl) {
+          hiResAudio = {
+            url: hrUrl,
+            file: hrFile,
+            format: hrFormat === 'flac' ? 'flac' : 'wav',
+            bits: parseInt(attrs.BITS, 10) || 24,
+            sampleRate: parseInt(attrs.RATE, 10) || 48000,
+            channels: parseInt(attrs.CHANNELS, 10) || audioChannels || 2,
+            layout: (attrs.LAYOUT || audioLayout || 'stereo').toLowerCase(),
+            bytes: parseInt(attrs.BYTES, 10) || 0,
+          };
+        }
+      } else {
+        const fallbackFile = hiResFileUrlMap['audio_hires.wav']
+          ? 'audio_hires.wav'
+          : hiResFileUrlMap['audio_hires.flac']
+            ? 'audio_hires.flac'
+            : null;
+        if (fallbackFile) {
+          hiResAudio = {
+            url: hiResFileUrlMap[fallbackFile],
+            file: fallbackFile,
+            format: fallbackFile.endsWith('.flac') ? 'flac' : 'wav',
+            bits: 24,
+            sampleRate: 48000,
+            channels: audioChannels || 2,
+            layout: audioLayout || 'stereo',
+            bytes: 0,
+          };
+        }
+      }
+
       const lines = masterText.split('\n');
       const rewrittenLines = [];
       let pendingStreamInf = null;
@@ -369,6 +425,7 @@ export async function resolveClientPlaybackSource(sourceData) {
           aspectRatio: detectedAspect,
           audioChannels,
           audioLayout,
+          hiResAudio,
           segmentUrlMap,
           partial: isPartial,
           streamFolder,
@@ -388,6 +445,7 @@ export async function resolveClientPlaybackSource(sourceData) {
         aspectRatio: detectedAspect,
         audioChannels,
         audioLayout,
+        hiResAudio,
         segmentUrlMap,
         partial: isPartial,
         streamFolder,

@@ -58,6 +58,7 @@ export default function VideoPlayer({
   codec = 'h264',
   audioChannels = null,
   audioLayout = null,
+  hiResAudio = null,
   videoId,
   videoSlug,
   videoCategory,
@@ -326,6 +327,29 @@ export default function VideoPlayer({
   const isUserMutedRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+
+  // Hi-Res Lossless Audio Engine (Synced Uncompressed Full WAV / Auto-FLAC <audio> track)
+  const hiResAudioRef = useRef(null);
+  const hiResFailedUrlRef = useRef(null);
+  const [preferHiResAudio, setPreferHiResAudio] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return localStorage.getItem('tubelock_prefer_hires') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [hiResStatus, setHiResStatus] = useState('idle');
+  const hasHiResAudio = Boolean(hiResAudio?.url);
+  const isHiResActive = Boolean(
+    hasHiResAudio &&
+    preferHiResAudio &&
+    hiResFailedUrlRef.current !== hiResAudio?.url
+  );
+  const isHiResActiveRef = useRef(isHiResActive);
+  useEffect(() => {
+    isHiResActiveRef.current = isHiResActive;
+  }, [isHiResActive]);
 
   // Responsive device view & popup placement
   const [isMobileView, setIsMobileView] = useState(false);
@@ -871,9 +895,17 @@ export default function VideoPlayer({
       volumeRef.current = defaultVolume;
       setVolume(defaultVolume);
       if (!isTransitioningStreamRef.current && isActiveRef.current && !isSwitchingVideoRef.current) {
-        video.current.volume = isUserMutedRef.current ? 0 : defaultVolume;
+        const targetVol = isUserMutedRef.current ? 0 : defaultVolume;
+        if (isHiResActiveRef.current && hiResAudioRef.current) {
+          video.current.muted = true;
+          hiResAudioRef.current.volume = targetVol;
+          hiResAudioRef.current.muted = isUserMutedRef.current;
+        } else {
+          video.current.volume = targetVol;
+        }
       }
       video.current.playbackRate = defaultSpeed;
+      if (hiResAudioRef.current) hiResAudioRef.current.playbackRate = defaultSpeed;
       setPlaybackRate(defaultSpeed);
     }
   }, [defaultVolume, defaultSpeed, video]);
@@ -1083,8 +1115,14 @@ export default function VideoPlayer({
       isTransitioningStreamRef.current = false;
     }
     try {
-      v.muted = targetMuted;
-      v.volume = targetVol;
+      if (isHiResActiveRef.current && hiResAudioRef.current) {
+        v.muted = true;
+        hiResAudioRef.current.muted = targetMuted;
+        hiResAudioRef.current.volume = targetVol;
+      } else {
+        v.muted = targetMuted;
+        v.volume = targetVol;
+      }
     } catch (_) { }
     setIsMuted(targetMuted);
   }, [video, defaultVolume]);
@@ -1546,7 +1584,12 @@ export default function VideoPlayer({
     setVolume(val);
     isUserMutedRef.current = val === 0;
     isTransitioningStreamRef.current = false;
-    if (video.current) {
+    if (isHiResActiveRef.current && hiResAudioRef.current) {
+      if (video.current) video.current.muted = true;
+      hiResAudioRef.current.volume = val;
+      hiResAudioRef.current.muted = val === 0;
+      setIsMuted(val === 0);
+    } else if (video.current) {
       video.current.volume = val;
       video.current.muted = val === 0;
       setIsMuted(val === 0);
@@ -1564,12 +1607,211 @@ export default function VideoPlayer({
       volumeRef.current = 0.5;
       setVolume(0.5);
     }
-    video.current.volume = targetVol;
-    video.current.muted = nextMuted;
+    if (isHiResActiveRef.current && hiResAudioRef.current) {
+      video.current.muted = true;
+      hiResAudioRef.current.volume = targetVol;
+      hiResAudioRef.current.muted = nextMuted;
+    } else {
+      video.current.volume = targetVol;
+      video.current.muted = nextMuted;
+    }
     setIsMuted(nextMuted);
     showToast(nextMuted ? 'ปิดเสียง' : `ระดับเสียง: ${Math.round(targetVol * 100)}%`);
     resetControlsTimer();
   };
+
+  const handleSelectAudioMode = useCallback((mode) => {
+    const nextPrefer = mode === 'hires';
+    if (nextPrefer) {
+      hiResFailedUrlRef.current = null;
+    }
+    setPreferHiResAudio(nextPrefer);
+    try {
+      localStorage.setItem('tubelock_prefer_hires', nextPrefer ? '1' : '0');
+    } catch (_) { }
+    if (nextPrefer && hiResAudio) {
+      const rateKhz = (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1);
+      const fmtLabel = hiResAudio.format === 'flac' ? 'FLAC' : 'PCM WAV';
+      showToast(`🎧 เปิดเสียง Hi-Res Lossless (${hiResAudio.bits}-bit / ${rateKhz} kHz ${fmtLabel})`);
+    } else {
+      showToast('สลับเป็นเสียงมาตรฐาน (AAC)');
+    }
+    resetControlsTimer();
+  }, [hiResAudio, showToast, resetControlsTimer]);
+
+  // Synced Hi-Res Full WAV / FLAC <audio> Engine (keeps <video> muted & drift-locked <= 120ms)
+  useEffect(() => {
+    const v = video.current;
+    const a = hiResAudioRef.current;
+    if (!v || !a) return;
+
+    const hiResUrl = hiResAudio?.url || '';
+    if (!isHiResActive || !hiResUrl || isSwitchingVideo) {
+      try {
+        a.pause();
+        if (a.getAttribute('src')) {
+          a.removeAttribute('src');
+          a.load();
+        }
+      } catch (_) { }
+      setHiResStatus('idle');
+      if (!isSwitchingVideo && !isTransitioningStreamRef.current) {
+        const targetMuted = isUserMutedRef.current;
+        const targetVol = targetMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : (defaultVolume || 0.8));
+        try {
+          v.muted = targetMuted;
+          v.volume = targetVol;
+        } catch (_) { }
+      }
+      return;
+    }
+
+    let cancelled = false;
+    setHiResStatus('loading');
+
+    const applyAudioLevels = () => {
+      const targetMuted = isUserMutedRef.current;
+      const targetVol = targetMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : (defaultVolume || 0.8));
+      try {
+        v.muted = true;
+        a.muted = targetMuted;
+        a.volume = targetVol;
+        a.playbackRate = v.playbackRate || 1;
+        a.loop = Boolean(v.loop);
+      } catch (_) { }
+    };
+
+    const syncPlayState = (forceSeek = false) => {
+      if (cancelled) return;
+      applyAudioLevels();
+      const targetTime = Number.isFinite(v.currentTime) ? v.currentTime : 0;
+      if (forceSeek || Math.abs((a.currentTime || 0) - targetTime) > 0.12) {
+        try {
+          if (a.readyState >= 1) {
+            a.currentTime = targetTime;
+          }
+        } catch (_) { }
+      }
+      if (!v.paused && !v.ended && isActiveRef.current) {
+        if (a.paused) {
+          a.play().catch((err) => {
+            if (err?.name === 'NotAllowedError') {
+              isUserMutedRef.current = true;
+              a.muted = true;
+              setIsMuted(true);
+              a.play().catch(() => { });
+            }
+          });
+        }
+      } else if (!a.paused) {
+        a.pause();
+      }
+    };
+
+    if (a.src !== hiResUrl) {
+      a.src = hiResUrl;
+      a.load();
+    }
+    applyAudioLevels();
+
+    const onVideoPlay = () => syncPlayState(true);
+    const onVideoPlaying = () => syncPlayState(false);
+    const onVideoPause = () => { try { a.pause(); } catch (_) { } };
+    const onVideoWaiting = () => { try { a.pause(); } catch (_) { } };
+    const onVideoSeek = () => {
+      try {
+        if (a.readyState >= 1 && Number.isFinite(v.currentTime)) {
+          a.currentTime = v.currentTime;
+        }
+      } catch (_) { }
+    };
+    const onVideoRateChange = () => {
+      try { a.playbackRate = v.playbackRate || 1; } catch (_) { }
+    };
+
+    const onAudioLoadedMetadata = () => {
+      if (cancelled) return;
+      syncPlayState(true);
+    };
+    const onAudioCanPlay = () => {
+      if (cancelled) return;
+      setHiResStatus('ready');
+      syncPlayState(false);
+    };
+    const onAudioWaiting = () => {
+      if (!cancelled) setHiResStatus('loading');
+    };
+    const onAudioPlaying = () => {
+      if (!cancelled) setHiResStatus('ready');
+    };
+    const onAudioError = () => {
+      if (cancelled) return;
+      hiResFailedUrlRef.current = hiResUrl;
+      setHiResStatus('error');
+      setPreferHiResAudio(false);
+      try {
+        a.pause();
+        const targetMuted = isUserMutedRef.current;
+        const targetVol = targetMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : (defaultVolume || 0.8));
+        v.muted = targetMuted;
+        v.volume = targetVol;
+      } catch (_) { }
+      showToast('ไม่สามารถโหลดเสียง Hi-Res ได้ สลับกลับเป็น AAC อัตโนมัติ');
+    };
+
+    v.addEventListener('play', onVideoPlay);
+    v.addEventListener('playing', onVideoPlaying);
+    v.addEventListener('pause', onVideoPause);
+    v.addEventListener('waiting', onVideoWaiting);
+    v.addEventListener('ended', onVideoPause);
+    v.addEventListener('seeking', onVideoSeek);
+    v.addEventListener('seeked', onVideoSeek);
+    v.addEventListener('ratechange', onVideoRateChange);
+
+    a.addEventListener('loadedmetadata', onAudioLoadedMetadata);
+    a.addEventListener('canplay', onAudioCanPlay);
+    a.addEventListener('waiting', onAudioWaiting);
+    a.addEventListener('playing', onAudioPlaying);
+    a.addEventListener('error', onAudioError);
+
+    const driftInterval = setInterval(() => {
+      if (cancelled || v.paused || v.ended || a.readyState < 2) return;
+      if (!v.muted) v.muted = true;
+      const drift = (a.currentTime || 0) - (v.currentTime || 0);
+      if (Math.abs(drift) > 0.12) {
+        try {
+          a.currentTime = v.currentTime;
+        } catch (_) { }
+      }
+      if (a.paused && isActiveRef.current) {
+        a.play().catch(() => { });
+      }
+    }, 250);
+
+    if (a.readyState >= 2) {
+      setHiResStatus('ready');
+      syncPlayState(true);
+    }
+
+    return () => {
+      cancelled = true;
+      clearInterval(driftInterval);
+      v.removeEventListener('play', onVideoPlay);
+      v.removeEventListener('playing', onVideoPlaying);
+      v.removeEventListener('pause', onVideoPause);
+      v.removeEventListener('waiting', onVideoWaiting);
+      v.removeEventListener('ended', onVideoPause);
+      v.removeEventListener('seeking', onVideoSeek);
+      v.removeEventListener('seeked', onVideoSeek);
+      v.removeEventListener('ratechange', onVideoRateChange);
+      a.removeEventListener('loadedmetadata', onAudioLoadedMetadata);
+      a.removeEventListener('canplay', onAudioCanPlay);
+      a.removeEventListener('waiting', onAudioWaiting);
+      a.removeEventListener('playing', onAudioPlaying);
+      a.removeEventListener('error', onAudioError);
+      try { a.pause(); } catch (_) { }
+    };
+  }, [isHiResActive, hiResAudio?.url, isSwitchingVideo, defaultVolume, video, showToast]);
 
   // 1. วาง updateStoryboardThumbnail ไว้ก่อน (ข้างบน)
   const loadScrubSheet = useCallback(function loadSheet(url, priority = 'high', retry = true) {
@@ -2358,14 +2600,34 @@ export default function VideoPlayer({
       } else if (code === 'ArrowUp' || e.key === 'ArrowUp') {
         e.preventDefault();
         const nextVol = Math.min(volume + 0.05, 1);
+        volumeRef.current = nextVol;
         setVolume(nextVol);
-        if (video.current) video.current.volume = nextVol;
+        isUserMutedRef.current = false;
+        setIsMuted(false);
+        if (isHiResActiveRef.current && hiResAudioRef.current) {
+          if (video.current) video.current.muted = true;
+          hiResAudioRef.current.muted = false;
+          hiResAudioRef.current.volume = nextVol;
+        } else if (video.current) {
+          video.current.muted = false;
+          video.current.volume = nextVol;
+        }
         showToast(`ระดับเสียง: ${Math.round(nextVol * 100)}%`);
       } else if (code === 'ArrowDown' || e.key === 'ArrowDown') {
         e.preventDefault();
         const nextVol = Math.max(volume - 0.05, 0);
+        volumeRef.current = nextVol;
         setVolume(nextVol);
-        if (video.current) video.current.volume = nextVol;
+        isUserMutedRef.current = nextVol === 0;
+        setIsMuted(nextVol === 0);
+        if (isHiResActiveRef.current && hiResAudioRef.current) {
+          if (video.current) video.current.muted = true;
+          hiResAudioRef.current.muted = nextVol === 0;
+          hiResAudioRef.current.volume = nextVol;
+        } else if (video.current) {
+          video.current.muted = nextVol === 0;
+          video.current.volume = nextVol;
+        }
         showToast(`ระดับเสียง: ${Math.round(nextVol * 100)}%`);
       } else if (code === 'Home') {
         e.preventDefault();
@@ -2639,6 +2901,15 @@ export default function VideoPlayer({
         poster={poster}
         enabled={showInnerAmbientBackdrop}
         variant="backdrop"
+      />
+
+      {/* Hidden Synced Hi-Res Lossless Audio Element (Full PCM WAV / Auto-FLAC) */}
+      <audio
+        ref={hiResAudioRef}
+        preload="none"
+        crossOrigin="anonymous"
+        className="hidden"
+        aria-hidden="true"
       />
 
       {/* High-Performance Native Video Element */}
@@ -2999,6 +3270,9 @@ export default function VideoPlayer({
           codec={codec}
           audioChannels={audioChannels}
           audioLayout={audioLayout}
+          hiResAudio={hiResAudio}
+          isHiResActive={isHiResActive}
+          hiResAudioRef={hiResAudioRef}
           videoId={videoId}
           videoSlug={videoSlug}
           videoCategory={videoCategory}
@@ -3059,6 +3333,12 @@ export default function VideoPlayer({
           activeVersion={activeVersion}
           onSelectVersion={onSelectVersion}
           isSwitchingVersion={isSwitchingVersion}
+          hiResAudio={hiResAudio}
+          isHiResActive={isHiResActive}
+          hiResStatus={hiResStatus}
+          onSelectAudioMode={handleSelectAudioMode}
+          audioChannels={audioChannels}
+          audioLayout={audioLayout}
         />
       )}
 

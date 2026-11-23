@@ -1109,12 +1109,16 @@ export function GlobalPlayerProvider({ children }) {
           setDetectedRatio(resolved.aspectRatio);
         }
         setDetectedAudio(
-          resolved.audioChannels != null || resolved.audioLayout
-            ? { channels: resolved.audioChannels, layout: resolved.audioLayout }
+          resolved.audioChannels != null || resolved.audioLayout || resolved.hiResAudio
+            ? {
+                channels: resolved.audioChannels ?? null,
+                layout: resolved.audioLayout ?? null,
+                hiRes: resolved.hiResAudio ?? null,
+              }
             : null
         );
 
-        // Two-Phase Cold-Batch Hydration (~2.2s later upgrade _002+.ts to direct CF Worker URLs)
+        // Two-Phase Cold-Batch Hydration (~2.2s later upgrade _002+.ts to direct CF Worker URLs & direct Hi-Res URL)
         if (resolved.partial) {
           hydrationTimer = setTimeout(() => {
             if (isStale()) return;
@@ -1127,8 +1131,16 @@ export function GlobalPlayerProvider({ children }) {
               .then((fullSource) => {
                 if (isStale() || !Array.isArray(fullSource?.items)) return;
                 const map = partialSegmentMapRef.current || {};
+                let hydratedHiResItem = null;
                 for (const item of fullSource.items) {
                   const lowerName = item?.name ? item.name.toLowerCase() : '';
+                  if (
+                    item?.name &&
+                    item.downloadUrl &&
+                    (lowerName === 'audio_hires.wav' || lowerName === 'audio_hires.flac')
+                  ) {
+                    hydratedHiResItem = item;
+                  }
                   if (
                     item?.name &&
                     item.downloadUrl &&
@@ -1145,6 +1157,28 @@ export function GlobalPlayerProvider({ children }) {
                   }
                 }
                 partialSegmentMapRef.current = map;
+                if (hydratedHiResItem) {
+                  setDetectedAudio((prev) => {
+                    const base = prev || { channels: null, layout: null, hiRes: null };
+                    if (base.hiRes) {
+                      return { ...base, hiRes: { ...base.hiRes, url: hydratedHiResItem.downloadUrl } };
+                    }
+                    const file = hydratedHiResItem.name.replace(/^\.?\//, '');
+                    return {
+                      ...base,
+                      hiRes: {
+                        url: hydratedHiResItem.downloadUrl,
+                        file,
+                        format: file.toLowerCase().endsWith('.flac') ? 'flac' : 'wav',
+                        bits: 24,
+                        sampleRate: 48000,
+                        channels: base.channels || 2,
+                        layout: base.layout || 'stereo',
+                        bytes: 0,
+                      },
+                    };
+                  });
+                }
                 if (!needsRestrictedStoryboard) {
                   resolveStoryboard(fullSource.items)
                     .then((sb) => {
@@ -1339,6 +1373,7 @@ export function GlobalPlayerProvider({ children }) {
                 codec={activeVersion?.codec || video?.codec}
                 audioChannels={detectedAudio?.channels ?? activeVersion?.audio_channels ?? video?.audio_channels ?? null}
                 audioLayout={detectedAudio?.layout ?? null}
+                hiResAudio={detectedAudio?.hiRes ?? null}
                 videoId={video?.id}
                 videoSlug={videoSlugValue}
                 videoCategory={video?.category}

@@ -317,6 +317,16 @@ function extractInitialSegmentNames(m3u8Map, maxTotal = 18) {
 
   const picked = [];
   const seen = new Set();
+  // Include optional Hi-Res Lossless audio file (audio_hires.wav / audio_hires.flac) if declared in master.m3u8
+  const masterContent = m3u8Map['master.m3u8'] || m3u8Map['MASTER.M3U8'] || '';
+  if (typeof masterContent === 'string' && masterContent.includes('#EXT-X-TUBELOCK-HIRES:')) {
+    const hrFileMatch = masterContent.match(/#EXT-X-TUBELOCK-HIRES:[^\n]*FILE=([^,\s]+)/i);
+    const hrFile = hrFileMatch?.[1]?.trim().replace(/^\.?\//, '');
+    if (hrFile) {
+      seen.add(hrFile);
+      picked.push(hrFile);
+    }
+  }
   for (let pass = 0; pass < 4 && picked.length < maxTotal; pass++) {
     for (const segs of perPlaylistSegments) {
       if (picked.length >= maxTotal) break;

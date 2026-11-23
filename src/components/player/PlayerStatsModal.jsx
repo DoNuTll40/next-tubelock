@@ -17,6 +17,9 @@ export default function PlayerStatsModal({
   codec = 'h264',
   audioChannels = null,
   audioLayout = null,
+  hiResAudio = null,
+  isHiResActive = false,
+  hiResAudioRef = null,
   videoId = '',
   videoSlug = '',
   videoCategory = '',
@@ -260,7 +263,8 @@ export default function PlayerStatsModal({
         streamBitrate = h >= 2160 ? 18000 : h >= 1440 ? 10000 : h >= 1080 ? 4500 : h >= 720 ? 2500 : 1200;
       }
 
-      const volPct = Math.round((v.muted ? 0 : v.volume) * 100);
+      const activeAudioEl = isHiResActive && hiResAudioRef?.current ? hiResAudioRef.current : v;
+      const volPct = Math.round((activeAudioEl.muted ? 0 : activeAudioEl.volume) * 100);
 
       setStats((prev) => ({
         ...prev,
@@ -286,7 +290,7 @@ export default function PlayerStatsModal({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [showStats, video, hlsRef, containerRef, src, codec, fps]);
+  }, [showStats, video, hlsRef, containerRef, src, codec, fps, isHiResActive, hiResAudioRef]);
 
   const displayVideoId = useMemo(() => {
     if (videoSlug && videoSlug !== 'undefined' && videoSlug !== 'null') return videoSlug;
@@ -301,22 +305,38 @@ export default function PlayerStatsModal({
   }, [videoId, videoSlug, videoCategory]);
 
   const audioDisplay = useMemo(() => {
-    const ch = audioChannels != null ? Number(audioChannels) : null;
-    const layout = String(audioLayout || '').toLowerCase();
+    const ch = (isHiResActive ? hiResAudio?.channels : null) ?? (audioChannels != null ? Number(audioChannels) : null);
+    const layout = String((isHiResActive ? hiResAudio?.layout : null) || audioLayout || '').toLowerCase();
+    const channelLabel =
+      ch === 0 || layout === 'none'
+        ? 'ไม่มีเสียง (Silent)'
+        : ch >= 7 || layout.includes('7.1')
+        ? '7.1 Surround (8ch)'
+        : (ch >= 3 && ch <= 6) || layout.includes('5.1')
+        ? '5.1 Surround (6ch)'
+        : ch === 1 || layout === 'mono'
+        ? 'Mono (1.0)'
+        : 'Stereo (2.0)';
+    const isSurround = ch >= 3 || layout.includes('5.1') || layout.includes('7.1');
+
+    if (isHiResActive && hiResAudio) {
+      const rateKhz = hiResAudio.sampleRate
+        ? (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1)
+        : '48';
+      const fmt = hiResAudio.format === 'flac' ? 'FLAC' : 'PCM WAV';
+      return {
+        text: `${fmt} ${hiResAudio.bits || 24}-bit/${rateKhz}kHz • ${channelLabel} (Lossless)`,
+        isSurround,
+        isHiRes: true,
+      };
+    }
+
     if (ch === 0 || layout === 'none') {
-      return { text: 'ไม่มีเสียง (Silent)', isSurround: false };
+      return { text: channelLabel, isSurround: false, isHiRes: false };
     }
-    if (ch >= 7 || layout.includes('7.1')) {
-      return { text: 'AAC • 7.1 Surround (8ch)', isSurround: true };
-    }
-    if ((ch >= 3 && ch <= 6) || layout.includes('5.1')) {
-      return { text: 'AAC • 5.1 Surround (6ch)', isSurround: true };
-    }
-    if (ch === 1 || layout === 'mono') {
-      return { text: 'AAC • Mono (1.0)', isSurround: false };
-    }
-    return { text: 'AAC • Stereo (2.0)', isSurround: false };
-  }, [audioChannels, audioLayout]);
+    const suffix = hiResAudio?.url ? ` • [Hi-Res ${hiResAudio.format === 'flac' ? 'FLAC' : 'WAV'} พร้อมใช้]` : '';
+    return { text: `AAC • ${channelLabel}${suffix}`, isSurround, isHiRes: false };
+  }, [audioChannels, audioLayout, hiResAudio, isHiResActive]);
 
   if (!showStats) return null;
 
@@ -442,7 +462,15 @@ export default function PlayerStatsModal({
         {/* Audio Format & Channels */}
         <div className="flex justify-between items-center py-0.5 border-b border-white/5">
           <span className="text-zinc-400">Audio</span>
-          <span className={`font-mono ${audioDisplay.isSurround ? 'text-sky-300 font-semibold' : 'text-zinc-300'}`}>
+          <span
+            className={`font-mono text-right ml-2 ${
+              audioDisplay.isHiRes
+                ? 'text-amber-300 font-semibold'
+                : audioDisplay.isSurround
+                ? 'text-sky-300 font-semibold'
+                : 'text-zinc-300'
+            }`}
+          >
             {audioDisplay.text}
           </span>
         </div>
