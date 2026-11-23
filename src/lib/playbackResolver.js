@@ -2,6 +2,31 @@
  * Playback Resolver for OneDrive Streams (MP4 and HLS with nested ABR Blob URLs)
  */
 
+function resolveSegmentUrl(rawUri, segmentUrlMap, fallbackBaseUrl = '') {
+  const trimmed = String(rawUri || '').trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('blob:')) return trimmed;
+
+  const cleanRel = trimmed.replace(/^\.?\//, '');
+  const baseName = cleanRel.includes('/') ? cleanRel.slice(cleanRel.lastIndexOf('/') + 1) : cleanRel;
+  const cleanBase = cleanRel.replace(/\.(ts|m4s)$/i, '');
+  const realSegmentUrl =
+    segmentUrlMap[trimmed] ||
+    segmentUrlMap[cleanRel] ||
+    segmentUrlMap[baseName] ||
+    segmentUrlMap[cleanRel.toLowerCase()] ||
+    segmentUrlMap[baseName.toLowerCase()] ||
+    segmentUrlMap[`${cleanBase}.ts`] ||
+    segmentUrlMap[`${cleanBase}.m4s`] ||
+    segmentUrlMap[cleanBase];
+  if (realSegmentUrl) return realSegmentUrl;
+  if (fallbackBaseUrl) {
+    const encodedRel = cleanRel.split('/').map(encodeURIComponent).join('/');
+    return `${fallbackBaseUrl}/${encodedRel}`;
+  }
+  return null;
+}
+
 async function rewriteSubPlaylistToBlobUrl(
   subPlaylistUrl,
   segmentUrlMap,
@@ -19,21 +44,16 @@ async function rewriteSubPlaylistToBlobUrl(
     .split('\n')
     .map((line) => {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return line;
-
-      const cleanRel = trimmed.replace(/^\.?\//, '');
-      const cleanBase = cleanRel.replace(/\.ts$/i, '');
-      const realSegmentUrl =
-        segmentUrlMap[trimmed] ||
-        segmentUrlMap[cleanRel] ||
-        segmentUrlMap[`${cleanBase}.ts`] ||
-        segmentUrlMap[cleanBase];
-      if (realSegmentUrl) return realSegmentUrl;
-      if (fallbackBaseUrl) {
-        const encodedRel = cleanRel.split('/').map(encodeURIComponent).join('/');
-        return `${fallbackBaseUrl}/${encodedRel}`;
+      if (!trimmed) return line;
+      if (trimmed.startsWith('#EXT-X-MAP:')) {
+        return line.replace(/URI="([^"]+)"/i, (full, uriVal) => {
+          const mapped = resolveSegmentUrl(uriVal, segmentUrlMap, fallbackBaseUrl);
+          return mapped ? `URI="${mapped}"` : full;
+        });
       }
-      return line;
+      if (trimmed.startsWith('#')) return line;
+
+      return resolveSegmentUrl(trimmed, segmentUrlMap, fallbackBaseUrl) || line;
     })
     .join('\n');
 
@@ -227,13 +247,21 @@ export async function resolveClientPlaybackSource(sourceData) {
         if (item.content || downloadUrl) masterPlaylistItem = item;
       } else if (lowerName.endsWith('.m3u8')) {
         if (item.content || downloadUrl) subPlaylistItems[item.name] = item;
-      } else if (lowerName.endsWith('.ts') && downloadUrl) {
+      } else if (
+        (lowerName.endsWith('.ts') || lowerName.endsWith('.m4s') || lowerName.endsWith('.mp4')) &&
+        downloadUrl
+      ) {
         const cleanName = item.name.replace(/^\.?\//, '');
-        const baseName = cleanName.replace(/\.ts$/i, '');
+        const cleanLower = cleanName.toLowerCase();
         segmentUrlMap[item.name] = downloadUrl;
         segmentUrlMap[cleanName] = downloadUrl;
-        segmentUrlMap[`${baseName}.ts`] = downloadUrl;
-        segmentUrlMap[baseName] = downloadUrl;
+        segmentUrlMap[cleanLower] = downloadUrl;
+        if (lowerName.endsWith('.ts') || lowerName.endsWith('.m4s')) {
+          const baseName = cleanName.replace(/\.(ts|m4s)$/i, '');
+          const ext = lowerName.endsWith('.m4s') ? '.m4s' : '.ts';
+          segmentUrlMap[`${baseName}${ext}`] = downloadUrl;
+          segmentUrlMap[baseName] = downloadUrl;
+        }
       }
     }
 

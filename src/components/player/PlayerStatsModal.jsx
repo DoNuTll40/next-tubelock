@@ -33,6 +33,9 @@ export default function PlayerStatsModal({
     totalFrames: 0,
     dropRate: '0.0%',
     protocol: 'Direct MP4 Stream',
+    activeCodec: codec || 'h264',
+    colorInfo: 'bt709 / bt709 (SDR)',
+    isHdr: false,
     isHeavyCodec: false,
     connectionSpeedKbps: 52000,
     streamBitrateKbps: 4500,
@@ -207,11 +210,30 @@ export default function PlayerStatsModal({
         dropped = v.webkitDroppedFrameCount || 0;
       }
 
+      const currentLevel =
+        hls?.levels && hls.levels.length > 0
+          ? (hls.currentLevel >= 0 ? hls.levels[hls.currentLevel] : hls.levels[0])
+          : null;
+      const videoRange = String(
+        currentLevel?.attrs?.['VIDEO-RANGE'] || currentLevel?.videoRange || ''
+      ).toUpperCase();
+      const isHdrStream = videoRange === 'PQ' || videoRange === 'HLG';
+      const colorInfo =
+        videoRange === 'PQ'
+          ? 'bt2020 / smpte2084 (HDR10)'
+          : videoRange === 'HLG'
+          ? 'bt2020 / arib-std-b67 (HLG)'
+          : 'bt709 / bt709 (SDR)';
+      const levelVideoCodec = String(currentLevel?.videoCodec || '');
+      const activeCodec = levelVideoCodec
+        ? (levelVideoCodec.toLowerCase().startsWith('av01') ? 'av01' : levelVideoCodec.split('.')[0])
+        : (codec || 'h264');
+
       const isHls = src?.startsWith('blob:') || src?.includes('.m3u8') || src?.includes('playlist');
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
       const dropRate = total > 0 ? ((dropped / total) * 100).toFixed(1) + '%' : '0.0%';
       const isAv1or4K =
-        (codec?.toLowerCase().includes('av1') || codec?.toLowerCase().includes('av01')) &&
+        (activeCodec.toLowerCase().includes('av1') || activeCodec.toLowerCase().includes('av01')) &&
         (v.videoWidth >= 2500 || Number(fps) >= 50);
 
       // Connection speed from live HLS bandwidth estimator
@@ -249,6 +271,9 @@ export default function PlayerStatsModal({
         totalFrames: total,
         dropRate,
         protocol: isHls ? 'HLS Adaptive Bitrate' : 'Direct MP4 Stream',
+        activeCodec,
+        colorInfo,
+        isHdr: isHdrStream,
         isHeavyCodec: isAv1or4K,
         connectionSpeedKbps,
         streamBitrateKbps: streamBitrate,
@@ -284,8 +309,8 @@ export default function PlayerStatsModal({
       `Viewport / Frames: ${stats.viewport}*${stats.dpr} / ${stats.droppedFrames} dropped of ${stats.totalFrames} (${stats.dropRate})`,
       `Current / Optimal Res: ${stats.currentRes}@${fps || 30} / ${stats.optimalRes}@${fps || 30}`,
       `Volume / Normalized: ${stats.volumeNormalized}`,
-      `Codecs: ${codec} (${stats.protocol})`,
-      `Color: bt709 / bt709`,
+      `Codecs: ${stats.activeCodec || codec} (${stats.protocol})`,
+      `Color: ${stats.colorInfo}`,
       `Connection Speed: ${stats.connectionSpeedKbps.toLocaleString()} Kbps`,
       `Stream Bitrate: ${stats.streamBitrateKbps.toLocaleString()} Kbps (VBR)`,
       `Network Activity: ${stats.networkActivityKB} KB`,
@@ -388,7 +413,7 @@ export default function PlayerStatsModal({
         <div className="flex justify-between items-center py-0.5 border-b border-white/5">
           <span className="text-zinc-400">Codecs</span>
           <span className="text-zinc-100 font-medium">
-            <span className="uppercase text-amber-300">{codec}</span>
+            <span className="uppercase text-amber-300">{stats.activeCodec || codec}</span>
             <span className="text-zinc-400 text-[10px]"> ({stats.protocol})</span>
           </span>
         </div>
@@ -396,7 +421,9 @@ export default function PlayerStatsModal({
         {/* Color Space */}
         <div className="flex justify-between items-center py-0.5 border-b border-white/5">
           <span className="text-zinc-400">Color</span>
-          <span className="text-zinc-300 font-mono">bt709 / bt709</span>
+          <span className={`font-mono ${stats.isHdr ? 'text-[#FF7A00] font-semibold' : 'text-zinc-300'}`}>
+            {stats.colorInfo}
+          </span>
         </div>
 
         {/* Aspect Ratio / Fit */}

@@ -1190,7 +1190,7 @@ export default function VideoPlayer({
                     const baseName = relPath.includes('/')
                       ? relPath.slice(relPath.lastIndexOf('/') + 1)
                       : relPath;
-                    const directUrl = map[relPath] || map[baseName];
+                    const directUrl = map[relPath] || map[baseName] || map[baseName.toLowerCase()];
                     if (directUrl) {
                       context.url = directUrl;
                     }
@@ -1263,12 +1263,16 @@ export default function VideoPlayer({
               const videoFps = Number(fps) || 0;
               const parsed = data.levels.map((lvl, index) => {
                 const lvlFps = lvl.attrs?.['FRAME-RATE'] ? parseFloat(lvl.attrs['FRAME-RATE']) : videoFps;
-                const formatted = formatQualityLevel(lvl.height, lvlFps);
+                const videoRange = String(lvl.attrs?.['VIDEO-RANGE'] || lvl.videoRange || '').toUpperCase();
+                const isLevelHdr = videoRange === 'PQ' || videoRange === 'HLG';
+                const formatted = formatQualityLevel(lvl.height, lvlFps, isLevelHdr);
                 return {
                   index,
                   height: lvl.height,
                   width: lvl.width,
                   bitrate: lvl.bitrate,
+                  isHdr: isLevelHdr,
+                  videoRange: videoRange || 'SDR',
                   label: formatted.label,
                   badge: formatted.badge,
                   fullLabel: formatted.fullLabel,
@@ -1321,7 +1325,9 @@ export default function VideoPlayer({
             const lvl = hls.levels[data.level];
             if (lvl) {
               const lvlFps = lvl.attrs?.['FRAME-RATE'] ? parseFloat(lvl.attrs['FRAME-RATE']) : Number(fps) || 0;
-              const formatted = formatQualityLevel(lvl.height, lvlFps);
+              const videoRange = String(lvl.attrs?.['VIDEO-RANGE'] || lvl.videoRange || '').toUpperCase();
+              const isLevelHdr = videoRange === 'PQ' || videoRange === 'HLG';
+              const formatted = formatQualityLevel(lvl.height, lvlFps, isLevelHdr);
               setActiveLevelLabel(formatted.label);
               if (lvl.width && lvl.height) {
                 updateRatio(lvl.width / lvl.height);

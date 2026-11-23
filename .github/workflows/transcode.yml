@@ -44,10 +44,11 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           sudo mount -o remount,size=12G /dev/shm || true
           df -h / /dev/shm
-          if ! command -v ffmpeg &> /dev/null; then
+          if ! ffmpeg -hide_banner -encoders 2>/dev/null | awk '$2 == "libsvtav1" {found=1} END {exit !found}'; then
             sudo apt-get update -y && sudo apt-get install -y ffmpeg
           fi
           ffmpeg -version | head -n 2
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libx264|libsvtav1" | head -n 4 || true
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
@@ -91,10 +92,11 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           sudo mount -o remount,size=12G /dev/shm || true
           df -h / /dev/shm
-          if ! command -v ffmpeg &> /dev/null; then
+          if ! ffmpeg -hide_banner -encoders 2>/dev/null | awk '$2 == "libsvtav1" {found=1} END {exit !found}'; then
             sudo apt-get update -y && sudo apt-get install -y ffmpeg
           fi
           ffmpeg -version | head -n 2
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libx264|libsvtav1" | head -n 4 || true
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
@@ -138,10 +140,11 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           sudo mount -o remount,size=12G /dev/shm || true
           df -h / /dev/shm
-          if ! command -v ffmpeg &> /dev/null; then
+          if ! ffmpeg -hide_banner -encoders 2>/dev/null | awk '$2 == "libsvtav1" {found=1} END {exit !found}'; then
             sudo apt-get update -y && sudo apt-get install -y ffmpeg
           fi
           ffmpeg -version | head -n 2
+          ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "libx264|libsvtav1" | head -n 4 || true
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4

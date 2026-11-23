@@ -1122,7 +1122,12 @@ export function GlobalPlayerProvider({ children }) {
                 if (isStale() || !Array.isArray(fullSource?.items)) return;
                 const map = partialSegmentMapRef.current || {};
                 for (const item of fullSource.items) {
-                  if (item?.name && item.downloadUrl && item.name.toLowerCase().endsWith('.ts')) {
+                  const lowerName = item?.name ? item.name.toLowerCase() : '';
+                  if (
+                    item?.name &&
+                    item.downloadUrl &&
+                    (lowerName.endsWith('.ts') || lowerName.endsWith('.m4s') || lowerName.endsWith('.mp4'))
+                  ) {
                     const cleanName = item.name.replace(/^\.?\//, '');
                     const baseName = cleanName.includes('/')
                       ? cleanName.slice(cleanName.lastIndexOf('/') + 1)
@@ -1130,6 +1135,7 @@ export function GlobalPlayerProvider({ children }) {
                     map[item.name] = item.downloadUrl;
                     map[cleanName] = item.downloadUrl;
                     map[baseName] = item.downloadUrl;
+                    map[baseName.toLowerCase()] = item.downloadUrl;
                   }
                 }
                 partialSegmentMapRef.current = map;

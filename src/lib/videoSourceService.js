@@ -7,8 +7,20 @@ import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 // URL ของ Cloudflare Worker (อ่านจาก env ก่อน ถ้าไม่มีใช้ค่าเดิมเป็น fallback)
 const CF_WORKER_URL = process.env.CF_WORKER_URL || 'https://tubelock-cache.iinter731.workers.dev';
 
+export function isHlsSegmentFile(name) {
+  if (!name) return false;
+  const lower = String(name).toLowerCase();
+  const baseName = lower.includes('/') ? lower.slice(lower.lastIndexOf('/') + 1) : lower;
+  return (
+    baseName.endsWith('.ts') ||
+    baseName.endsWith('.m4s') ||
+    (baseName.startsWith('init_') && baseName.endsWith('.mp4')) ||
+    baseName.endsWith('-init.mp4')
+  );
+}
+
 export function wrapWithWorkerCache(name, downloadUrl) {
-  if (name && name.toLowerCase().endsWith('.ts')) {
+  if (isHlsSegmentFile(name)) {
     return `${CF_WORKER_URL}/?url=${encodeURIComponent(downloadUrl)}`;
   }
   return downloadUrl;
@@ -265,7 +277,7 @@ function getPlaylistPriority(name) {
   return idx === -1 ? PLAYLIST_PRIORITY_PATTERNS.length : idx;
 }
 
-// ดึงชื่อไฟล์ chunk แรกๆ (.ts) จาก m3u8_cache_br แบบ round-robin ทุกความละเอียด (สูงสุด 18 ไฟล์ เพื่อให้พอดีโควตา Graph $batch <= 20)
+// ดึงชื่อไฟล์ init (.mp4) และ chunk แรกๆ (.ts / .m4s) จาก m3u8_cache_br แบบ round-robin ทุกความละเอียด (สูงสุด 18 ไฟล์ เพื่อให้พอดีโควตา Graph $batch <= 20)
 function extractInitialSegmentNames(m3u8Map, maxTotal = 18) {
   if (!m3u8Map || typeof m3u8Map !== 'object') return [];
   const subEntries = Object.entries(m3u8Map)
@@ -277,13 +289,27 @@ function extractInitialSegmentNames(m3u8Map, maxTotal = 18) {
 
   const perPlaylistSegments = subEntries.map(([, content]) => {
     const segs = [];
+    let mediaCount = 0;
     for (const rawLine of content.split('\n')) {
       const trimmed = rawLine.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
+      if (!trimmed) continue;
+      if (trimmed.startsWith('#EXT-X-MAP:')) {
+        const uriMatch = trimmed.match(/URI="([^"]+)"/i);
+        if (uriMatch && uriMatch[1]) {
+          const cleanInit = uriMatch[1].trim().replace(/^\.?\//, '');
+          if (cleanInit && !segs.includes(cleanInit)) {
+            segs.unshift(cleanInit);
+          }
+        }
+        continue;
+      }
+      if (trimmed.startsWith('#')) continue;
       const clean = trimmed.replace(/^\.?\//, '');
-      if (clean.toLowerCase().endsWith('.ts')) {
+      const lower = clean.toLowerCase();
+      if (lower.endsWith('.ts') || lower.endsWith('.m4s')) {
         segs.push(clean);
-        if (segs.length >= 3) break;
+        mediaCount++;
+        if (mediaCount >= 3) break;
       }
     }
     return segs;
@@ -291,7 +317,7 @@ function extractInitialSegmentNames(m3u8Map, maxTotal = 18) {
 
   const picked = [];
   const seen = new Set();
-  for (let pass = 0; pass < 3 && picked.length < maxTotal; pass++) {
+  for (let pass = 0; pass < 4 && picked.length < maxTotal; pass++) {
     for (const segs of perPlaylistSegments) {
       if (picked.length >= maxTotal) break;
       const name = segs[pass];
@@ -537,7 +563,7 @@ export async function resolveVideoSourceServer(
         partialCached.data?.items?.length > 0
       ) {
         const sampleTsUrl = partialCached.data.items.find((i) =>
-          i.name?.toLowerCase().endsWith('.ts')
+          isHlsSegmentFile(i.name)
         )?.downloadUrl;
         if (sampleTsUrl && isTempauthValid(sampleTsUrl)) {
           return {
@@ -1141,7 +1167,7 @@ export function getCachedVideoSourceSync(
     partialCached.data?.items?.length > 0
   ) {
     const sampleTsUrl = partialCached.data.items.find((i) =>
-      i.name?.toLowerCase().endsWith('.ts')
+      isHlsSegmentFile(i.name)
     )?.downloadUrl;
     if (sampleTsUrl && isTempauthValid(sampleTsUrl)) {
       return formatSourceForClient(partialCached.data, showAdultPreviews);

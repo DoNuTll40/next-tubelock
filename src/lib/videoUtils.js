@@ -194,12 +194,13 @@ export function formatResolutionBadge(resStr = '') {
  *      (240, 30)  -> { label: '240p', badge: null, height: 240 }
  *      (144, 30)  -> { label: '144p', badge: null, height: 144 }
  */
-export function formatQualityLevel(height, fps = null) {
+export function formatQualityLevel(height, fps = null, isHdr = false) {
   const h = parseInt(height, 10) || 0;
   const numFps = parseFloat(fps) || 0;
   // YouTube standard: High frame rate (50 or 60) applies to 720p and above
   const isHighFps = numFps >= 48 && h >= 720;
   const fpsSuffix = isHighFps ? `${Math.round(numFps)}` : '';
+  const hdrFlag = Boolean(isHdr);
 
   let baseRes = `${h}p`;
   let badge = null;
@@ -226,25 +227,29 @@ export function formatQualityLevel(height, fps = null) {
     baseRes = '144p';
   }
 
-  const label = `${baseRes}${fpsSuffix}`;
+  const label = `${baseRes}${fpsSuffix}${hdrFlag ? ' HDR' : ''}`;
+  const displayBadge = hdrFlag ? (badge || 'HDR') : badge;
 
   return {
     label,
-    badge,
+    badge: displayBadge,
     height: h,
     fps: numFps,
-    gearBadge: badge,
-    fullLabel: badge ? `${label} ${badge}` : label,
+    isHdr: hdrFlag,
+    gearBadge: hdrFlag ? 'HDR' : badge,
+    fullLabel: displayBadge ? `${label} ${displayBadge}` : label,
   };
 }
 
 /**
- * Get gear button badge (4K, 2K, FHD, HD) without FPS
- * e.g. '2160p50' -> '4K', '1440p60' -> '2K', '1080p50' -> 'FHD', '720p60' -> 'HD'
+ * Get gear button badge (HDR, 4K, 2K, FHD, HD) without FPS
+ * e.g. '1080p HDR' -> 'HDR', '2160p50' -> '4K', '1440p60' -> '2K', '1080p50' -> 'FHD', '720p60' -> 'HD'
  */
-export function getGearBadge(resOrLabel = '') {
+export function getGearBadge(resOrLabel = '', isHdr = false) {
+  if (isHdr) return 'HDR';
   if (!resOrLabel) return null;
   const str = String(resOrLabel).toUpperCase();
+  if (str.includes('HDR')) return 'HDR';
   if (str.includes('2160') || str.includes('4K')) return '4K';
   if (str.includes('1440') || str.includes('2K')) return '2K';
   if (str.includes('1080') || str.includes('FHD')) return 'FHD';
