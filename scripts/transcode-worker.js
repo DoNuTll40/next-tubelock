@@ -1,13 +1,15 @@
 /**
- * TubeLock Progressive Cloud Transcoder Worker (3x Parallel Lanes + Sharpness Tuned)
- * Optimized for GitHub Actions Public Repo Runner (3x 4 vCPU / 16GB RAM / Freed NVMe + RAM Disk)
+ * TubeLock Progressive Cloud Transcoder Worker (5x Parallel Lanes + Dedicated 4K + Sharpness Tuned)
+ * Optimized for GitHub Actions Public Repo Runner (5x 4 vCPU / 16GB RAM / Freed NVMe + RAM Disk)
  *
  * Parallel Multi-Lane Architecture (100% Output & API Compatible):
- * - Lane 1 (`fast_sd`): poster.jpg + Pass 1 (144p + Storyboard SD/HD -> instant READY) + Pass 2/3 (360p + 480p)
- * - Lane 2 (`hd`):      Pass 4 (720p HD) + Pass 6 (1440p 2K if source >= 1440p)
- * - Lane 3 (`fhd`):     Pass 5 (1080p Full HD) + Pass 7 (2160p 4K if source >= 2160p)
+ * - Lane 1 (`fast_sd`):  poster.jpg + Pass 1 (144p + Storyboard SD/HD -> instant READY) + Pass 2/3 (360p + 480p) + Smart Hi-Res WAV/FLAC
+ * - Lane 2 (`hd`):       Pass 4 (720p HD dedicated)
+ * - Lane 3 (`fhd`):      Pass 5 (1080p Full HD dedicated)
+ * - Lane 4 (`qhd`):      Pass 6 (1440p 2K dedicated — skips download via remote ffprobe if < 1440p)
+ * - Lane 5 (`uhd`):      Pass 7 (2160p 4K dedicated — full 4 Cores / 16GB RAM, skips download if < 2160p)
  * - Finalize (`finalize`): Authoritative master.m3u8 sync + /raw/ cleanup (when AI workers idle) + 100% READY
- * - Legacy (`all`):     Runs all lanes + finalize sequentially in one process (local CLI fallback)
+ * - Legacy (`all`):      Runs all 5 lanes + finalize sequentially in one process (local CLI fallback)
  */
 
 import fs from 'node:fs';
@@ -28,23 +30,25 @@ const RAW_FILE_NAME = process.env.RAW_FILE_NAME || process.argv[3];
 const VIDEO_TITLE = process.env.VIDEO_TITLE || process.argv[4] || 'Untitled Video';
 const VERSION_ID = (process.env.VERSION_ID || '').trim();
 
-const VALID_LANES = new Set(['all', 'fast_sd', 'hd', 'fhd', 'finalize']);
+const VALID_LANES = new Set(['all', 'fast_sd', 'hd', 'fhd', 'qhd', 'uhd', 'finalize']);
 const RAW_LANE = (process.env.TRANSCODE_LANE || 'all').trim().toLowerCase();
 const TRANSCODE_LANE = VALID_LANES.has(RAW_LANE) ? RAW_LANE : 'all';
-const IS_PARALLEL_LANE = TRANSCODE_LANE === 'fast_sd' || TRANSCODE_LANE === 'hd' || TRANSCODE_LANE === 'fhd';
+const IS_PARALLEL_LANE = ['fast_sd', 'hd', 'fhd', 'qhd', 'uhd'].includes(TRANSCODE_LANE);
 const TRANSCODE_RUN_ID = (
     process.env.TRANSCODE_RUN_ID ||
     process.env.GITHUB_RUN_ID ||
     `local_${Date.now()}`
 ).trim();
 
-// โหมดขนาน 3 เครื่องใช้เครื่องละ 4 (รวม 12 concurrent PUTs) ป้องกัน Microsoft Graph 429 Throttle
-const UPLOAD_CONCURRENCY = IS_PARALLEL_LANE ? 4 : 8;
+// โหมดขนาน 5 เครื่องใช้เครื่องละ 3 (รวม 15 concurrent PUTs สูงสุด) ป้องกัน Microsoft Graph 429 Throttle
+const UPLOAD_CONCURRENCY = IS_PARALLEL_LANE ? 3 : 8;
 
 const LANE_DISPLAY_LABELS = {
-    fast_sd: 'HLS Lane 1 (SD)',
-    hd: 'HLS Lane 2 (HD)',
-    fhd: 'HLS Lane 3 (FHD/4K)',
+    fast_sd: 'HLS Lane 1 (SD + Hi-Res)',
+    hd: 'HLS Lane 2 (720p HD)',
+    fhd: 'HLS Lane 3 (1080p FHD)',
+    qhd: 'HLS Lane 4 (1440p 2K)',
+    uhd: 'HLS Lane 5 (2160p 4K)',
     finalize: 'HLS Finalize',
     all: 'HLS Engine',
 };
@@ -126,7 +130,7 @@ function getRunnerSpecs() {
             diskSpace,
             hostname: os.hostname(),
             nodeVersion: process.version,
-            parallelLanes: IS_PARALLEL_LANE ? 3 : 1,
+            parallelLanes: IS_PARALLEL_LANE ? 5 : 1,
         };
     } catch {
         return {
@@ -139,7 +143,7 @@ function getRunnerSpecs() {
             diskSpace: 'N/A',
             hostname: 'gh-runner',
             nodeVersion: process.version,
-            parallelLanes: IS_PARALLEL_LANE ? 3 : 1,
+            parallelLanes: IS_PARALLEL_LANE ? 5 : 1,
         };
     }
 }
@@ -152,8 +156,18 @@ function selectOptimalWorkDir(workKey, requiredBytes = 0, lane = 'all') {
         if (process.platform === 'linux' && fs.existsSync(shmPath) && fs.statfsSync) {
             const stats = fs.statfsSync(shmPath);
             const freeBytes = stats.bavail * stats.bsize;
-            const maxRawForShm = lane === 'fast_sd' ? 4.5 * 1024 ** 3 : 2.0 * 1024 ** 3;
-            const safetyMultiplier = lane === 'fast_sd' ? 2.5 : 3.5;
+            const maxRawForShm =
+                lane === 'fast_sd'
+                    ? 4.0 * 1024 ** 3
+                    : (lane === 'qhd' || lane === 'uhd')
+                        ? 1.5 * 1024 ** 3
+                        : 2.5 * 1024 ** 3;
+            const safetyMultiplier =
+                lane === 'fast_sd'
+                    ? 2.5
+                    : (lane === 'qhd' || lane === 'uhd')
+                        ? 4.0
+                        : 3.0;
             if (
                 requiredBytes <= maxRawForShm &&
                 freeBytes > Math.max(requiredBytes * safetyMultiplier, 2.5 * 1024 ** 3)
@@ -264,7 +278,7 @@ function sanitizeExtra(extra = {}) {
  * - Uses direct column expressions inside UPDATE SET (no CTE reading the same table)
  *   so PostgreSQL row locks serialize concurrent lanes cleanly.
  * - Never downgrades status once 'READY' is reached.
- * - Computes weighted transcode_progress across fast_sd (30%), hd (25%), fhd (30%) + base 10% (cap 95%).
+ * - Computes weighted transcode_progress across fast_sd (25%), hd (15%), fhd (15%), qhd (15%), uhd (15%) + base 10% (cap 95%).
  */
 async function updateLaneProgress({
     lane = TRANSCODE_LANE,
@@ -278,7 +292,7 @@ async function updateLaneProgress({
     await ensureDbSchemaOnce();
     const clampedPct = Math.max(0, Math.min(100, Math.round(Number(lanePct) || 0)));
     const { safeDuration, safeFps, safeBitrate, safeFileSize, safeAudioChannels } = sanitizeExtra(extra);
-    const laneKey = ['fast_sd', 'hd', 'fhd'].includes(lane) ? lane : 'fast_sd';
+    const laneKey = ['fast_sd', 'hd', 'fhd', 'qhd', 'uhd'].includes(lane) ? lane : 'fast_sd';
 
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -319,13 +333,19 @@ async function updateLaneProgress({
                               10 + ROUND(
                                 (CASE WHEN CAST(${laneKey} AS TEXT) = 'fast_sd'
                                   THEN GREATEST(COALESCE((lane_progress->'lanes'->>'fast_sd')::int, 0), CAST(${clampedPct} AS INTEGER))
-                                  ELSE COALESCE((lane_progress->'lanes'->>'fast_sd')::int, 0) END) * 0.30 +
+                                  ELSE COALESCE((lane_progress->'lanes'->>'fast_sd')::int, 0) END) * 0.25 +
                                 (CASE WHEN CAST(${laneKey} AS TEXT) = 'hd'
                                   THEN GREATEST(COALESCE((lane_progress->'lanes'->>'hd')::int, 0), CAST(${clampedPct} AS INTEGER))
-                                  ELSE COALESCE((lane_progress->'lanes'->>'hd')::int, 0) END) * 0.25 +
+                                  ELSE COALESCE((lane_progress->'lanes'->>'hd')::int, 0) END) * 0.15 +
                                 (CASE WHEN CAST(${laneKey} AS TEXT) = 'fhd'
                                   THEN GREATEST(COALESCE((lane_progress->'lanes'->>'fhd')::int, 0), CAST(${clampedPct} AS INTEGER))
-                                  ELSE COALESCE((lane_progress->'lanes'->>'fhd')::int, 0) END) * 0.30
+                                  ELSE COALESCE((lane_progress->'lanes'->>'fhd')::int, 0) END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'qhd'
+                                  THEN GREATEST(COALESCE((lane_progress->'lanes'->>'qhd')::int, 0), CAST(${clampedPct} AS INTEGER))
+                                  ELSE COALESCE((lane_progress->'lanes'->>'qhd')::int, 0) END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'uhd'
+                                  THEN GREATEST(COALESCE((lane_progress->'lanes'->>'uhd')::int, 0), CAST(${clampedPct} AS INTEGER))
+                                  ELSE COALESCE((lane_progress->'lanes'->>'uhd')::int, 0) END) * 0.15
                               )::int
                             )
                           )
@@ -335,9 +355,11 @@ async function updateLaneProgress({
                             LEAST(
                               95,
                               10 + ROUND(
-                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fast_sd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.30 +
-                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'hd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.25 +
-                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.30
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fast_sd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.25 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'hd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'qhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'uhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15
                               )::int
                             )
                           )
@@ -411,13 +433,19 @@ async function updateLaneProgress({
                               10 + ROUND(
                                 (CASE WHEN CAST(${laneKey} AS TEXT) = 'fast_sd'
                                   THEN GREATEST(COALESCE((lane_progress->'lanes'->>'fast_sd')::int, 0), CAST(${clampedPct} AS INTEGER))
-                                  ELSE COALESCE((lane_progress->'lanes'->>'fast_sd')::int, 0) END) * 0.30 +
+                                  ELSE COALESCE((lane_progress->'lanes'->>'fast_sd')::int, 0) END) * 0.25 +
                                 (CASE WHEN CAST(${laneKey} AS TEXT) = 'hd'
                                   THEN GREATEST(COALESCE((lane_progress->'lanes'->>'hd')::int, 0), CAST(${clampedPct} AS INTEGER))
-                                  ELSE COALESCE((lane_progress->'lanes'->>'hd')::int, 0) END) * 0.25 +
+                                  ELSE COALESCE((lane_progress->'lanes'->>'hd')::int, 0) END) * 0.15 +
                                 (CASE WHEN CAST(${laneKey} AS TEXT) = 'fhd'
                                   THEN GREATEST(COALESCE((lane_progress->'lanes'->>'fhd')::int, 0), CAST(${clampedPct} AS INTEGER))
-                                  ELSE COALESCE((lane_progress->'lanes'->>'fhd')::int, 0) END) * 0.30
+                                  ELSE COALESCE((lane_progress->'lanes'->>'fhd')::int, 0) END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'qhd'
+                                  THEN GREATEST(COALESCE((lane_progress->'lanes'->>'qhd')::int, 0), CAST(${clampedPct} AS INTEGER))
+                                  ELSE COALESCE((lane_progress->'lanes'->>'qhd')::int, 0) END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'uhd'
+                                  THEN GREATEST(COALESCE((lane_progress->'lanes'->>'uhd')::int, 0), CAST(${clampedPct} AS INTEGER))
+                                  ELSE COALESCE((lane_progress->'lanes'->>'uhd')::int, 0) END) * 0.15
                               )::int
                             )
                           )
@@ -427,9 +455,11 @@ async function updateLaneProgress({
                             LEAST(
                               95,
                               10 + ROUND(
-                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fast_sd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.30 +
-                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'hd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.25 +
-                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.30
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fast_sd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.25 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'hd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'fhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'qhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15 +
+                                (CASE WHEN CAST(${laneKey} AS TEXT) = 'uhd' THEN CAST(${clampedPct} AS INTEGER) ELSE 0 END) * 0.15
                               )::int
                             )
                           )
@@ -2147,7 +2177,7 @@ async function runLaneFastSd({
 }
 
 /**
- * LANE 2 (`hd`): Pass 4 (720p HD) + Pass 6 (1440p 2K if source >= 1440p)
+ * LANE 2 (`hd`): Dedicated 720p HD Runner (Pass 4)
  */
 async function runLaneHd({
     driveId,
@@ -2159,10 +2189,9 @@ async function runLaneHd({
     meta,
 }) {
     const has720 = meta.srcHeight >= 720;
-    const has1440 = meta.srcHeight >= 1440 || meta.srcWidth >= 2560;
 
-    if (!has720 && !has1440) {
-        await logger.log(`⏭️ ข้าม Lane 2 (HD/2K) เนื่องจากต้นฉบับ ${meta.srcWidth}x${meta.srcHeight} ต่ำกว่า 720p`);
+    if (!has720) {
+        await logger.log(`⏭️ ข้าม Lane 2 (720p HD) เนื่องจากต้นฉบับ ${meta.srcWidth}x${meta.srcHeight} ต่ำกว่า 720p`);
         await updateLaneProgress({
             lane: 'hd',
             lanePct: 100,
@@ -2172,59 +2201,32 @@ async function runLaneHd({
         return;
     }
 
-    if (has720) {
-        await runHighQualityPass({
-            lane: 'hd',
-            passLabel: 'Pass 4: 720p HD',
-            qualityName: '720p',
-            width: 1280,
-            height: 720,
-            level: '3.1',
-            bitrateK: 3500,
-            maxrateK: 4500,
-            bufsizeK: 6000,
-            manifestBitrate: 3500000,
-            rawFilePath,
-            hlsOutputDir,
-            driveId,
-            streamFolderId,
-            streamFolderName,
-            masterPlaylistPath,
-            meta,
-            lanePctStart: 10,
-            lanePctEnd: has1440 ? 55 : 100,
-            stagePrefix: '⚡ กำลังหั่น 720p HD (คมชัด)',
-        });
-    }
-
-    if (has1440) {
-        await runHighQualityPass({
-            lane: 'hd',
-            passLabel: 'Pass 6: 1440p 2K',
-            qualityName: '1440p',
-            width: 2560,
-            height: 1440,
-            level: '5.1',
-            bitrateK: 12000,
-            maxrateK: 16000,
-            bufsizeK: 24000,
-            manifestBitrate: 12000000,
-            rawFilePath,
-            hlsOutputDir,
-            driveId,
-            streamFolderId,
-            streamFolderName,
-            masterPlaylistPath,
-            meta,
-            lanePctStart: 55,
-            lanePctEnd: 100,
-            stagePrefix: '⚡ กำลังหั่น 2K Quad HD (1440p)',
-        });
-    }
+    await runHighQualityPass({
+        lane: 'hd',
+        passLabel: 'Pass 4: 720p HD',
+        qualityName: '720p',
+        width: 1280,
+        height: 720,
+        level: '3.1',
+        bitrateK: 3500,
+        maxrateK: 4500,
+        bufsizeK: 6000,
+        manifestBitrate: 3500000,
+        rawFilePath,
+        hlsOutputDir,
+        driveId,
+        streamFolderId,
+        streamFolderName,
+        masterPlaylistPath,
+        meta,
+        lanePctStart: 10,
+        lanePctEnd: 100,
+        stagePrefix: '⚡ กำลังหั่น 720p HD (คมชัด)',
+    });
 }
 
 /**
- * LANE 3 (`fhd`): Pass 5 (1080p Full HD) + Pass 7 (2160p 4K if source >= 2160p)
+ * LANE 3 (`fhd`): Dedicated 1080p Full HD Runner (Pass 5)
  */
 async function runLaneFhd({
     driveId,
@@ -2236,10 +2238,9 @@ async function runLaneFhd({
     meta,
 }) {
     const has1080 = meta.srcHeight >= 1080;
-    const has2160 = meta.srcHeight >= 2160 || meta.srcWidth >= 3840;
 
-    if (!has1080 && !has2160) {
-        await logger.log(`⏭️ ข้าม Lane 3 (FHD/4K) เนื่องจากต้นฉบับ ${meta.srcWidth}x${meta.srcHeight} ต่ำกว่า 1080p`);
+    if (!has1080) {
+        await logger.log(`⏭️ ข้าม Lane 3 (1080p FHD) เนื่องจากต้นฉบับ ${meta.srcWidth}x${meta.srcHeight} ต่ำกว่า 1080p`);
         await updateLaneProgress({
             lane: 'fhd',
             lanePct: 100,
@@ -2249,61 +2250,132 @@ async function runLaneFhd({
         return;
     }
 
-    if (has1080) {
-        await runHighQualityPass({
-            lane: 'fhd',
-            passLabel: 'Pass 5: 1080p Full HD',
-            qualityName: '1080p',
-            width: 1920,
-            height: 1080,
-            level: '4.2',
-            bitrateK: 8500,
-            maxrateK: 11000,
-            bufsizeK: 16000,
-            manifestBitrate: 8500000,
-            rawFilePath,
-            hlsOutputDir,
-            driveId,
-            streamFolderId,
-            streamFolderName,
-            masterPlaylistPath,
-            meta,
-            lanePctStart: 10,
-            lanePctEnd: has2160 ? 50 : 100,
-            stagePrefix: '⚡ กำลังหั่น 1080p Full HD (คมชัด)',
+    await runHighQualityPass({
+        lane: 'fhd',
+        passLabel: 'Pass 5: 1080p Full HD',
+        qualityName: '1080p',
+        width: 1920,
+        height: 1080,
+        level: '4.2',
+        bitrateK: 8500,
+        maxrateK: 11000,
+        bufsizeK: 16000,
+        manifestBitrate: 8500000,
+        rawFilePath,
+        hlsOutputDir,
+        driveId,
+        streamFolderId,
+        streamFolderName,
+        masterPlaylistPath,
+        meta,
+        lanePctStart: 10,
+        lanePctEnd: 100,
+        stagePrefix: '⚡ กำลังหั่น 1080p Full HD (คมชัด)',
+    });
+}
+
+/**
+ * LANE 4 (`qhd`): Dedicated 1440p 2K Runner (Pass 6)
+ */
+async function runLaneQhd({
+    driveId,
+    streamFolderId,
+    streamFolderName,
+    masterPlaylistPath,
+    rawFilePath,
+    hlsOutputDir,
+    meta,
+}) {
+    const has1440 = meta.srcHeight >= 1440 || meta.srcWidth >= 2560;
+
+    if (!has1440) {
+        await logger.log(`⏭️ ข้าม Lane 4 (1440p 2K) เนื่องจากต้นฉบับ ${meta.srcWidth}x${meta.srcHeight} ต่ำกว่า 1440p`);
+        await updateLaneProgress({
+            lane: 'qhd',
+            lanePct: 100,
+            status: 'PROCESSING',
+            stageDetail: null,
         });
+        return;
     }
 
-    if (has2160) {
-        await runHighQualityPass({
-            lane: 'fhd',
-            passLabel: 'Pass 7: 2160p 4K',
-            qualityName: '2160p',
-            width: 3840,
-            height: 2160,
-            level: '5.2',
-            bitrateK: 20000,
-            maxrateK: 24000,
-            bufsizeK: 36000,
-            manifestBitrate: 20000000,
-            rawFilePath,
-            hlsOutputDir,
-            driveId,
-            streamFolderId,
-            streamFolderName,
-            masterPlaylistPath,
-            meta,
-            lanePctStart: 50,
-            lanePctEnd: 100,
-            stagePrefix: '⚡ กำลังหั่น 4K UHD (2160p)',
+    await runHighQualityPass({
+        lane: 'qhd',
+        passLabel: 'Pass 6: 1440p 2K',
+        qualityName: '1440p',
+        width: 2560,
+        height: 1440,
+        level: '5.1',
+        bitrateK: 12000,
+        maxrateK: 16000,
+        bufsizeK: 24000,
+        manifestBitrate: 12000000,
+        rawFilePath,
+        hlsOutputDir,
+        driveId,
+        streamFolderId,
+        streamFolderName,
+        masterPlaylistPath,
+        meta,
+        lanePctStart: 10,
+        lanePctEnd: 100,
+        stagePrefix: '⚡ กำลังหั่น 2K Quad HD (1440p)',
+    });
+}
+
+/**
+ * LANE 5 (`uhd`): Dedicated 2160p 4K UHD Runner (Pass 7 — Full 4 Cores / 16GB RAM exclusively for 4K!)
+ */
+async function runLaneUhd({
+    driveId,
+    streamFolderId,
+    streamFolderName,
+    masterPlaylistPath,
+    rawFilePath,
+    hlsOutputDir,
+    meta,
+}) {
+    const has2160 = meta.srcHeight >= 2160 || meta.srcWidth >= 3840;
+
+    if (!has2160) {
+        await logger.log(`⏭️ ข้าม Lane 5 (2160p 4K) เนื่องจากต้นฉบับ ${meta.srcWidth}x${meta.srcHeight} ต่ำกว่า 2160p`);
+        await updateLaneProgress({
+            lane: 'uhd',
+            lanePct: 100,
+            status: 'PROCESSING',
+            stageDetail: null,
         });
+        return;
     }
+
+    await runHighQualityPass({
+        lane: 'uhd',
+        passLabel: 'Pass 7: 2160p 4K',
+        qualityName: '2160p',
+        width: 3840,
+        height: 2160,
+        level: '5.2',
+        bitrateK: 20000,
+        maxrateK: 24000,
+        bufsizeK: 36000,
+        manifestBitrate: 20000000,
+        rawFilePath,
+        hlsOutputDir,
+        driveId,
+        streamFolderId,
+        streamFolderName,
+        masterPlaylistPath,
+        meta,
+        lanePctStart: 10,
+        lanePctEnd: 100,
+        stagePrefix: '⚡ กำลังหั่น 4K UHD (2160p)',
+    });
 }
 
 /**
  * FINALIZE JOB (`finalize`):
  * - Publishes authoritative final master.m3u8 from all completed qualities of this run
- * - Deletes /raw/{RAW_FILE_NAME} ONLY if all 3 lanes succeeded AND AI workers are idle
+ * - Deletes /raw/{RAW_FILE_NAME} ONLY if all 5 lanes succeeded AND AI workers are idle
  * - Marks 100% READY (or FAILED if zero qualities succeeded)
  */
 async function runFinalize({ driveId, streamFolderName, masterPlaylistPath, tempDir }) {
@@ -2313,6 +2385,8 @@ async function runFinalize({ driveId, streamFolderName, masterPlaylistPath, temp
         fast_sd: (process.env.LANE_FAST_SD_RESULT || 'success').trim().toLowerCase(),
         hd: (process.env.LANE_HD_RESULT || 'success').trim().toLowerCase(),
         fhd: (process.env.LANE_FHD_RESULT || 'success').trim().toLowerCase(),
+        qhd: (process.env.LANE_QHD_RESULT || 'success').trim().toLowerCase(),
+        uhd: (process.env.LANE_UHD_RESULT || 'success').trim().toLowerCase(),
     };
     const failedLanes = Object.entries(laneResults)
         .filter(([, res]) => res !== 'success' && res !== 'skipped')
@@ -2462,7 +2536,7 @@ async function main() {
                 lane: 'fast_sd',
                 lanePct: 5,
                 status: 'PROCESSING',
-                stageDetail: `GitHub Actions (3x Parallel) พร้อมทำงาน: ${runnerSpecs.cpuModel} (${runnerSpecs.cpuCores} Cores × 3)`,
+                stageDetail: `GitHub Actions (5x Parallel • Dedicated 4K) พร้อมทำงาน: ${runnerSpecs.cpuModel} (${runnerSpecs.cpuCores} Cores × 5)`,
                 extra: { runner_specs: runnerSpecs },
             });
         }
@@ -2482,24 +2556,38 @@ async function main() {
         const rawFileSize = itemData.size || 0;
         const downloadUrl = itemData['@microsoft.graph.downloadUrl'];
 
-        // Fast remote ffprobe pre-check for Lane 2 (HD/2K) & Lane 3 (FHD/4K):
+        // Fast remote ffprobe pre-check for Lane 2 (720p), Lane 3 (1080p), Lane 4 (2K) & Lane 5 (4K):
         // Avoid downloading multi-GB raw files when source resolution is below this lane's threshold!
-        if (TRANSCODE_LANE === 'hd' || TRANSCODE_LANE === 'fhd') {
+        if (['hd', 'fhd', 'qhd', 'uhd'].includes(TRANSCODE_LANE)) {
             const remoteProbe = await probeVideo(downloadUrl, 15000);
             const remoteMeta = parseProbeMeta(remoteProbe);
             if (remoteMeta.hasDimensions) {
-                if (TRANSCODE_LANE === 'hd' && remoteMeta.srcHeight < 720 && remoteMeta.srcWidth < 2560) {
+                if (TRANSCODE_LANE === 'hd' && remoteMeta.srcHeight < 720) {
                     await logger.log(
-                        `⏭️ ข้าม Lane 2 (HD/2K) โดยไม่ต้องดาวน์โหลด (ต้นฉบับ ${remoteMeta.srcWidth}x${remoteMeta.srcHeight} ต่ำกว่า 720p)`
+                        `⏭️ ข้าม Lane 2 (720p HD) โดยไม่ต้องดาวน์โหลด (ต้นฉบับ ${remoteMeta.srcWidth}x${remoteMeta.srcHeight} ต่ำกว่า 720p)`
                     );
                     await updateLaneProgress({ lane: 'hd', lanePct: 100, status: 'PROCESSING', stageDetail: null });
                     return;
                 }
-                if (TRANSCODE_LANE === 'fhd' && remoteMeta.srcHeight < 1080 && remoteMeta.srcWidth < 3840) {
+                if (TRANSCODE_LANE === 'fhd' && remoteMeta.srcHeight < 1080) {
                     await logger.log(
-                        `⏭️ ข้าม Lane 3 (FHD/4K) โดยไม่ต้องดาวน์โหลด (ต้นฉบับ ${remoteMeta.srcWidth}x${remoteMeta.srcHeight} ต่ำกว่า 1080p)`
+                        `⏭️ ข้าม Lane 3 (1080p FHD) โดยไม่ต้องดาวน์โหลด (ต้นฉบับ ${remoteMeta.srcWidth}x${remoteMeta.srcHeight} ต่ำกว่า 1080p)`
                     );
                     await updateLaneProgress({ lane: 'fhd', lanePct: 100, status: 'PROCESSING', stageDetail: null });
+                    return;
+                }
+                if (TRANSCODE_LANE === 'qhd' && remoteMeta.srcHeight < 1440 && remoteMeta.srcWidth < 2560) {
+                    await logger.log(
+                        `⏭️ ข้าม Lane 4 (1440p 2K) โดยไม่ต้องดาวน์โหลด (ต้นฉบับ ${remoteMeta.srcWidth}x${remoteMeta.srcHeight} ต่ำกว่า 1440p)`
+                    );
+                    await updateLaneProgress({ lane: 'qhd', lanePct: 100, status: 'PROCESSING', stageDetail: null });
+                    return;
+                }
+                if (TRANSCODE_LANE === 'uhd' && remoteMeta.srcHeight < 2160 && remoteMeta.srcWidth < 3840) {
+                    await logger.log(
+                        `⏭️ ข้าม Lane 5 (2160p 4K) โดยไม่ต้องดาวน์โหลด (ต้นฉบับ ${remoteMeta.srcWidth}x${remoteMeta.srcHeight} ต่ำกว่า 2160p)`
+                    );
+                    await updateLaneProgress({ lane: 'uhd', lanePct: 100, status: 'PROCESSING', stageDetail: null });
                     return;
                 }
             }
@@ -2558,11 +2646,17 @@ async function main() {
             await runLaneHd(laneCtx);
         } else if (TRANSCODE_LANE === 'fhd') {
             await runLaneFhd(laneCtx);
+        } else if (TRANSCODE_LANE === 'qhd') {
+            await runLaneQhd(laneCtx);
+        } else if (TRANSCODE_LANE === 'uhd') {
+            await runLaneUhd(laneCtx);
         } else {
-            // Legacy 'all' mode (local CLI fallback): run all 3 lanes + finalize sequentially
+            // Legacy 'all' mode (local CLI fallback): run all 5 lanes + finalize sequentially
             await runLaneFastSd(laneCtx);
             await runLaneHd(laneCtx);
             await runLaneFhd(laneCtx);
+            await runLaneQhd(laneCtx);
+            await runLaneUhd(laneCtx);
             await runFinalize({ driveId, streamFolderName, masterPlaylistPath, tempDir });
         }
     } catch (err) {

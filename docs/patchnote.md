@@ -11,9 +11,20 @@ updated: 23 พฤศจิกายน 2026
 
 ---
 
-## เวอร์ชัน 1.2.8 Patch v1 (Build 1.2.8.20261123 — 23 พฤศจิกายน 2026) — Hi-Res Lossless Audio (Full WAV / Auto-FLAC), Multi-Channel Surround (Mono–7.1) & Docs TOC Redesign
+## เวอร์ชัน 1.2.8 Patch v1 (Build 1.2.8.20261123 — 23 พฤศจิกายน 2026) — 5x Parallel Lanes (Dedicated 4K), Hi-Res Lossless Audio (Full WAV / Auto-FLAC), Multi-Channel Surround (Mono–7.1) & Docs TOC Redesign
 
-### 1. ระบบเสียง Hi-Res Lossless แท้ (Full PCM WAV 16/24-bit สูงสุด 192 kHz + Auto-FLAC Fallback)
+### 1. อัปเกรดเครื่องแปลง HLS ขนานเป็น 5 เครื่อง (5x Parallel Runners • แยกเครื่อง 2K และ 4K เดี่ยว)
+- **จัดสรรความละเอียดใหม่แบบสมดุลสูงสุด (`.github/workflows/transcode.yml`, `scripts/transcode-worker.js`):**
+  - แยกงานหนักอย่าง `1440p 2K` และ `2160p 4K` ออกจาก `720p` / `1080p` เพื่อให้ **เครื่อง 4K เริ่มหั่นตั้งแต่วินาทีแรกเต็ม 4 Cores / 16GB RAM** โดยไม่ต้องรอ 1080p เสร็จก่อน:
+    - **Lane 1/5 (`fast_sd`):** `poster.jpg` + `144p` + Storyboards (→ ปลดล็อก `READY` ทันที) + `360p & 480p` + สกัดเสียง Hi-Res WAV/FLAC
+    - **Lane 2/5 (`hd`):** `720p HD` เดี่ยวๆ
+    - **Lane 3/5 (`fhd`):** `1080p Full HD` เดี่ยวๆ
+    - **Lane 4/5 (`qhd`):** `1440p 2K` เดี่ยวๆ (remote `ffprobe` ข้ามใน ~15 วิโดยไม่ดาวน์โหลดไฟล์ถ้าต้นฉบับต่ำกว่า 2K)
+    - **Lane 5/5 (`uhd`):** `2160p 4K` เดี่ยวๆ เต็มเครื่อง (remote `ffprobe` ข้ามใน ~15 วิโดยไม่ดาวน์โหลดไฟล์ถ้าต้นฉบับต่ำกว่า 4K)
+    - **Finalize (`finalize`):** รอครบทั้ง 5 เครื่องแล้วซิงก์ `master.m3u8` ฉบับสมบูรณ์ + เคลียร์ `/raw/` + `100% READY`
+  - ปรับน้ำหนัก `transcode_progress` ใหม่ (`fast_sd 25%`, `hd 15%`, `fhd 15%`, `qhd 15%`, `uhd 15%` + ฐาน `10%` → `95%` → `finalize 100%`), ปรับ `UPLOAD_CONCURRENCY = 3` ต่อเครื่อง (กัน Microsoft Graph 429) และตั้งโควตา `/dev/shm` สำหรับเครื่อง 2K/4K ให้ปลอดภัยจาก `ENOSPC`
+
+### 2. ระบบเสียง Hi-Res Lossless แท้ (Full PCM WAV 16/24-bit สูงสุด 192 kHz + Auto-FLAC Fallback)
 - **Smart Auto-Detect & Lossless Extraction (`scripts/transcode-worker.js`):**
   - ขยาย `ffprobe` ให้ตรวจสอบ `codec_name`, `profile`, `sample_fmt`, `sample_rate`, `bits_per_sample` และ `bits_per_raw_sample` ของแทร็กเสียงต้นฉบับอัตโนมัติ
   - **Smart Auto-Detect:** สกัดแทร็กเสียง Hi-Res Lossless เฉพาะเมื่อต้นฉบับเป็นเสียง Lossless / Hi-Res จริง (`FLAC`, `WAV/PCM`, `ALAC`, `TrueHD`, `MLP`, `DTS-HD MA`, `WavPack`, `APE`, `DSD` หรือ Sample Rate `> 48 kHz` / Bit-Depth `>= 24-bit`) โดยคง Sample Rate ต้นฉบับ (`44.1–192 kHz`) และ Bit-Depth (`16-bit / 24-bit`) แท้ไม่ทำ fake upsample และรันหลัง Pass SD ใน Lane 1 เพื่อไม่ให้หน่วงเวลาปลดล็อก `144p READY`
@@ -24,7 +35,7 @@ updated: 23 พฤศจิกายน 2026
   - เพิ่มเมนู **`คุณภาพเสียง`** พร้อมป้ายทอง **`Hi-Res WAV` / `Hi-Res FLAC`** ในเมนูตั้งค่า (เฟือง) ทั้ง Desktop และ Mobile ให้สลับระหว่าง **Hi-Res Lossless** กับ **มาตรฐาน (AAC)** ได้ทันที
   - อัปเกรดแถว **`Audio`** ใน Stats for Nerds ให้ไฮไลต์สีทองพร้อมแสดงสเปกจริง (เช่น `PCM WAV 24-bit/96kHz • 5.1 Surround (Lossless)`) และอ่านค่าระดับเสียงจริงจากแทร็ก Hi-Res
 
-### 2. รองรับเสียงหลายแชนเนลเต็มระบบ (1.0 Mono → 7.1 Surround) & แก้บั๊ก DB Enum
+### 3. รองรับเสียงหลายแชนเนลเต็มระบบ (1.0 Mono → 7.1 Surround) & แก้บั๊ก DB Enum
 - **Auto Multi-Channel Uniform Audio (`scripts/transcode-worker.js`):**
   - เข้ารหัสเสียง AAC-LC 48 kHz แบบ Uniform Audio เท่ากันทุกความละเอียด (`144p`–`2160p`) เพื่อไม่ให้ MSE สะดุดเวลาสลับความชัด:
     - **1.0 Mono:** `aformat=channel_layouts=mono` (`-ac 1`, `128k`)
@@ -36,7 +47,7 @@ updated: 23 พฤศจิกายน 2026
 - **แก้ไข `video_status` ENUM Cast ใน Worker (`scripts/transcode-worker.js`):**
   - แก้การอัปเดตคอลัมน์ `videos.status` ใน `updateLaneProgress` และ `setFinalDbStatus` ให้ cast เป็น `video_status` ENUM อย่างถูกต้อง (แก้ error `column "status" is of type video_status but expression is of type text`), เพิ่ม `hls_folder_path` และเพิ่ม guard ป้องกัน progress ping ซ้อนกัน
 
-### 3. ปรับโฉมแถบสารบัญด้านขวาของหน้าเอกสาร (Docs TOC Redesign)
+### 4. ปรับโฉมแถบสารบัญด้านขวาของหน้าเอกสาร (Docs TOC Redesign)
 - **Release Timeline & Active Scrollspy (`DocsTableOfContents.jsx`, `MarkdownDocViewer.jsx`, `globals.css`):**
   - แยกแถบ `ON THIS PAGE` เป็นคอมโพเนนต์แบบโต้ตอบได้ พร้อม Scrollspy เส้นส้ม `#FF7A00` ไฮไลต์หัวข้อที่กำลังอ่าน, ปุ่ม **กลับขึ้นด้านบน**, ล้างเครื่องหมาย backtick ดิบออกจากสารบัญ และแปลงหัวข้อ Patch Notes เป็นการ์ดไทม์ไลน์ 2 แถว (`เลขเวอร์ชัน + วันที่แบบย่อ + สรุป 1 บรรทัด`)
   - เพิ่มคลาส `.no-scrollbar` และ `.docs-toc-scroll` แบบเส้นบาง `3px` เพื่อตัดปัญหาแถบ Scrollbar สีส้มขนาดใหญ่ที่ขอบขวา
