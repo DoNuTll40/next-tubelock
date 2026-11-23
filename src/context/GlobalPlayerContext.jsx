@@ -37,7 +37,7 @@ export const DESKTOP_PLAYER_MAX_HEIGHT = `calc(100vh - ${DESKTOP_HEADER_OFFSET_P
 
 const GlobalPlayerContext = createContext(null);
 
-const subscribeNoop = () => () => {};
+const subscribeNoop = () => () => { };
 const getServerHostSnapshot = () => null;
 
 let singletonPlayerHostEl = null;
@@ -582,7 +582,7 @@ export function GlobalPlayerProvider({ children }) {
       const player = videoRef.current;
       if (player) {
         player.currentTime = 0;
-        player.play().catch(() => {});
+        player.play().catch(() => { });
       }
       return;
     }
@@ -861,8 +861,8 @@ export function GlobalPlayerProvider({ children }) {
         ? `/api/videos/${video.id}/poster${activeVersionKey ? `?v=${encodeURIComponent(activeVersionKey)}` : ''}`
         : revealedPoster?.url || RESTRICTED_POSTER
       : activeVersion?.thumbnailUrl ||
-        video?.thumbnail_url ||
-        (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null)
+      video?.thumbnail_url ||
+      (video?.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null)
     : null;
 
   const videoResolution = activeVersion?.resolution || video?.resolution;
@@ -933,7 +933,7 @@ export function GlobalPlayerProvider({ children }) {
             versionId: targetVersion.id,
             position: Math.floor(currentPos),
           }),
-        }).catch(() => {});
+        }).catch(() => { });
       }
     },
     [id, activeVersion, silenceAndPauseCurrentVideo]
@@ -955,7 +955,7 @@ export function GlobalPlayerProvider({ children }) {
         setStoryboard(null);
 
         if (latestSourceTypeRef.current !== 'mp4') {
-          preloadHlsModule().catch(() => {});
+          preloadHlsModule().catch(() => { });
         }
 
         const maybeReRankWithEnrichedVideo = (mergedVideo) => {
@@ -1004,7 +1004,7 @@ export function GlobalPlayerProvider({ children }) {
                 author_picture: dv.author_picture || prev?.author_picture,
               }));
             })
-            .catch(() => {});
+            .catch(() => { });
         }
 
         const canUseSsrSource =
@@ -1019,9 +1019,9 @@ export function GlobalPlayerProvider({ children }) {
         let sourceData = await (ssrSource
           ? Promise.resolve(ssrSource)
           : fetchVideoSourceClient(id, {
-              showAdultPreviews: showAdultPoster,
-              version: activeVersionKey,
-            }));
+            showAdultPreviews: showAdultPoster,
+            version: activeVersionKey,
+          }));
         if (isStale()) return;
 
         const needsRestrictedStoryboard =
@@ -1043,7 +1043,7 @@ export function GlobalPlayerProvider({ children }) {
             .then((preview) => {
               if (!isStale() && preview) setStoryboard(preview);
             })
-            .catch(() => {});
+            .catch(() => { });
         }
 
         if (sourceData.video) {
@@ -1138,10 +1138,10 @@ export function GlobalPlayerProvider({ children }) {
                     .then((sb) => {
                       if (!isStale() && sb) setStoryboard(sb);
                     })
-                    .catch(() => {});
+                    .catch(() => { });
                 }
               })
-              .catch(() => {});
+              .catch(() => { });
           }, 2200);
         }
 
@@ -1155,7 +1155,7 @@ export function GlobalPlayerProvider({ children }) {
                 setStoryboard(sb);
               }
             })
-            .catch(() => {});
+            .catch(() => { });
         } else {
           setStoryboard(null);
         }
@@ -1187,7 +1187,7 @@ export function GlobalPlayerProvider({ children }) {
   const handleSeek = useCallback((timeInSeconds) => {
     if (videoRef.current) {
       videoRef.current.currentTime = timeInSeconds;
-      videoRef.current.play().catch(() => {});
+      videoRef.current.play().catch(() => { });
     }
   }, []);
 
@@ -1298,69 +1298,69 @@ export function GlobalPlayerProvider({ children }) {
       {/* Persistent Singleton #movie_player Portal (AmbientLight + VideoPlayer always mounted once) */}
       {hostEl
         ? createPortal(
-            <>
-              <AmbientLight
-                videoRef={videoRef}
-                storyboard={matureVideo && !showAdultPoster ? null : storyboard}
-                poster={watchPoster}
-                enabled={ambientMode && isDockedInWatch}
-                aspectRatio={videoRatio}
-                className="hidden sm:block"
-              />
+          <>
+            <AmbientLight
+              videoRef={videoRef}
+              storyboard={matureVideo && !showAdultPoster ? null : storyboard}
+              poster={watchPoster}
+              enabled={ambientMode && isDockedInWatch}
+              aspectRatio={videoRatio}
+              className="max-md:mix-blend-multiply dark:max-md:mix-blend-screen"
+            />
 
-              <div className="relative z-10 w-full">
-                <VideoPlayer
-                  isActive={isDockedInWatch}
-                  src={streamUrl}
-                  partialSegmentMapRef={partialSegmentMapRef}
-                  poster={watchPoster}
-                  storyboard={storyboard}
-                  keepScrubPreviewOnLoad={matureVideo && !showAdultPoster}
-                  channelName={video?.author_name || 'DONUŤ'}
-                  title={video?.title || ''}
-                  onBack={handleBack}
-                  resolution={activeVersion?.resolution || video?.resolution}
-                  width={video?.width}
-                  height={video?.height}
-                  aspectRatio={videoRatio}
-                  fps={activeVersion?.fps || video?.fps}
-                  codec={activeVersion?.codec || video?.codec}
-                  videoId={video?.id}
-                  videoSlug={videoSlugValue}
-                  videoCategory={video?.category}
-                  videoRef={videoRef}
-                  desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}
-                  defaultVolume={playerConfig?.volume ?? 0.8}
-                  defaultAutoplay={playerConfig?.autoplay ?? true}
-                  defaultSpeed={playerConfig?.default_speed ?? 1}
-                  defaultFit={playerConfig?.default_fit ?? 'fit'}
-                  seekStep={playerConfig?.seek_step ?? 10}
-                  autoStats={playerConfig?.auto_stats ?? false}
-                  initialTime={startTime}
-                  isMusic={isMusic}
-                  onRatioChange={handleRatioChange}
-                  ambientMode={ambientMode}
-                  setAmbientMode={handleSetAmbientMode}
-                  currentVideo={video}
-                  relatedVideos={relatedVideos}
-                  playlistActive={Boolean(playlistState)}
-                  playlistNextVideo={playlistNextVideo}
-                  playlistPrevVideo={playlistPrevVideo}
-                  playlistLoopMode={playlistState?.loopMode ?? 'none'}
-                  onPlayNext={playlistNextVideo ? playNextInPlaylist : null}
-                  onPlayPrev={playlistPrevVideo ? playPrevInPlaylist : null}
-                  forcePlaylistPlayback={Boolean(selection.forcePlaylistPlayback)}
-                  onSelectVideo={handleSelectVideo}
-                  isSwitchingVideo={isSwitchingVideo || !streamUrl}
-                  versions={playableVersions}
-                  activeVersion={activeVersion}
-                  onSelectVersion={handleSelectVersion}
-                  isSwitchingVersion={isSwitchingVersion}
-                />
-              </div>
-            </>,
-            hostEl
-          )
+            <div className="relative z-10 w-full">
+              <VideoPlayer
+                isActive={isDockedInWatch}
+                src={streamUrl}
+                partialSegmentMapRef={partialSegmentMapRef}
+                poster={watchPoster}
+                storyboard={storyboard}
+                keepScrubPreviewOnLoad={matureVideo && !showAdultPoster}
+                channelName={video?.author_name || 'DONUŤ'}
+                title={video?.title || ''}
+                onBack={handleBack}
+                resolution={activeVersion?.resolution || video?.resolution}
+                width={video?.width}
+                height={video?.height}
+                aspectRatio={videoRatio}
+                fps={activeVersion?.fps || video?.fps}
+                codec={activeVersion?.codec || video?.codec}
+                videoId={video?.id}
+                videoSlug={videoSlugValue}
+                videoCategory={video?.category}
+                videoRef={videoRef}
+                desktopMaxHeight={DESKTOP_PLAYER_MAX_HEIGHT}
+                defaultVolume={playerConfig?.volume ?? 0.8}
+                defaultAutoplay={playerConfig?.autoplay ?? true}
+                defaultSpeed={playerConfig?.default_speed ?? 1}
+                defaultFit={playerConfig?.default_fit ?? 'fit'}
+                seekStep={playerConfig?.seek_step ?? 10}
+                autoStats={playerConfig?.auto_stats ?? false}
+                initialTime={startTime}
+                isMusic={isMusic}
+                onRatioChange={handleRatioChange}
+                ambientMode={ambientMode}
+                setAmbientMode={handleSetAmbientMode}
+                currentVideo={video}
+                relatedVideos={relatedVideos}
+                playlistActive={Boolean(playlistState)}
+                playlistNextVideo={playlistNextVideo}
+                playlistPrevVideo={playlistPrevVideo}
+                playlistLoopMode={playlistState?.loopMode ?? 'none'}
+                onPlayNext={playlistNextVideo ? playNextInPlaylist : null}
+                onPlayPrev={playlistPrevVideo ? playPrevInPlaylist : null}
+                forcePlaylistPlayback={Boolean(selection.forcePlaylistPlayback)}
+                onSelectVideo={handleSelectVideo}
+                isSwitchingVideo={isSwitchingVideo || !streamUrl}
+                versions={playableVersions}
+                activeVersion={activeVersion}
+                onSelectVersion={handleSelectVersion}
+                isSwitchingVersion={isSwitchingVersion}
+              />
+            </div>
+          </>,
+          hostEl
+        )
         : null}
     </GlobalPlayerContext.Provider>
   );

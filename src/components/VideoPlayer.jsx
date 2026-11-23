@@ -20,6 +20,7 @@ import {
 import PlayerTopBar from './player/PlayerTopBar';
 import PlayerCenterControls from './player/PlayerCenterControls';
 import PlayerBottomBar from './player/PlayerBottomBar';
+import AmbientLight from './player/AmbientLight';
 
 const PlayerSettingsModal = dynamic(() => import('./player/PlayerSettingsModal'), { ssr: false });
 const PlayerStatsModal = dynamic(() => import('./player/PlayerStatsModal'), { ssr: false });
@@ -2574,6 +2575,14 @@ export default function VideoPlayer({
     [containerSize.width, containerSize.height, videoRatio, aspectMode, controlsVisible, isMobileView, isScrubbing]
   );
 
+  const showInnerAmbientBackdrop = Boolean(
+    ambientMode &&
+    isActive &&
+    !isSwitchingVideo &&
+    aspectMode === 'fit' &&
+    (effectiveFullscreen || (videoRatio && videoRatio < 0.98) || (isMobileView && isCinematic))
+  );
+
   return (
     <div
       ref={containerRef}
@@ -2615,6 +2624,15 @@ export default function VideoPlayer({
         WebkitTouchCallout: 'none',
       }}
     >
+      {/* Ambient Mode Backdrop inside Player (fills fullscreen / pillarbox / letterbox black bars) */}
+      <AmbientLight
+        videoRef={video}
+        storyboard={keepScrubPreviewOnLoad ? null : storyboard}
+        poster={poster}
+        enabled={showInnerAmbientBackdrop}
+        variant="backdrop"
+      />
+
       {/* High-Performance Native Video Element */}
       <video
         ref={video}
@@ -2836,7 +2854,7 @@ export default function VideoPlayer({
 
           if (onLoadedMetadata) onLoadedMetadata(e);
         }}
-        className={`w-full h-full pointer-events-none block ${aspectMode === 'crop'
+        className={`relative z-[1] w-full h-full pointer-events-none block ${aspectMode === 'crop'
           ? 'object-cover scale-[1.08]' // ตัดแถบดำด้านบน-ล่างอย่างนุ่มนวล
           : aspectMode === 'fill'
             ? 'object-cover'

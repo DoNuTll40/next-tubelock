@@ -19,6 +19,7 @@ import { neon } from '@neondatabase/serverless';
 import { SUBTITLE_THAI_TRANSLATE_PROMPT } from '../src/lib/subtitlePrompts.js';
 import { getVideoLanguage, normalizeVideoLanguageCode } from '../src/lib/videoLanguages.js';
 import { transcribeAudio, TRANSCRIBE_MODEL } from './gemini-transcribe.js';
+import { transcribeAudioWithGroq, GROQ_TRANSCRIBE_MODELS } from './groq-transcribe.js';
 import {
   cuesToSrt,
   convertSrtToVtt,
@@ -34,7 +35,7 @@ import {
 
 const VIDEO_ID = process.env.VIDEO_ID || process.argv[2];
 const TRANSCRIBE_LLM_MODEL = 'gemini-3.8-flash';
-const TRANSLATE_MODEL = 'gemini-3.8-flash';
+const TRANSLATE_MODEL = 'gemini-4-neon';
 const SOURCE_LANGUAGE_ENV = normalizeVideoLanguageCode(process.env.SOURCE_LANGUAGE || '');
 const CUSTOM_PROMPT = (process.env.CUSTOM_PROMPT || '').trim();
 
@@ -51,6 +52,8 @@ const GEMINI_API_KEY = (
   process.env.GOOGLE_API_KEY ||
   ''
 ).replace(/['"]/g, '').trim();
+
+const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').replace(/['"]/g, '').trim();
 
 if (!VIDEO_ID) {
   console.error('❌ Missing required parameter: VIDEO_ID');
@@ -332,7 +335,9 @@ function normalizeModelCandidates(rawModel, { purpose = 'translate' } = {}) {
           'gemini-2.5-flash',
         ]
       : [
+          'gemini-4-neon',
           'gemini-3.8-flash',
+          'gemini-4-hydrogen',
           'gemini-3.5-flash-lite',
           'gemini-3.1-flash-lite',
           'gemini-3.5-flash',
@@ -393,8 +398,10 @@ function parseJsonResponseSafe(rawText) {
 }
 
 const GEMINI_REQUEST_TIMEOUT_MS = 120000;
-const AUDIO_CHUNK_SECONDS = 180; // 3-minute chunks for tight timestamps + high parallel throughput
+const AUDIO_CHUNK_SECONDS = 180; // 3-minute chunks for Gemini LLM fallback
+const GROQ_AUDIO_CHUNK_SECONDS = 600; // 10-minute chunks (~2.4 MB @ 32k MP3) for Groq Whisper ASR
 const TRANSCRIBE_CONCURRENCY = 5;
+const GROQ_TRANSCRIBE_CONCURRENCY = 4; // Well within Groq Free Plan 20 RPM
 const TRANSLATE_CONCURRENCY = 4;
 // Safety-fallback ASR (gemini-3.5-transcribe) is capped at ~10k input TPM on Tier 1; pace from request start when used.
 const TRANSCRIBE_FALLBACK_INTERVAL_MS = 60500;
@@ -704,8 +711,15 @@ async function sliceAudioToMp3Chunk(sourceAudioPath, startSec, lenSec, outPath, 
   return outPath;
 }
 
-async function buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger) {
-  if (!audioDurationSec || audioDurationSec <= AUDIO_CHUNK_SECONDS) {
+async function buildAudioChunks(
+  localAudioPath,
+  seekAudioPath,
+  tempDir,
+  audioDurationSec,
+  logger,
+  { chunkSeconds = AUDIO_CHUNK_SECONDS, concurrency = TRANSCRIBE_CONCURRENCY } = {}
+) {
+  if (!audioDurationSec || audioDurationSec <= chunkSeconds) {
     return [
       {
         index: 1,
@@ -717,16 +731,16 @@ async function buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDur
     ];
   }
 
-  const totalChunks = Math.ceil(audioDurationSec / AUDIO_CHUNK_SECONDS);
+  const totalChunks = Math.ceil(audioDurationSec / chunkSeconds);
   await logger.log(
-    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — แบ่งเสียงออกเป็น ${totalChunks} ช่วง (ช่วงละไม่เกิน ${AUDIO_CHUNK_SECONDS / 60} นาที • ประมวลผลขนาน ${Math.min(TRANSCRIBE_CONCURRENCY, totalChunks)} ช่วงพร้อมกัน)`,
+    `✂️ คลิปยาว ${formatDurationShort(audioDurationSec)} — แบ่งเสียงออกเป็น ${totalChunks} ช่วง (ช่วงละไม่เกิน ${Math.round(chunkSeconds / 60)} นาที • ประมวลผลขนาน ${Math.min(concurrency, totalChunks)} ช่วงพร้อมกัน)`,
     { toDb: true }
   );
 
   const chunks = [];
   for (let i = 0; i < totalChunks; i++) {
-    const startSec = i * AUDIO_CHUNK_SECONDS;
-    const lenSec = Math.max(0, Number(Math.min(AUDIO_CHUNK_SECONDS, audioDurationSec - startSec).toFixed(3)));
+    const startSec = i * chunkSeconds;
+    const lenSec = Math.max(0, Number(Math.min(chunkSeconds, audioDurationSec - startSec).toFixed(3)));
     if (lenSec <= 0) break;
 
     const chunkPath = path.join(tempDir, `chunk_${String(i + 1).padStart(3, '0')}.mp3`);
@@ -983,9 +997,15 @@ async function generateSubtitlesWithGemini(
   logger,
   { seekAudioPath = localAudioPath } = {}
 ) {
-  if (!GEMINI_API_KEY) throw new Error('Missing GEMINI_API_KEY');
+  if (!GROQ_API_KEY && !GEMINI_API_KEY) throw new Error('Missing GROQ_API_KEY and GEMINI_API_KEY');
   if (!Number.isFinite(audioDurationSec) || audioDurationSec <= 0) throw new Error('Cannot determine audio duration');
-  const chunks = await buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger);
+  const useGroqPrimary = Boolean(GROQ_API_KEY);
+  const activeChunkSec = useGroqPrimary ? GROQ_AUDIO_CHUNK_SECONDS : AUDIO_CHUNK_SECONDS;
+  const activeConcurrency = useGroqPrimary ? GROQ_TRANSCRIBE_CONCURRENCY : TRANSCRIBE_CONCURRENCY;
+  const chunks = await buildAudioChunks(localAudioPath, seekAudioPath, tempDir, audioDurationSec, logger, {
+    chunkSeconds: activeChunkSec,
+    concurrency: activeConcurrency,
+  });
 
   // Serialized pacing queue for rare safety-blocked chunks that fall back to gemini-3.5-transcribe
   let fallbackQueue = Promise.resolve();
@@ -1022,24 +1042,53 @@ async function generateSubtitlesWithGemini(
   };
 
   let completedChunks = 0;
-  const chunkResults = await runWithConcurrency(chunks, TRANSCRIBE_CONCURRENCY, async (chunk) => {
+  const primaryTranscribeLabel = useGroqPrimary ? GROQ_TRANSCRIBE_MODELS[0] : TRANSCRIBE_LLM_MODEL;
+  const chunkResults = await runWithConcurrency(chunks, activeConcurrency, async (chunk) => {
     const range = `${chunk.index}/${chunk.total} (${formatDurationShort(chunk.startSec)}–${formatDurationShort(chunk.endSec)})`;
     await logger.log(
-      `🎙️ [1/2] ${TRANSCRIBE_LLM_MODEL} (${sourceLangMeta ? sourceLangMeta.shortLabel : 'auto'}): ${range}`,
+      `🎙️ [1/2] ${primaryTranscribeLabel} (${sourceLangMeta ? sourceLangMeta.shortLabel : 'auto'}): ${range}`,
       { toDb: true }
     );
     let result;
-    try {
-      result = await transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt, logger);
-    } catch (llmErr) {
-      // Rescue blocked / failed chunk with dedicated verbatim ASR model
+    if (useGroqPrimary) {
       try {
-        result = await rescueChunkWithAsr(chunk, range);
-      } catch (asrErr) {
-        throw new Error(
-          `Transcription failed for audio chunk ${range}: LLM(${llmErr.message}) / ASR(${asrErr.message})`,
-          { cause: asrErr }
+        const audio = await fs.promises.readFile(chunk.path);
+        const chunkDurationSec = Math.max(1, chunk.endSec - chunk.startSec);
+        result = await transcribeAudioWithGroq(
+          audio,
+          Math.round(chunk.startSec * 1000),
+          GROQ_API_KEY,
+          fetchWithRetry,
+          {
+            languageCode: sourceLangMeta?.code || '',
+            chunkDurationSec,
+            logger,
+            stepLabel: `ถอดเสียง ${range}`,
+          }
         );
+      } catch (groqErr) {
+        if (!GEMINI_API_KEY) {
+          throw new Error(`Groq transcription failed for audio chunk ${range}: ${groqErr.message}`, { cause: groqErr });
+        }
+        await logger.log(
+          `⚠️ [1/2] ช่วง ${range} Groq ขัดข้อง (${groqErr.message}) — สลับไปใช้ Gemini สำรอง...`,
+          { level: 'warn', toDb: true }
+        );
+      }
+    }
+    if (!result) {
+      try {
+        result = await transcribeChunkWithGeminiLlm(chunk, sourceLangMeta, customPrompt, logger);
+      } catch (llmErr) {
+        // Rescue blocked / failed chunk with dedicated verbatim ASR model
+        try {
+          result = await rescueChunkWithAsr(chunk, range);
+        } catch (asrErr) {
+          throw new Error(
+            `Transcription failed for audio chunk ${range}: LLM(${llmErr.message}) / ASR(${asrErr.message})`,
+            { cause: asrErr }
+          );
+        }
       }
     }
     completedChunks += 1;
@@ -1052,6 +1101,7 @@ async function generateSubtitlesWithGemini(
 
   const allOriginalCues = chunkResults.flatMap((r) => r.cues || []);
   const chunkLangVotes = chunkResults.map((r) => r.detectedCode).filter(Boolean);
+  const usedTranscribeModel = chunkResults.find((r) => r?.modelUsed)?.modelUsed || primaryTranscribeLabel;
 
   if (!allOriginalCues.length) {
     throw new Error('ไม่พบเสียงพูดในคลิปสำหรับสร้างซับไตเติล');
@@ -1080,7 +1130,7 @@ async function generateSubtitlesWithGemini(
       originalSrt: thaiOriginalSrt,
       thaiSrt: thaiOriginalSrt,
       totalCues: cleanThaiCues.length,
-      modelSummary: TRANSCRIBE_LLM_MODEL,
+      modelSummary: usedTranscribeModel,
     };
   }
 
@@ -1149,9 +1199,9 @@ async function generateSubtitlesWithGemini(
     originalSrt: mergedOriginalSrt,
     thaiSrt: cuesToSrt(allThaiCues),
     totalCues: allOriginalCues.length,
-    modelSummary: TRANSCRIBE_LLM_MODEL === TRANSLATE_MODEL
-      ? TRANSCRIBE_LLM_MODEL
-      : `${TRANSCRIBE_LLM_MODEL} + ${TRANSLATE_MODEL}`,
+    modelSummary: usedTranscribeModel === TRANSLATE_MODEL
+      ? usedTranscribeModel
+      : `${usedTranscribeModel} + ${TRANSLATE_MODEL}`,
   };
 }
 
@@ -1256,10 +1306,11 @@ async function main() {
   }
 
   try {
+    const activeTranscribeModel = GROQ_API_KEY ? GROQ_TRANSCRIBE_MODELS[0] : TRANSCRIBE_LLM_MODEL;
     const primaryModel =
-      sourceLangMeta?.isThai || TRANSCRIBE_LLM_MODEL === TRANSLATE_MODEL
-        ? TRANSCRIBE_LLM_MODEL
-        : `${TRANSCRIBE_LLM_MODEL} + ${TRANSLATE_MODEL}`;
+      sourceLangMeta?.isThai || activeTranscribeModel === TRANSLATE_MODEL
+        ? activeTranscribeModel
+        : `${activeTranscribeModel} + ${TRANSLATE_MODEL}`;
     const langBanner = sourceLangMeta ? ` • ภาษาตั้งต้น: ${sourceLangMeta.label}` : ' • ภาษา: ตรวจอัตโนมัติ';
     await logger.log(`🎬 เริ่มงานสกัดเสียงและสร้างซับไตเติล (วิดีโอ #${vidNum}, โมเดล ${primaryModel}${langBanner})...`, { toDb: true });
 

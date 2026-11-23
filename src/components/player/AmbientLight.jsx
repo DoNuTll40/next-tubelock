@@ -12,6 +12,7 @@ export default function AmbientLight({
   storyboard = null,
   poster = null,
   enabled = true,
+  variant = 'halo',
   className = '',
 }) {
   const isEnabled = Boolean(enabled);
@@ -145,7 +146,6 @@ export default function AmbientLight({
 
     const updateAmbient = async (forceInitial = false) => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      if (typeof window !== 'undefined' && window.innerWidth < 640) return;
 
       const video = videoRef?.current;
       if (!video) return;
@@ -258,32 +258,44 @@ export default function AmbientLight({
 
   if (!isEnabled) return null;
 
+  const isBackdrop = variant === 'backdrop';
+
   // ปรับขนาดความกว้างและความฟุ้งของแสงตรงนี้ได้เลย!
-  const canvasLayerStyle = (isActive) => ({
-    // 1. เพิ่ม blur เป็น 120px ให้แสงกระจายตัวออกไปไกลขึ้นและขอบนุ่มละมุน
-    // 2. ปรับ saturate(2.2) ให้สีสดชัดขึ้นเวลาแผ่ออกไปไกลๆ
-    filter: 'blur(80px) saturate(2.2) brightness(1)',
+  const canvasLayerStyle = (isActive) =>
+    isBackdrop
+      ? {
+          filter: 'blur(48px) saturate(1.9) brightness(0.75)',
+          transform: 'scale(1.18) translateZ(0)',
+          opacity: isActive ? 0.65 : 0,
+        }
+      : {
+          // 1. เพิ่ม blur เป็น 80px ให้แสงกระจายตัวออกไปไกลขึ้นและขอบนุ่มละมุน
+          // 2. ปรับ saturate(2.2) ให้สีสดชัดขึ้นเวลาแผ่ออกไปไกลๆ
+          filter: 'blur(80px) saturate(2.2) brightness(1)',
 
-    // 3. ขยายขนาดแสง: (กว้างซ้าย-ขวา 1.22 เท่า, สูงบน-ล่าง 1.32 เท่า)
-    // ถ้าอยากให้ใหญ่กว่านี้อีก ลองขยับเป็น scale(1.30, 1.45) ได้เลยครับ
-    transform: 'scale(1.2, -1) translateZ(0)',
+          // 3. ขยายขนาดแสง: (กว้างซ้าย-ขวา 1.2 เท่า, พลิกแกน Y ให้สีขอบล่างวิดีโอฟุ้งลงด้านล่าง)
+          transform: 'scale(1.2, -1) translateZ(0)',
 
-    // 4. ความเข้มของแสง (0.60 - 0.70 กำลังสวยแบบโรงหนัง)
-    opacity: isActive ? 0.65 : 0,
-  });
+          // 4. ความเข้มของแสง (0.60 - 0.70 กำลังสวยแบบโรงหนัง)
+          opacity: isActive ? 0.65 : 0,
+        };
+
+  const canvasClassName = isBackdrop
+    ? 'absolute inset-0 h-full w-full transition-opacity duration-[1800ms] ease-in-out will-change-[opacity]'
+    : 'absolute inset-2 h-[calc(100%-16px)] w-[calc(100%-16px)] rounded-3xl transition-opacity duration-[1800ms] ease-in-out will-change-[opacity]';
 
   return (
     <div
       aria-hidden="true"
-      className={`pointer-events-none absolute inset-0 z-0 select-none overflow-visible transition-opacity duration-[2200ms] ease-out ${hasStarted ? 'opacity-100' : 'opacity-0'
+      className={`pointer-events-none absolute inset-0 z-0 select-none ${isBackdrop ? 'overflow-hidden' : 'overflow-visible'} transition-opacity duration-[2200ms] ease-out ${hasStarted ? 'opacity-100' : 'opacity-0'
         } ${className}`}
     >
-      {/* Layer 0: มีขนาดเท่ากับกรอบวิดีโอ (inset-2) แล้วปล่อยให้ filter: blur(90px) ฟุ้งทะลุออกนอกกรอบไปจางหายเอง */}
+      {/* Layer 0 */}
       <canvas
         ref={canvasRef0}
         width={48}
         height={27}
-        className="absolute inset-2 h-[calc(100%-16px)] w-[calc(100%-16px)] rounded-3xl transition-opacity duration-[1800ms] ease-in-out will-change-[opacity]"
+        className={canvasClassName}
         style={canvasLayerStyle(activeLayer === 0)}
       />
 
@@ -292,7 +304,7 @@ export default function AmbientLight({
         ref={canvasRef1}
         width={48}
         height={27}
-        className="absolute inset-2 h-[calc(100%-16px)] w-[calc(100%-16px)] rounded-3xl transition-opacity duration-[1800ms] ease-in-out will-change-[opacity]"
+        className={canvasClassName}
         style={canvasLayerStyle(activeLayer === 1)}
       />
     </div>

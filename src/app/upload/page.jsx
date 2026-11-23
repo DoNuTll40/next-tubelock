@@ -33,9 +33,14 @@ import UploadSidebar from '@/components/upload/UploadSidebar';
 import UploadLogs from '@/components/upload/UploadLogs';
 
 function formatDuration(sec) {
-  if (!sec || isNaN(sec)) return '0:00';
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
+  const total = Math.max(0, Math.round(Number(sec) || 0));
+  if (!total) return '0:00';
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) {
+    return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  }
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 

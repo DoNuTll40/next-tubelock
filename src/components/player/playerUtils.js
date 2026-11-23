@@ -5,10 +5,14 @@
 import { parseSrtTimestampToMs, parseSrtCues, normalizeSubtitleTimeline } from '../../lib/subtitleUtils.js';
 
 export const formatTime = (time, isDuration = false) => {
-  if (isNaN(time) || !time || time < 0) return '00:00';
+  if (isNaN(time) || !time || time < 0) return '0:00';
   const totalSec = isDuration ? Math.round(time) : Math.floor(time);
-  const m = Math.floor(totalSec / 60);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
   const s = totalSec % 60;
+  if (h > 0) {
+    return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  }
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 };
 
@@ -18,12 +22,7 @@ export const formatTimePair = (cur, dur) => {
   const c = Math.max(0, Number(cur) || 0);
   const currentSec = totalDurSec > 0 ? Math.min(Math.floor(c), totalDurSec) : Math.floor(c);
 
-  const curM = Math.floor(currentSec / 60);
-  const curS = currentSec % 60;
-  const durM = Math.floor(totalDurSec / 60);
-  const durS = totalDurSec % 60;
-
-  return `${curM}:${curS < 10 ? '0' : ''}${curS} / ${durM}:${durS < 10 ? '0' : ''}${durS}`;
+  return `${formatTime(currentSec)} / ${formatTime(totalDurSec)}`;
 };
 
 export const parseResolutionRatio = (resolution) => {

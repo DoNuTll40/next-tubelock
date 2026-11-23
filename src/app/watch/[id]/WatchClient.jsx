@@ -259,7 +259,7 @@ export default function WatchClient({
   }
 
   return (
-    <div className="w-full max-w-[2560px] mx-auto px-0 sm:px-4 lg:px-5 pt-0 sm:pt-2 sm:pb-6 lg:pt-3">
+    <div className="w-full max-w-[2560px] mx-auto overflow-x-clip px-0 sm:px-4 lg:px-5 pt-0 sm:pt-2 sm:pb-6 lg:pt-3">
       {/* ⚠️ Alert Banner */}
       {error && (
         <div className="bg-rose-500/10 border-b border-rose-500/20 px-4 py-3 text-rose-500 dark:text-rose-400 text-xs sm:text-sm flex items-center justify-between z-30 relative mb-3 rounded-xl">
@@ -292,7 +292,7 @@ export default function WatchClient({
           <div
             ref={playerWrapperRef}
             id="player-primary-container"
-            className={`sticky top-0 z-30 w-full bg-black md:bg-transparent md:relative md:z-0 has-[[data-player-fullscreen="true"]]:!z-[100] ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] md:h-auto flex justify-center items-center md:block' : ''
+            className={`sticky top-0 z-30 w-full ${!isDockedInWatch ? 'bg-black' : 'bg-transparent'} md:bg-transparent md:relative md:z-0 has-[[data-player-fullscreen="true"]]:!z-[100] ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] md:h-auto flex justify-center items-center md:block' : ''
               }`}
             style={
               !isDockedInWatch
