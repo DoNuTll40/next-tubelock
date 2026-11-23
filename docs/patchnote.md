@@ -2,12 +2,50 @@
 title: บันทึกการอัปเดต (Patch Notes)
 group: ข้อมูลระบบและการอัปเดต
 order: 4
-updated: 19 พฤศจิกายน 2026
+updated: 23 พฤศจิกายน 2026
 ---
 
 # บันทึกการอัปเดตระบบ (Patch Notes & Changelog)
 
 > **สาระสำคัญ:** รายละเอียดการพัฒนา การปรับปรุงความเสถียร และการแก้ไขข้อผิดพลาดของระบบ TubeLock อย่างเป็นทางการ
+
+---
+
+## เวอร์ชัน 1.2.8 (Build 1.2.8.20261123 — 23 พฤศจิกายน 2026) — 3x Parallel HLS Transcoder, Smart Hybrid AV1 10-bit True HDR (fMP4), Sharpness Upgrade & Playlist / AI Subtitle Improvements
+
+### 1. สถาปัตยกรรมหั่น HLS ขนาน 3 เครื่อง (3x Parallel Runners + Finalize Job)
+- **แยกงานแปลงวิดีโอขนานกันบน GitHub Actions (`.github/workflows/transcode.yml`, `scripts/transcode-worker.js`):**
+  - แตกงานหั่น HLS จาก 1 Runner เดี่ยวเป็น **3 Parallel Lanes** วิ่งพร้อมกันทันทีโดยไม่ต้องรอ `prepare`:
+    - **Lane 1 (`lane-fast-sd`):** สร้าง `poster.jpg`, `144p` และ Storyboard SD/HD เพื่อปลดล็อกสถานะ `READY` ทันที แล้วหั่น `360p + 480p` ต่อ
+    - **Lane 2 (`lane-hd`):** หั่น `720p HD` (และ `1440p 2K` หากต้นฉบับถึง) พร้อมตรวจความละเอียดด้วย remote `ffprobe` เพื่อข้ามการดาวน์โหลดไฟล์ดิบหากคลิปต่ำกว่า 720p
+    - **Lane 3 (`lane-fhd`):** หั่น `1080p Full HD` (และ `2160p 4K` หากต้นฉบับถึง) พร้อม remote `ffprobe` ข้ามอัตโนมัติหากคลิปต่ำกว่า 1080p
+    - **Finalize (`finalize`):** รอทั้ง 3 Lane จบ (`if: !cancelled()`) แล้วรวม `master.m3u8` ฉบับสมบูรณ์, ลบไฟล์ต้นฉบับ `/raw/` เมื่อทุก Lane สำเร็จและ AI Workers ไม่ได้ใช้งานอยู่ (หากมี Lane ล้มเหลวจะเก็บไฟล์ดิบไว้และรองรับกด Re-run failed jobs ต่อจากความละเอียดเดิมผ่าน `TRANSCODE_RUN_ID`)
+- **ซิงก์ข้อมูลข้ามเครื่องแบบไร้ Race Condition และกันดิสก์เต็ม:**
+  - เพิ่มคอลัมน์ JSONB `ready_qualities` และ `lane_progress` ใน `videos` และ `video_versions` อัปเดตแบบ Atomic ผ่าน PostgreSQL row-level locking เพื่อรวม `master.m3u8` ไม่ให้ทับกัน, ล็อกสถานะไม่ให้ถอยหลังจาก `READY` และคำนวณ `transcode_progress` แบบ Monotonic เดินหน้าอย่างเดียว
+  - เคลียร์พื้นที่ขยะบน Ubuntu Runner เพิ่มพื้นที่ NVMe SSD ขึ้น `+30 GB` กันปัญหา `ENOSPC` สำหรับคลิปยาว 3–4 ชม., ปรับ `UPLOAD_CONCURRENCY = 4` ต่อเครื่อง (รวม 12) ป้องกัน Microsoft Graph 429 และเพิ่มระบบ retry เมื่อเกิด `409 Conflict` / `423 Locked`
+
+### 2. ยกระดับความคมชัดของภาพ (คง Bitrate เดิม 100%) และ DX11 Hardware Overlay
+- **ปรับจูน x264 สำหรับชั้น `720p / 1080p / 1440p / 2160p` (`scripts/transcode-worker.js`):**
+  - คงสเปก Bitrate เดิมทุกชั้น (`200k / 600k / 1000k / 3500k / 8500k / 12000k / 20000k`) แต่ขยับ `-preset veryfast` → **`-preset fast`** เพื่อปลดล็อก `subme=6`, `trellis=1`, `ref=2`, `rc_lookahead=30` ให้ `psy-rd` รักษาความคมของพื้นผิวและขอบภาพทำงานจริง
+  - เปลี่ยนตัวกรองย่อสเกลเป็น **`lanczos`** (`flags=lanczos`), ลดแรง Double-Deblocking ด้วย **`-x264-params deblock=-1,-1`** และแทนที่ `-sc_threshold 0` ด้วย **`-force_key_frames expr:gte(t,n_forced*4)`** เพื่อให้ยังตัดเซกเมนต์ 4 วินาทีเป๊ะแต่ใส่ I-frame ตรงจุดตัดฉากจริงได้ (`scenecut=40`)
+  - เพิ่ม `-pix_fmt yuv420p` ให้ทุก Pass ของสาย SDR รองรับไฟล์ต้นฉบับ SDR 10-bit โดยไม่ติด Error
+- **ปลดล็อก Hardware Video Overlay (`src/components/VideoPlayer.jsx`):**
+  - นำ `backfaceVisibility: 'hidden'` และ `transform: 'none'` ที่ไม่จำเป็นออกจาก `<video>` ในโหมด `fit` / `fill` เพื่อช่วยให้ Chromium บน Windows โปรโมตวิดีโอขึ้น DX11 DirectComposition Hardware Overlay ได้ดีขึ้น
+
+### 3. ระบบ Smart Hybrid True HDR (`AV1 10-bit` + `fMP4`) และ YouTube-Style HDR Player UI
+- **ตรวจจับและเข้ารหัส HDR แท้อัตโนมัติ (`scripts/transcode-worker.js`, `.github/workflows/transcode.yml`):**
+  - `ffprobe` ตรวจจับค่าสีต้นฉบับ (`color_transfer`, `color_primaries`, `color_space`, `pix_fmt`) อัตโนมัติ: คลิป **SDR** วิ่งสาย H.264 `.ts` เดิม 100% ส่วนคลิป **HDR (`smpte2084` PQ/HDR10 หรือ `arib-std-b67` HLG)** สลับไปเข้ารหัสเป็น **AV1 10-bit True HDR (`libsvtav1` + `yuv420p10le` + `bt2020nc` + `fMP4 .m4s` + `init_*.mp4`)** ทุกความละเอียด พร้อมฝัง `#EXT-X-VERSION:7`, `CODECS="av01.0...10..."` และ `VIDEO-RANGE=PQ/HLG` ใน `master.m3u8` และแปลงภาพปก/Storyboard เป็น `format=yuvj420p`
+- **รองรับ HLS fMP4 เต็มระบบตั้งแต่ Cold-Start จนถึง Player (`videoSourceService.js`, `playbackResolver.js`, `GlobalPlayerContext.jsx`):**
+  - เพิ่ม `isHlsSegmentFile()` ครอบคลุม `.ts`, `.m4s` และ `init_*.mp4` ใน Cloudflare Worker cache wrapper และอัปเกรด `extractInitialSegmentNames()` ให้ดึง `#EXT-X-MAP:URI="init_*.mp4"` ขึ้นมาก่อนเซกเมนต์แรกๆ ใน Graph `$batch`
+  - อัปเกรด `rewriteSubPlaylistToBlobUrl()` และ Two-Phase Cold-Batch Hydration ให้แปลง `#EXT-X-MAP:URI="..."` และไฟล์ `.m4s` เป็น URL จริงได้ไร้รอยต่อ
+- **ป้าย `HDR` แบบ YouTube และ Telemetry สีจริง (`videoUtils.js`, `VideoPlayer.jsx`, `PlayerStatsModal.jsx`):**
+  - อ่าน `VIDEO-RANGE` (`PQ` / `HLG`) จาก `master.m3u8` แสดงป้าย **`1080p HDR` / `2160p60 HDR`** ในเมนูความละเอียด และขึ้นป้าย **`HDR`** บนปุ่มฟันเฟืองอัตโนมัติ
+  - อัปเกรดหน้าต่าง **สถิติสำหรับเด็กเนิร์ด (Stats for Nerds)** ให้แสดงค่า `Color` ตามจริง (`bt2020 / smpte2084 (HDR10)`, `bt2020 / arib-std-b67 (HLG)`, หรือ `bt709 / bt709 (SDR)`) และ `Codec` (`AV01` / `H264`) แบบเรียลไทม์
+
+### 4. ระบบเพลย์ลิสต์, ซับไตเติล AI และความเสถียรของระบบ
+- **ระบบเพลย์ลิสต์ครบวงจร (Playlist System):** รองรับสร้าง/จัดลำดับเพลย์ลิสต์, แผงเพลย์ลิสต์ด้านข้างพร้อมดูดสีปกแบบไดนามิก (`Dynamic Cover Tinting`), M3 Mobile Bottom Sheet, ปุ่มเล่นวน/สุ่ม และหน้าจอนับถอยหลังเล่นคลิปถัดไปบน PC
+- **ปรับปรุงเอนจินซับไตเติล AI (`audio-subtitle-worker.js`, `subtitleWorkflow.js`):** ใช้ `gemini-3.5-transcribe` ถอดเสียงแบบแบ่งช่วง VAD ลดอาการ drift/hallucination + แปลด้วย `gemini-4-neon`, ปรับ backoff กัน 429 และใช้เวลา `NOW()` ของ PostgreSQL ป้องกันปัญหาเครื่องท้องถิ่นเวลาเหลื่อมแล้วสั่งยกเลิกงานซับใหม่
+- **แก้แคช `master.m3u8` ค้างระหว่าง Progressive Transcode & ปรับโหมดแนวนอนมือถือ:** ล้างแคชอัตโนมัติเมื่อมีระดับความชัดใหม่พร้อมใช้งาน, รองรับ Auto Full-Viewport เมื่อหมุนจอแนวนอนบนมือถือ และลดความถี่การบันทึกประวัติการรับชมลง Neon DB
 
 ---
 
