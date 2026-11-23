@@ -402,8 +402,8 @@ const VAD_MIN_SILENCE_SEC = 0.6;
 const VAD_PAD_SEC = 0.25;
 const VAD_MERGE_GAP_SEC = 4.5; // Merge conversational pauses up to 4.5s into one chunk instead of spamming 1-2s requests
 const VAD_MIN_SPEECH_SEC = 0.6;
-const TRANSCRIBE_CONCURRENCY = 6;
-const TRANSLATE_CONCURRENCY = 4;
+const TRANSCRIBE_CONCURRENCY = 3; // Gentle concurrency avoids Google Spend Cap burst throttling
+const TRANSLATE_CONCURRENCY = 3;
 // Safety-fallback ASR (gemini-3.5-transcribe) is capped at ~10k input TPM on Tier 1; pace from request start when used.
 const TRANSCRIBE_FALLBACK_INTERVAL_MS = 60500;
 
@@ -495,10 +495,10 @@ async function callGeminiWithFallback(
           headers: { 'Content-Type': 'application/json' },
           body: tunedBody,
         },
-        2,
-        2000,
+        4,
+        4000,
         GEMINI_REQUEST_TIMEOUT_MS,
-        { retryOnTimeout: false }
+        { retryOnTimeout: false, rateLimitDelayMs: 8000 }
       );
     } catch (reqErr) {
       clearInterval(heartbeatTimer);
