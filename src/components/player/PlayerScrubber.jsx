@@ -43,47 +43,47 @@ export default function PlayerScrubber({
         flushBottom ? 'h-4 items-end py-0' : 'h-6 sm:h-5 items-center py-1'
       }`}
     >
-      {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
+      {/* YouTube-Style Timeline Scrub Preview: Desktop = Thumbnail + Time; Mobile = Crisp Floating Time Badge (full-frame storyboard renders in VideoPlayer!) */}
       <div
         ref={scrubPreviewRef}
         className={`left-0 absolute ${
-          flushBottom ? 'bottom-[calc(100%+12px)]' : 'bottom-[calc(100%+14px)]'
+          flushBottom ? 'bottom-[calc(100%+10px)]' : 'bottom-[calc(100%+14px)]'
         } -translate-x-1/2 flex flex-col items-center pointer-events-none z-50 transition-opacity duration-150 ease-out ${showPreview
-          ? (flushBottom ? 'opacity-100 scale-100 translate-y-0' : 'opacity-100 scale-100 translate-y-10 sm:translate-y-2')
-          : (flushBottom ? 'opacity-0 scale-95 translate-y-2 pointer-events-none' : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5 pointer-events-none')
+          ? (isMobileView ? 'opacity-100 scale-100 translate-y-0' : 'opacity-100 scale-100 translate-y-10 sm:translate-y-2')
+          : (isMobileView ? 'opacity-0 scale-95 translate-y-1 pointer-events-none' : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5 pointer-events-none')
           }`}
       >
-        {/* Preview Frame Thumbnail Card */}
-        <div
-          className={`${isVertical
-            ? (flushBottom ? 'h-32 w-auto max-w-[92px]' : 'h-48 sm:h-56 w-auto max-w-[120px]')
-            : (flushBottom ? 'w-36 h-auto' : 'w-48 sm:w-64 md:w-84 h-auto')
-            } rounded-lg overflow-hidden bg-zinc-950 shadow-[0_8px_24px_rgba(0,0,0,0.85)] relative mb-1.5 ring-1 ring-white/75 shrink-0`}
-          style={{ aspectRatio: videoRatio || 16 / 9 }}
-        >
-          {poster && (
-            <img
-              src={poster}
-              alt="Thumbnail Preview"
-              loading="lazy"
-              decoding="async"
-              className="absolute inset-0 w-full h-full object-cover opacity-75"
-            />
-          )}
-          {/* Tier 1: Fast SD Sprite Sheet */}
-          <div ref={scrubThumbSdRef} className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0" />
-          {/* Tier 2: Sharp HD Sprite Sheet */}
-          <div ref={scrubThumbHdRef} className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-200" />
-          {/* Vignette */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none z-20" />
-        </div>
+        {/* Preview Frame Thumbnail Card (Desktop only — Mobile uses full-frame storyboard overlay!) */}
+        {!isMobileView && (
+          <div
+            className={`${isVertical ? 'h-48 sm:h-56 w-auto max-w-[120px]' : 'w-48 sm:w-64 md:w-84 h-auto'
+              } rounded-lg overflow-hidden bg-zinc-950 shadow-[0_8px_24px_rgba(0,0,0,0.85)] relative mb-1.5 ring-1 ring-white/75 shrink-0`}
+            style={{ aspectRatio: videoRatio || 16 / 9 }}
+          >
+            {poster && (
+              <img
+                src={poster}
+                alt="Thumbnail Preview"
+                loading="lazy"
+                decoding="async"
+                className="absolute inset-0 w-full h-full object-cover opacity-75"
+              />
+            )}
+            {/* Tier 1: Fast SD Sprite Sheet */}
+            <div ref={scrubThumbSdRef} className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0" />
+            {/* Tier 2: Sharp HD Sprite Sheet */}
+            <div ref={scrubThumbHdRef} className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-200" />
+            {/* Vignette */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 pointer-events-none z-20" />
+          </div>
+        )}
 
         {/* Time Badge (Direct DOM updates only) */}
         <div
           ref={scrubBadgeRef}
           className={
-            flushBottom
-              ? 'bg-black/85 text-white border border-white/15 px-2 py-0.5 rounded-full text-[11px] font-mono font-bold whitespace-nowrap shadow-md'
+            isMobileView
+              ? 'bg-black/85 text-white border border-white/15 px-2.5 py-0.5 rounded-full text-[12px] font-mono font-bold whitespace-nowrap shadow-lg'
               : 'bg-black/25 shadow-lg backdrop-blur-sm text-white border-1 border-white/25 px-2.5 py-0.5 rounded-full text-[14px] font-mono font-bold whitespace-nowrap '
           }
         >

@@ -513,7 +513,7 @@ export default function PlayerBottomBar({
         /* MOBILE PORTRAIT BOTTOM BAR (Ultra-Clean: Time + Fullscreen!) */
         /* ============================================================ */
         <div
-          className={`flex items-center justify-between px-3 pb-1 text-white text-xs transition-opacity duration-100 ${
+          className={`flex items-center justify-between px-3 -mb-2 pb-0 text-white text-xs transition-opacity duration-100 ${
             isScrubbing ? 'opacity-0 pointer-events-none' : 'opacity-100'
           }`}
         >

@@ -3339,6 +3339,32 @@ export default function VideoPlayer({
         className="absolute inset-0 bg-black pointer-events-none z-[4] transition-opacity duration-500 ease-out opacity-0"
       />
 
+      {/* Full-Frame Mobile Scrub Storyboard Preview (YouTube Mobile style: replaces video live while dragging scrubber!) */}
+      {!isMiniplayer && isMobileView && (
+        <div
+          aria-hidden="true"
+          className={`absolute inset-0 z-[24] bg-black overflow-hidden pointer-events-none transition-opacity duration-100 ${
+            isScrubbing ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
+          {poster && !keepScrubPreviewOnLoad && (
+            <img
+              src={poster}
+              alt=""
+              className="absolute inset-0 w-full h-full object-contain opacity-65"
+            />
+          )}
+          <div
+            ref={scrubThumbSdRef}
+            className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0"
+          />
+          <div
+            ref={scrubThumbHdRef}
+            className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-150"
+          />
+        </div>
+      )}
+
       {/* Unified 3-Zone Click / Double-Click Overlay (Full Watch Mode) OR YouTube-Style Desktop Miniplayer Overlay */}
       {isMiniplayer ? (
         !isMobileView && (
@@ -3578,7 +3604,7 @@ export default function VideoPlayer({
 
           {/* Top Bar: Fullscreen / Mobile */}
           <PlayerTopBar
-        showControls={controlsVisible && !isMobileEndPromptOpen}
+        showControls={controlsVisible && !isMobileEndPromptOpen && !(isMobileView && isScrubbing)}
         isFullscreen={effectiveFullscreen}
         isMobileView={isMobileView}
         isEnded={isEnded}
@@ -3610,7 +3636,7 @@ export default function VideoPlayer({
         centerRipple={centerRipple}
         doubleTapSide={doubleTapSide}
         accumulatedSeconds={accumulatedSeconds}
-        showControls={controlsVisible && !isMobileEndPromptOpen}
+        showControls={controlsVisible && !isMobileEndPromptOpen && !(isMobileView && isScrubbing)}
         isPlaying={isPlaying}
         isEnded={isEnded}
         isBuffering={isBuffering || isSwitchingVideo || isSwitchingVersion}
