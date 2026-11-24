@@ -512,7 +512,11 @@ export default function PlayerBottomBar({
         /* ============================================================ */
         /* MOBILE PORTRAIT BOTTOM BAR (Ultra-Clean: Time + Fullscreen!) */
         /* ============================================================ */
-        <div className="flex items-center justify-between px-3 pb-1 text-white text-xs">
+        <div
+          className={`flex items-center justify-between px-3 pb-1 text-white text-xs transition-opacity duration-100 ${
+            isScrubbing ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          }`}
+        >
           <span
             ref={timeDisplayRef}
             className="text-[11.5px] font-mono font-medium text-white/95 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] select-none"

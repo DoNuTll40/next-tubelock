@@ -46,15 +46,19 @@ export default function PlayerScrubber({
       {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
       <div
         ref={scrubPreviewRef}
-        className={`left-0 absolute bottom-[calc(100%+14px)] -translate-x-1/2 flex flex-col items-center pointer-events-none z-40 transition-opacity duration-150 ease-out ${showPreview
-          ? 'opacity-100 scale-100 translate-y-10 sm:translate-y-2'
-          : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5 pointer-events-none'
+        className={`left-0 absolute ${
+          flushBottom ? 'bottom-[calc(100%+12px)]' : 'bottom-[calc(100%+14px)]'
+        } -translate-x-1/2 flex flex-col items-center pointer-events-none z-50 transition-opacity duration-150 ease-out ${showPreview
+          ? (flushBottom ? 'opacity-100 scale-100 translate-y-0' : 'opacity-100 scale-100 translate-y-10 sm:translate-y-2')
+          : (flushBottom ? 'opacity-0 scale-95 translate-y-2 pointer-events-none' : 'opacity-0 scale-90 translate-y-10 sm:translate-y-5 pointer-events-none')
           }`}
       >
         {/* Preview Frame Thumbnail Card */}
         <div
-          className={`${isVertical ? 'h-48 sm:h-56 w-auto max-w-[120px]' : 'w-48 sm:w-64 md:w-84 h-auto'
-            } rounded-lg overflow-hidden border-0 border-white/60 bg-zinc-950 shadow-[0_8px_30px_rgba(0,0,0,0.9)] relative mb-1.5 ring-2 ring-white/70 shrink-0`}
+          className={`${isVertical
+            ? (flushBottom ? 'h-32 w-auto max-w-[92px]' : 'h-48 sm:h-56 w-auto max-w-[120px]')
+            : (flushBottom ? 'w-36 h-auto' : 'w-48 sm:w-64 md:w-84 h-auto')
+            } rounded-lg overflow-hidden bg-zinc-950 shadow-[0_8px_24px_rgba(0,0,0,0.85)] relative mb-1.5 ring-1 ring-white/75 shrink-0`}
           style={{ aspectRatio: videoRatio || 16 / 9 }}
         >
           {poster && (
@@ -77,7 +81,11 @@ export default function PlayerScrubber({
         {/* Time Badge (Direct DOM updates only) */}
         <div
           ref={scrubBadgeRef}
-          className="bg-black/25 shadow-lg backdrop-blur-sm text-white border-1 border-white/25 px-2.5 py-0.5 rounded-full text-[14px] font-mono font-bold whitespace-nowrap "
+          className={
+            flushBottom
+              ? 'bg-black/85 text-white border border-white/15 px-2 py-0.5 rounded-full text-[11px] font-mono font-bold whitespace-nowrap shadow-md'
+              : 'bg-black/25 shadow-lg backdrop-blur-sm text-white border-1 border-white/25 px-2.5 py-0.5 rounded-full text-[14px] font-mono font-bold whitespace-nowrap '
+          }
         >
           0:00
         </div>
@@ -105,9 +113,9 @@ export default function PlayerScrubber({
       {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
       <div
         ref={scrubberKnobRef}
-        className={`left-0 absolute -translate-x-1/2 bg-[#FF7A00] rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
+        className={`left-0 absolute -translate-x-1/2 z-50 bg-[#FF7A00] rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
           flushBottom
-            ? 'bottom-[1.5px] translate-y-1/2 w-3 h-3'
+            ? 'bottom-[1.5px] translate-y-1/2 w-3.5 h-3.5 shadow-[0_0_8px_rgba(255,122,0,0.85)]'
             : 'w-3.5 h-3.5 ring-2 ring-white/90'
         } ${isScrubbing
           ? 'scale-125'
