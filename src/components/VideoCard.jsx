@@ -176,7 +176,7 @@ function VideoCard({
     : [];
   const hasMultiVersion = versionCount > 1 || versionBadges.length > 1;
   const resolvedVersionCount = Math.max(versionCount, versionBadges.length);
-  const multiVersionLabel = `${resolvedVersionCount} เวอร์ชัน`;
+  const multiVersionLabel = `มี ${resolvedVersionCount} แบบให้เลือก`;
 
   // Lazy-extract YouTube-style hover tint only when user actually hovers or focuses a card (0 startup Canvas readbacks!)
   const ensureDominantColor = () => {
