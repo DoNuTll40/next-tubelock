@@ -509,7 +509,7 @@ export default function PlayerBottomBar({
           <div className="flex items-center gap-1.5">
             <span
               ref={timeDisplayRef}
-              className="px-2 py-0.5 rounded-md bg-black/45 text-[11.5px] font-mono font-medium text-white/95 select-none"
+              className="px-1 text-[11.5px] font-mono font-medium text-white/95 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] select-none"
             >
               0:00 / 0:00
             </span>
