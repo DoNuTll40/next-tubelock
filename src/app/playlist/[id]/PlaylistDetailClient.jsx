@@ -330,12 +330,14 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
     <section className="mx-auto grid w-full max-w-[1380px] gap-5 px-3 py-4 sm:px-6 sm:py-6 lg:h-[calc(100dvh_-_3.5rem)] lg:grid-cols-[minmax(260px,1fr)_minmax(0,2fr)] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)] xl:gap-8">
       <div
         className="relative isolate min-w-0 overflow-hidden rounded-2xl bg-white p-4 dark:bg-[#181818] sm:p-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain lg:bg-[#FBF9F5] lg:dark:bg-[#0F0F0F]"
-        style={{ '--playlist-cover-color': tint || '255, 122, 0' }}
+        style={tint ? { '--playlist-cover-color': tint } : undefined}
       >
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 overflow-hidden [mask-image:linear-gradient(black,transparent_95%)]">
-          {(tint || !tintSource) && (
+          {tint ? (
             <div className="absolute inset-0 bg-[rgba(var(--playlist-cover-color),0.20)] dark:bg-[rgba(var(--playlist-cover-color),0.38)]" />
-          )}
+          ) : !tintSource ? (
+            <div className="absolute inset-0 bg-black/[0.04] dark:bg-white/[0.06]" />
+          ) : null}
           {tintSource && !tint && (
             <Image src={tintSource} alt="" fill unoptimized className="scale-125 object-cover opacity-20 blur-[64px] dark:opacity-35" />
           )}
