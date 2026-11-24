@@ -5,6 +5,8 @@ import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
 import { isAdmin, accessError } from '@/lib/access';
 import { isMusicVideo } from '@/lib/videoUtils';
+import { buildUserTasteProfile, rankHomeFeedVideos } from '@/lib/recommendationEngine';
+import { POSTER_PREFERENCE } from '@/lib/posterPreference';
 
 let tableEnsured = false;
 
@@ -173,6 +175,7 @@ export async function GET(request) {
             v.user_id, COALESCE(v.visibility, 'public') AS visibility,
             h.last_position_seconds,
             h.last_version_id,
+            h.updated_at AS last_watched_at,
             (h.id IS NOT NULL) AS has_watched,
             COALESCE(vv_meta.version_count, 0) AS version_count,
             COALESCE(vv_meta.version_badges, '[]'::jsonb) AS version_badges,
@@ -264,10 +267,50 @@ export async function GET(request) {
         ...protectVideoPoster(v),
         has_watched: hasWatched,
         last_position_seconds: isMusic ? 0 : (Number(v.last_position_seconds) || 0),
+        last_watched_at: v.last_watched_at ? new Date(v.last_watched_at).toISOString() : null,
       };
     });
 
-    return NextResponse.json({ success: true, data: sanitizedRows }, { headers });
+    let rankedRows = sanitizedRows;
+    try {
+      const cookieStore = await cookies();
+      const allow18Plus = Boolean(userId) && cookieStore.get(POSTER_PREFERENCE)?.value === '1';
+      // Hourly deterministic seed so feed stays stable during scrolling but refreshes gently over time
+      const hourSeed = Math.floor(Date.now() / (1000 * 60 * 60));
+
+      if (userId) {
+        const [subRows, likedRows, feedbackRows] = await Promise.all([
+          sql`SELECT channel_id FROM subscriptions WHERE subscriber_id = ${userId};`.catch(() => []),
+          sql`
+            SELECT pi.video_id
+            FROM playlist_items pi
+            JOIN playlists p ON p.id = pi.playlist_id
+            WHERE p.user_id = ${userId} AND p.system_key = 'LL';
+          `.catch(() => []),
+          sql`SELECT video_id FROM user_video_feedback WHERE user_id = ${userId};`.catch(() => []),
+        ]);
+
+        const userProfile = buildUserTasteProfile(sanitizedRows, {
+          subscribedChannelIds: subRows.map((r) => r.channel_id),
+          likedVideoIds: likedRows.map((r) => r.video_id),
+          notInterestedIds: feedbackRows.map((r) => r.video_id),
+        });
+
+        rankedRows = rankHomeFeedVideos(sanitizedRows, userProfile, {
+          allow18Plus,
+          seed: hourSeed,
+        });
+      } else {
+        rankedRows = rankHomeFeedVideos(sanitizedRows, null, {
+          allow18Plus: false,
+          seed: hourSeed,
+        });
+      }
+    } catch (rankErr) {
+      console.warn('[API_VIDEOS_RANK_FALLBACK]:', rankErr?.message);
+    }
+
+    return NextResponse.json({ success: true, data: rankedRows }, { headers });
   } catch (err) {
     console.error('[API_VIDEOS_GET_ERROR]:', err);
     return NextResponse.json({ success: false, error: err.message, data: [] }, { status: 500 });

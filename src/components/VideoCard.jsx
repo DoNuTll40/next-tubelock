@@ -15,7 +15,9 @@ import {
   Bookmark,
   Share2,
   LockKeyhole,
-  Pencil
+  Pencil,
+  EyeOff,
+  RotateCcw
 } from 'lucide-react';
 import { memo, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
@@ -317,6 +319,42 @@ function VideoCard({
     else openLogin();
   };
 
+  const [isHiddenByFeedback, setIsHiddenByFeedback] = useState(false);
+
+  const handleNotInterested = async () => {
+    setShowMenu(false);
+    if (!isLoggedIn) {
+      openLogin();
+      return;
+    }
+    if (!video?.id) return;
+    setIsHiddenByFeedback(true);
+    try {
+      const res = await fetch(`/api/videos/${video.id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'hide', feedbackType: 'not_interested' }),
+      });
+      if (!res.ok) setIsHiddenByFeedback(false);
+    } catch {
+      setIsHiddenByFeedback(false);
+    }
+  };
+
+  const handleUndoNotInterested = async () => {
+    if (!video?.id) return;
+    setIsHiddenByFeedback(false);
+    try {
+      await fetch(`/api/videos/${video.id}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'undo' }),
+      });
+    } catch {
+      // ignore
+    }
+  };
+
   const menuProps = {
     video,
     showMenu,
@@ -326,8 +364,25 @@ function VideoCard({
     canEdit,
     onSaveToWatchLater: canSave ? handleSaveToWatchLater : undefined,
     onOpenPlaylistModal: canSave ? handleOpenPlaylistModal : undefined,
+    onNotInterested: !renderMenu && video?.id ? handleNotInterested : undefined,
     isSaving,
   };
+
+  if (isHiddenByFeedback) {
+    return (
+      <div className="rounded-2xl bg-[#F4F0E8] dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-4 flex items-center justify-between gap-3 text-xs">
+        <span className="text-[#606060] dark:text-[#AAAAAA]">ซ่อนวิดีโอนี้จากคำแนะนำแล้ว</span>
+        <button
+          type="button"
+          onClick={handleUndoNotInterested}
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-white dark:bg-white/10 hover:bg-[#EFECE6] dark:hover:bg-white/15 text-[#FF7A00] font-bold transition cursor-pointer shrink-0"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>เลิกทำ</span>
+        </button>
+      </div>
+    );
+  }
 
   const playlistOverlays = (
     <>
@@ -767,6 +822,7 @@ function VideoMenu({
   canEdit = false,
   onSaveToWatchLater,
   onOpenPlaylistModal,
+  onNotInterested,
   isSaving,
 }) {
   const isHalf = variant === 'half';
@@ -869,6 +925,17 @@ function VideoMenu({
                 <span>แชร์ / คัดลอกลิงก์</span>
               </button>
 
+              {onNotInterested && (
+                <button
+                  type="button"
+                  onClick={onNotInterested}
+                  className="w-full text-left px-4 py-2.5 hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-3.5 transition-colors cursor-pointer"
+                >
+                  <EyeOff className="w-5 h-5 text-[#606060] dark:text-zinc-300 stroke-[1.8]" />
+                  <span>ไม่สนใจ</span>
+                </button>
+              )}
+
               {canEdit && safeId && (
                 <Link
                   href={`/videos/${safeId}/edit`}
@@ -930,6 +997,17 @@ function VideoMenu({
                 <Copy className="w-3.5 h-3.5 text-[#77716A] dark:text-zinc-400" />
                 <span>คัดลอกลิงก์</span>
               </button>
+
+              {onNotInterested && (
+                <button
+                  type="button"
+                  onClick={onNotInterested}
+                  className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-[#F5F2EB] dark:hover:bg-white/10 flex items-center gap-2 text-[#606060] dark:text-zinc-300 transition-colors cursor-pointer"
+                >
+                  <EyeOff className="w-3.5 h-3.5 text-[#77716A] dark:text-zinc-400" />
+                  <span>ไม่สนใจ</span>
+                </button>
+              )}
 
               {canEdit && safeId && (
                 <Link

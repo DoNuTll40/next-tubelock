@@ -364,7 +364,24 @@ export default async function WatchPage({ params, searchParams }) {
       };
     });
 
-    relatedVideos = rankRelatedVideos(video, mappedRelated, { limit: 48 });
+    let subscribedChannelIds = [];
+    let notInterestedIds = [];
+    if (userId) {
+      try {
+        const [subIdsRows, fbIdsRows] = await Promise.all([
+          sql`SELECT channel_id FROM subscriptions WHERE subscriber_id = ${userId};`,
+          sql`SELECT video_id FROM user_video_feedback WHERE user_id = ${userId};`,
+        ]);
+        subscribedChannelIds = subIdsRows.map((r) => r.channel_id);
+        notInterestedIds = fbIdsRows.map((r) => r.video_id);
+      } catch (_) {}
+    }
+
+    relatedVideos = rankRelatedVideos(video, mappedRelated, {
+      subscribedChannelIds,
+      notInterestedIds,
+      limit: 48,
+    });
     }
   } catch (err) {
     // Re-throw Next.js redirect or notFound

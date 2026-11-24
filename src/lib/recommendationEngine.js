@@ -270,6 +270,14 @@ function scoreCandidate(cur, cand, context) {
     score += 6;
   }
 
+  // 8.5 User Personalization Signals (Subscriptions & Likes)
+  if (context.subscribedChannelIds && cand.userId && context.subscribedChannelIds.has(cand.userId)) {
+    score += 22;
+  }
+  if (context.likedVideoIds && context.likedVideoIds.has(cand.id)) {
+    score += cand.isMusic ? 12 : 4;
+  }
+
   // 9. Deterministic Seeded Variety
   score += seededUnitFloat(cur.id, cand.id, context.seed) * 20;
 
@@ -282,11 +290,29 @@ function scoreCandidate(cur, cand, context) {
 export function rankRelatedVideos(
   currentVideo,
   candidates = [],
-  { sessionWatchedIds = null, lastVideoId = null, seed = 0, limit = 48 } = {}
+  {
+    sessionWatchedIds = null,
+    lastVideoId = null,
+    subscribedChannelIds = null,
+    likedVideoIds = null,
+    notInterestedIds = null,
+    seed = 0,
+    limit = 48,
+  } = {}
 ) {
   if (!Array.isArray(candidates) || candidates.length === 0) return [];
 
   const curId = currentVideo?.id ? String(currentVideo.id) : null;
+  const hiddenSet = notInterestedIds
+    ? new Set(Array.from(notInterestedIds, (x) => String(x)))
+    : null;
+  const subSet = subscribedChannelIds
+    ? new Set(Array.from(subscribedChannelIds, (x) => String(x)))
+    : null;
+  const likedSet = likedVideoIds
+    ? new Set(Array.from(likedVideoIds, (x) => String(x)))
+    : null;
+
   const seenIds = new Set();
   const validCandidates = [];
 
@@ -295,8 +321,10 @@ export function rankRelatedVideos(
     if (!v || !v.id) continue;
     const vId = String(v.id);
     if (curId && vId === curId) continue;
+    if (hiddenSet && hiddenSet.has(vId)) continue;
     if (seenIds.has(vId)) continue;
     if (v.status && v.status !== 'READY') continue;
+    if (v.visibility && v.visibility !== 'public') continue;
     seenIds.add(vId);
     validCandidates.push(v);
   }
@@ -319,6 +347,8 @@ export function rankRelatedVideos(
   const context = {
     sessionWatchedIds: normalizedWatchedSet,
     lastVideoId: lastVideoId != null ? String(lastVideoId) : null,
+    subscribedChannelIds: subSet,
+    likedVideoIds: likedSet,
     seed,
   };
 
@@ -351,6 +381,276 @@ export function rankRelatedVideos(
       }
     }
     const [chosen] = pool.splice(pickIdx, 1);
+    result.push(chosen.sig);
+  }
+
+  return result.map((sig) => sig.video);
+}
+
+function addWeight(map, key, delta) {
+  if (!key || !Number.isFinite(delta) || delta === 0) return;
+  map.set(key, (map.get(key) || 0) + delta);
+}
+
+/**
+ * Builds a recency-decayed user taste profile from watch_history, likes, subscriptions, and negative feedback.
+ * Aligned with YouTube's 4 recommendation pillars:
+ * 1) Personalization (valued watchtime completion + likes + subscriptions)
+ * 2) Satisfaction & Fatigue (demote recently finished non-music, hide "not_interested")
+ * 3) Diversity & Freshness (channel spreading + 80/20 exploit-explore)
+ * 4) Responsibility & Safety (public-only, mature gate)
+ */
+export function buildUserTasteProfile(
+  videos = [],
+  {
+    subscribedChannelIds = [],
+    likedVideoIds = [],
+    notInterestedIds = [],
+    nowMs = Date.now(),
+  } = {}
+) {
+  const categoryWeights = new Map();
+  const tokenWeights = new Map();
+  const channelWeights = new Map();
+  const artistWeights = new Map();
+
+  const subSet = new Set(Array.from(subscribedChannelIds || [], (x) => String(x)));
+  const likedSet = new Set(Array.from(likedVideoIds || [], (x) => String(x)));
+  const notInterestedSet = new Set(Array.from(notInterestedIds || [], (x) => String(x)));
+
+  for (const cid of subSet) {
+    addWeight(channelWeights, cid, 24);
+  }
+
+  for (let i = 0; i < videos.length; i++) {
+    const v = videos[i];
+    if (!v || !v.id) continue;
+    const vId = String(v.id);
+    const sig = extractVideoSignals(v);
+    if (!sig) continue;
+
+    // Negative feedback ("Not Interested") penalizes its tags & category slightly
+    if (notInterestedSet.has(vId)) {
+      if (sig.category && sig.category !== 'general') addWeight(categoryWeights, sig.category, -10);
+      for (const tok of sig.tokens) addWeight(tokenWeights, tok, -4);
+      continue;
+    }
+
+    const isLiked = likedSet.has(vId);
+    const hasWatched = Boolean(v.has_watched || (v.last_position_seconds != null && Number(v.last_position_seconds) > 0));
+    if (!hasWatched && !isLiked) continue;
+
+    const watchedAtMs = v.last_watched_at ? new Date(v.last_watched_at).getTime() : 0;
+    const daysAgo = watchedAtMs > 0 ? Math.max(0, (nowMs - watchedAtMs) / 86400000) : 7;
+    const recencyDecay = Math.exp(-daysAgo / 14); // ~10-day half-life
+
+    const dur = sig.duration;
+    const pos = Number(v.last_position_seconds) || 0;
+    const completion = dur > 0 ? Math.min(1, Math.max(0, pos / dur)) : (hasWatched ? 0.65 : 0);
+
+    let signalStrength = 0;
+    if (completion >= 0.70) {
+      // Valued watchtime (strong positive)
+      signalStrength = 1.2 * recencyDecay;
+    } else if (completion >= 0.25) {
+      // Moderate engagement
+      signalStrength = 0.55 * recencyDecay;
+    } else if (hasWatched && completion > 0 && completion < 0.10 && !sig.isMusic && !isLiked) {
+      // Quick bounce (light negative)
+      signalStrength = -0.35 * recencyDecay;
+    }
+
+    if (isLiked) {
+      signalStrength += 1.4;
+    }
+
+    if (signalStrength === 0) continue;
+
+    if (sig.category && sig.category !== 'general') {
+      addWeight(categoryWeights, sig.category, signalStrength * 14);
+    }
+    if (sig.userId) {
+      addWeight(channelWeights, sig.userId, signalStrength * 12);
+    }
+    for (const seg of sig.artistSegments) {
+      addWeight(artistWeights, seg, signalStrength * 10);
+    }
+    let tokBudget = 0;
+    for (const tok of sig.tokens) {
+      if (tokBudget >= 10) break;
+      addWeight(tokenWeights, tok, signalStrength * 4.5);
+      tokBudget++;
+    }
+  }
+
+  return {
+    categoryWeights,
+    tokenWeights,
+    channelWeights,
+    artistWeights,
+    subscribedChannelIds: subSet,
+    likedVideoIds: likedSet,
+    notInterestedIds: notInterestedSet,
+    hasHistory: categoryWeights.size > 0 || tokenWeights.size > 0 || subSet.size > 0 || likedSet.size > 0,
+  };
+}
+
+/**
+ * Ranks the Home Feed using YouTube's 4 pillars:
+ * Personalization + Satisfaction/Fatigue + Diversity/80-20 Explore + Responsibility/Safety.
+ */
+export function rankHomeFeedVideos(
+  candidates = [],
+  userProfile = null,
+  { allow18Plus = false, seed = 0, nowMs = Date.now(), limit = 200 } = {}
+) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return [];
+
+  const hiddenSet = userProfile?.notInterestedIds || null;
+  const subSet = userProfile?.subscribedChannelIds || null;
+  const hasPersonalization = Boolean(userProfile?.hasHistory);
+
+  const scored = [];
+  const exploreCandidates = [];
+
+  for (let i = 0; i < candidates.length; i++) {
+    const v = candidates[i];
+    if (!v || !v.id) continue;
+    if (v.status && v.status !== 'READY') continue;
+    if (v.visibility && v.visibility !== 'public') continue;
+
+    const vId = String(v.id);
+    if (hiddenSet && hiddenSet.has(vId)) continue;
+
+    const sig = extractVideoSignals(v);
+    if (!sig) continue;
+
+    let score = 0;
+
+    // 1. Freshness & Recency (newer uploads naturally surface)
+    const createdMs = v.created_at ? new Date(v.created_at).getTime() : 0;
+    const ageDays = createdMs > 0 ? Math.max(0, (nowMs - createdMs) / 86400000) : 30;
+    const freshnessScore = Math.exp(-ageDays / 21) * 24;
+    score += freshnessScore;
+
+    // 2. Popularity & Quality
+    const views = Number(v.views_count) || 0;
+    score += Math.min(Math.log10(views + 1) * 5, 16);
+    const res = String(v.resolution || '').toLowerCase();
+    if (res.includes('4k') || res.includes('2160') || Number(v.version_count) > 1) {
+      score += 5;
+    }
+
+    // 3. Personalization Affinity
+    let affinityScore = 0;
+    if (hasPersonalization) {
+      if (sig.userId && subSet && subSet.has(sig.userId)) {
+        affinityScore += 26;
+      }
+      if (sig.userId && userProfile.channelWeights.has(sig.userId)) {
+        affinityScore += Math.max(-15, Math.min(28, userProfile.channelWeights.get(sig.userId)));
+      }
+      if (sig.category && userProfile.categoryWeights.has(sig.category)) {
+        affinityScore += Math.max(-15, Math.min(30, userProfile.categoryWeights.get(sig.category)));
+      }
+      let artistSum = 0;
+      for (const seg of sig.artistSegments) {
+        if (userProfile.artistWeights.has(seg)) {
+          artistSum += userProfile.artistWeights.get(seg);
+        }
+      }
+      affinityScore += Math.max(-12, Math.min(24, artistSum));
+
+      let tokenSum = 0;
+      for (const tok of sig.tokens) {
+        if (userProfile.tokenWeights.has(tok)) {
+          tokenSum += userProfile.tokenWeights.get(tok);
+        }
+      }
+      affinityScore += Math.max(-15, Math.min(26, tokenSum));
+      score += affinityScore;
+    }
+
+    // 4. Satisfaction & Watch Fatigue
+    const hasWatched = Boolean(v.has_watched);
+    if (!hasWatched) {
+      score += 18;
+    } else {
+      const pos = Number(v.last_position_seconds) || 0;
+      const progress = sig.duration > 0 ? pos / sig.duration : 1;
+      const watchedMs = v.last_watched_at ? new Date(v.last_watched_at).getTime() : 0;
+      const hoursSinceWatch = watchedMs > 0 ? (nowMs - watchedMs) / 3600000 : 72;
+
+      if (!sig.isMusic && progress >= 0.05 && progress <= 0.80) {
+        // Continue Watching nudge
+        score += 12;
+      } else if (!sig.isMusic && progress > 0.85 && hoursSinceWatch < 24) {
+        // Recently completed non-music fatigue penalty
+        score -= 32;
+      } else {
+        score -= sig.isMusic ? 4 : 16;
+      }
+    }
+
+    // 5. Responsibility / 18+ Safety Gate
+    if (sig.isMature && !allow18Plus) {
+      score -= 24;
+    }
+
+    // 6. Gentle deterministic session variety
+    score += seededUnitFloat('home', vId, seed) * 10;
+
+    const entry = { sig, score, isExplore: !hasWatched && affinityScore <= 2 && freshnessScore >= 6 };
+    scored.push(entry);
+    if (entry.isExplore) {
+      exploreCandidates.push(entry);
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  exploreCandidates.sort((a, b) => b.score - a.score);
+
+  // 7. Diversity Pass: Channel/Series spreading (max 2 consecutive same channel or prefix)
+  //    + ~80/20 Exploit-Explore interleave every 5th slot
+  const usedIds = new Set();
+  const result = [];
+  const targetLen = Math.min(limit, scored.length);
+
+  const pickNextFrom = (list) => {
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      if (usedIds.has(entry.sig.id)) continue;
+
+      if (result.length >= 2) {
+        const last1 = result[result.length - 1];
+        const last2 = result[result.length - 2];
+        const sameChannelStreak =
+          entry.sig.userId &&
+          entry.sig.userId === last1.userId &&
+          entry.sig.userId === last2.userId;
+        const samePrefixStreak =
+          entry.sig.prefixKey &&
+          entry.sig.prefixKey.length >= 6 &&
+          entry.sig.prefixKey === last1.prefixKey &&
+          entry.sig.prefixKey === last2.prefixKey;
+        if ((sameChannelStreak || samePrefixStreak) && i < list.length - 1) {
+          continue;
+        }
+      }
+      return entry;
+    }
+    // Fallback if all remaining items share the same channel/prefix
+    return list.find((e) => !usedIds.has(e.sig.id)) || null;
+  };
+
+  while (result.length < targetLen) {
+    const isExploreSlot = hasPersonalization && result.length > 0 && result.length % 5 === 4;
+    let chosen = isExploreSlot ? pickNextFrom(exploreCandidates) : null;
+    if (!chosen) {
+      chosen = pickNextFrom(scored);
+    }
+    if (!chosen) break;
+    usedIds.add(chosen.sig.id);
     result.push(chosen.sig);
   }
 
