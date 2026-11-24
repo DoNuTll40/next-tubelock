@@ -1,6 +1,7 @@
 'use client';
 
 import { memo, useState, useMemo } from 'react';
+import Link from 'next/link';
 import { ChevronDown, ChevronUp, ExternalLink, Clock, Cpu, Film, HardDrive } from 'lucide-react';
 
 /**
@@ -234,14 +235,16 @@ function parseDescriptionTokens(text = '', onSeek) {
         );
       }
     } else if (hashtag) {
+      const cleanTag = hashtag.replace(/^#+/, '').trim();
       elements.push(
-        <span
+        <Link
           key={`tag-${match.index}`}
+          href={`/hashtag/${encodeURIComponent(cleanTag)}`}
           onClick={(e) => e.stopPropagation()}
           className="text-[#FF7A00] hover:underline cursor-pointer font-medium mx-0.5"
         >
           {hashtag}
-        </span>
+        </Link>
       );
     }
 
@@ -335,6 +338,24 @@ function DescriptionBox({
       </div>
 
       {/* 2. Interactive Description Content Body - Selectable Text with Default Cursor */}
+      {Array.isArray(video?.tags) && video.tags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5 pb-1 select-none">
+          {(isOpen ? video.tags : video.tags.slice(0, 3)).map((rawTag, idx) => {
+            const cleanTag = String(rawTag || '').replace(/^#+/, '').trim();
+            if (!cleanTag) return null;
+            return (
+              <Link
+                key={`vtag-${cleanTag}-${idx}`}
+                href={`/hashtag/${encodeURIComponent(cleanTag)}`}
+                onClick={(e) => e.stopPropagation()}
+                className="text-xs font-semibold text-[#FF7A00] hover:underline"
+              >
+                #{cleanTag}
+              </Link>
+            );
+          })}
+        </div>
+      )}
       <div
         onClick={(e) => {
           // When open, clicking on the text body does NOT close the card so user can select freely
