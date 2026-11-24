@@ -14,6 +14,53 @@ import {
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { formatThaiRelativeTime } from '@/lib/formatThaiMeta';
 
+function formatStorageSize(rawMB) {
+  const mb = Number(rawMB) || 0;
+  if (mb >= 1024) {
+    return { value: (mb / 1024).toFixed(2), unit: 'GB' };
+  }
+  return { value: mb.toFixed(1), unit: 'MB' };
+}
+
+function groupStreamFolders(items = []) {
+  const map = new Map();
+  for (const folder of items) {
+    const match = String(folder.name || '').match(/^(stream_vid_\d+)(?:_v\d+)?$/i);
+    const groupKey = match ? match[1].toLowerCase() : String(folder.name || folder.id);
+    const sizeNum = Number(folder.sizeMB) || 0;
+    const segmentsNum = Number(folder.childCount) || 0;
+    const modTime = folder.lastModified ? new Date(folder.lastModified).getTime() : 0;
+
+    const existing = map.get(groupKey);
+    if (!existing) {
+      map.set(groupKey, {
+        ...folder,
+        name: match ? match[1] : folder.name,
+        totalSizeMB: sizeNum,
+        totalSegments: segmentsNum,
+        folderCount: 1,
+        latestModTime: modTime,
+        // Prefer the base folder's imageUrl if available
+        baseImageUrl: match && folder.name.toLowerCase() === match[1].toLowerCase()
+          ? folder.imageUrl
+          : folder.imageUrl,
+      });
+    } else {
+      existing.totalSizeMB += sizeNum;
+      existing.totalSegments += segmentsNum;
+      existing.folderCount += 1;
+      if (modTime > existing.latestModTime) {
+        existing.latestModTime = modTime;
+        existing.lastModified = folder.lastModified;
+      }
+      if (match && folder.name.toLowerCase() === match[1].toLowerCase()) {
+        existing.baseImageUrl = folder.imageUrl;
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => b.latestModTime - a.latestModTime);
+}
+
 export default function StorageSection() {
   const allow18Plus = usePosterPreference(true);
   const [data, setData] = useState(null);
@@ -123,82 +170,105 @@ export default function StorageSection() {
       </div>
 
       {/* ── Section 2: HLS Stream Folders List ──────────────────────── */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <FolderSync className="w-5 h-5 text-[#FF7A00]" />
-            <h3 className="text-sm font-bold">
-              คลังวิดีโอ HLS บนคลาวด์ ({folders.totalStreams} รายการ)
-            </h3>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 divide-y divide-[#F5F2EB] dark:divide-white/5 overflow-hidden shadow-xs">
-          {folders.items.length === 0 ? (
-            <div className="p-8 text-center text-xs text-[#8C857B] dark:text-[#888888]">
-              ไม่พบโฟลเดอร์วิดีโอใน /streams
+      {(() => {
+        const groupedFolders = groupStreamFolders(folders.items);
+        return (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FolderSync className="w-5 h-5 text-[#FF7A00]" />
+                <h3 className="text-sm font-bold">
+                  คลังวิดีโอ HLS บนคลาวด์ ({groupedFolders.length} รายการ)
+                </h3>
+              </div>
             </div>
-          ) : (
-            folders.items.map((folder) => {
-              const formattedDate = formatThaiRelativeTime(folder.lastModified) || '-';
-              const matchedVidId = String(folder.name || '').match(/^stream_vid_(\d+)/)?.[1];
-              const resolvedThumb =
-                allow18Plus && matchedVidId
-                  ? `/api/videos/${matchedVidId}/poster`
-                  : folder.imageUrl;
 
-              return (
-                <div
-                  key={folder.id}
-                  className="flex items-center justify-between p-3.5 sm:p-4 hover:bg-[#FAF8F5] dark:hover:bg-white/5 transition"
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    {/* Thumbnail หรือ Fallback Poster Icon */}
-                    <div className="w-16 h-10 sm:w-20 sm:h-12 rounded-lg bg-[#EFECE6] dark:bg-white/10 overflow-hidden shrink-0 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center relative shadow-2xs">
-                      {resolvedThumb ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={resolvedThumb}
-                          alt={folder.name}
-                          className="w-full h-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <Film className="w-5 h-5 text-[#8C857B] dark:text-[#666666]" />
-                      )}
-                    </div>
+            <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 divide-y divide-[#F5F2EB] dark:divide-white/5 overflow-hidden shadow-xs">
+              {groupedFolders.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#8C857B] dark:text-[#888888]">
+                  ไม่พบโฟลเดอร์วิดีโอใน /streams
+                </div>
+              ) : (
+                groupedFolders.map((folder) => {
+                  const formattedDate = formatThaiRelativeTime(folder.lastModified) || '-';
+                  const matchedVidId = String(folder.name || '').match(/^stream_vid_(\d+)/)?.[1];
+                  const fallbackUrl = folder.baseImageUrl || folder.imageUrl || '';
+                  const resolvedThumb =
+                    allow18Plus && matchedVidId
+                      ? `/api/videos/${matchedVidId}/poster`
+                      : fallbackUrl;
+                  const sizeFmt = formatStorageSize(folder.totalSizeMB);
 
-                    {/* รายละเอียดโฟลเดอร์ */}
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs sm:text-sm font-bold font-mono text-[#212529] dark:text-[#F1F1F1] truncate">
-                        {folder.name}
-                      </span>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#8C857B] dark:text-[#888888] mt-1">
-                        <span className="flex items-center gap-1">
-                          <Layers className="w-3 h-3 text-[#FF7A00]" />
-                          {folder.childCount} segments
-                        </span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-zinc-400" />
-                          {formattedDate}
+                  return (
+                    <div
+                      key={folder.id}
+                      className="flex items-center justify-between p-3.5 sm:p-4 hover:bg-[#FAF8F5] dark:hover:bg-white/5 transition"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        {/* Thumbnail หรือ Fallback Poster Icon */}
+                        <div className="w-16 h-10 sm:w-20 sm:h-12 rounded-lg bg-[#EFECE6] dark:bg-white/10 overflow-hidden shrink-0 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center relative shadow-2xs">
+                          {resolvedThumb ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={resolvedThumb}
+                              alt={folder.name}
+                              onError={(e) => {
+                                if (fallbackUrl && e.currentTarget.dataset.fallbackApplied !== '1') {
+                                  e.currentTarget.dataset.fallbackApplied = '1';
+                                  e.currentTarget.src = fallbackUrl;
+                                }
+                              }}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <Film className="w-5 h-5 text-[#8C857B] dark:text-[#666666]" />
+                          )}
+                        </div>
+
+                        {/* รายละเอียดโฟลเดอร์ */}
+                        <div className="flex flex-col min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-xs sm:text-sm font-bold font-mono text-[#212529] dark:text-[#F1F1F1] truncate">
+                              {folder.name}
+                            </span>
+                            {folder.folderCount > 1 && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#FF7A00]/15 text-[#FF7A00] text-[10px] font-bold shrink-0">
+                                มี {folder.folderCount} แบบ
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#8C857B] dark:text-[#888888] mt-1">
+                            <span className="flex items-center gap-1">
+                              <Layers className="w-3 h-3 text-[#FF7A00]" />
+                              {folder.totalSegments.toLocaleString('th-TH')} segments
+                            </span>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-zinc-400" />
+                              {formattedDate}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ขนาดไฟล์ GB / MB */}
+                      <div className="flex items-center gap-3 pl-3 shrink-0">
+                        <span className="text-xs sm:text-sm font-bold font-mono text-[#212529] dark:text-zinc-200">
+                          {sizeFmt.value}{' '}
+                          <span className="text-[10px] text-[#8C857B] dark:text-[#888888]">
+                            {sizeFmt.unit}
+                          </span>
                         </span>
                       </div>
                     </div>
-                  </div>
-
-                  {/* ขนาดไฟล์ MB */}
-                  <div className="flex items-center gap-3 pl-3 shrink-0">
-                    <span className="text-xs sm:text-sm font-bold font-mono text-[#212529] dark:text-zinc-200">
-                      {folder.sizeMB} <span className="text-[10px] text-[#8C857B] dark:text-[#888888]">MB</span>
-                    </span>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
