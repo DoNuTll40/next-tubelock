@@ -47,6 +47,7 @@ export default function VideoPlayer({
   isMiniplayer = false,
   onToggleMiniplayer = null,
   onCloseMiniplayer = null,
+  togglePlayRef = null,
   src,
   poster,
   storyboard = null,
@@ -119,7 +120,6 @@ export default function VideoPlayer({
     }
   });
   const containerRef = useRef(null);
-  const swipeBackdropRef = useRef(null);
   const seekTrackRef = useRef(null);
   const hlsInstanceRef = useRef(null);
   const hlsRetryCountRef = useRef(0);
@@ -1620,6 +1620,12 @@ export default function VideoPlayer({
     resetControlsTimer();
   }, [video, isEnded, replayVideo, resetControlsTimer, restoreAudioAfterTransition]);
 
+  useEffect(() => {
+    if (togglePlayRef) {
+      togglePlayRef.current = togglePlay;
+    }
+  }, [togglePlayRef, togglePlay]);
+
   // Volume Handlers
   const handleVolumeChange = (e) => {
     const val = parseFloat(e.target.value);
@@ -2903,159 +2909,7 @@ export default function VideoPlayer({
     (effectiveFullscreen || (videoRatio && videoRatio < 0.98) || (isMobileView && isCinematic))
   );
 
-  // Mobile YouTube-style Swipe-Down Gesture on /watch video -> live 60fps shrink + dim backdrop -> Floating Miniplayer!
-  useEffect(() => {
-    if (isMiniplayer || !isMobileView || effectiveFullscreen || !onToggleMiniplayer) return;
-    const container = containerRef.current;
-    if (!container) return;
-
-    let state = null;
-    let resetTimer = null;
-
-    const clearStyles = () => {
-      container.style.transition = '';
-      container.style.transform = '';
-      container.style.transformOrigin = '';
-      container.style.borderRadius = '';
-      container.style.boxShadow = '';
-      container.style.zIndex = '';
-      container.style.opacity = '';
-      document.documentElement.style.overflow = '';
-      document.body.style.overflow = '';
-      if (swipeBackdropRef.current) {
-        swipeBackdropRef.current.style.transition = '';
-        swipeBackdropRef.current.style.opacity = '0';
-      }
-    };
-
-    const onTouchStart = (e) => {
-      if (e.touches.length !== 1) return;
-      if (e.target.closest('button, [role="slider"], input, .group\\/seek')) return;
-      if (resetTimer) {
-        clearTimeout(resetTimer);
-        resetTimer = null;
-        clearStyles();
-      }
-      const t = e.touches[0];
-      state = {
-        startX: t.clientX,
-        startY: t.clientY,
-        startTime: performance.now(),
-        lastDy: 0,
-        locked: null,
-      };
-    };
-
-    const onTouchMove = (e) => {
-      if (!state || e.touches.length !== 1) return;
-      const t = e.touches[0];
-      const dx = t.clientX - state.startX;
-      const dy = t.clientY - state.startY;
-
-      if (state.locked === null) {
-        if (Math.hypot(dx, dy) < 10) return;
-        if (dy > 10 && dy > Math.abs(dx) * 1.2) {
-          state.locked = 'down';
-          document.documentElement.style.overflow = 'hidden';
-          document.body.style.overflow = 'hidden';
-        } else {
-          state.locked = 'cancel';
-          return;
-        }
-      }
-      if (state.locked !== 'down') return;
-
-      if (e.cancelable) e.preventDefault();
-      const clampedDy = Math.max(0, dy);
-      state.lastDy = clampedDy;
-
-      const p = Math.min(1, clampedDy / 260);
-      const scale = 1 - p * 0.4;
-      const radius = Math.round(p * 14);
-      const tx = Math.round(dx * 0.55);
-      const ty = Math.round(clampedDy * 0.78);
-
-      container.style.transition = 'none';
-      container.style.transformOrigin = 'center top';
-      container.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale.toFixed(4)})`;
-      container.style.borderRadius = `${radius}px`;
-      container.style.boxShadow = `0 ${Math.round(p * 24)}px ${Math.round(p * 56)}px rgba(0,0,0,${(p * 0.85).toFixed(2)})`;
-      container.style.zIndex = '95';
-
-      if (swipeBackdropRef.current) {
-        swipeBackdropRef.current.style.transition = 'none';
-        swipeBackdropRef.current.style.opacity = (p * 0.88).toFixed(3);
-      }
-    };
-
-    const onTouchEnd = (e) => {
-      if (!state) return;
-      const finished = state;
-      state = null;
-      if (finished.locked !== 'down') return;
-
-      // Prevent stray synthetic click from toggling play/controls after swipe-down
-      if (e?.cancelable) e.preventDefault();
-
-      const dt = Math.max(1, performance.now() - finished.startTime);
-      const vy = finished.lastDy / dt;
-      const shouldMinimize = finished.lastDy > 75 || vy > 0.45;
-
-      if (shouldMinimize) {
-        // FLIP Shared-Element Handoff: capture exact live on-screen rect BEFORE clearing styles!
-        // FloatingMiniplayerShell starts at this exact rect and glides smoothly into the corner (0 teleport!)
-        const liveRect = container.getBoundingClientRect();
-        const centerX = liveRect.left + liveRect.width / 2;
-        const preferredCorner = centerX < window.innerWidth / 2 ? 'bottom-left' : 'bottom-right';
-        clearStyles();
-        onToggleMiniplayer({
-          sourceRect: {
-            left: liveRect.left,
-            top: liveRect.top,
-            width: liveRect.width,
-            height: liveRect.height,
-          },
-          preferredCorner,
-        });
-      } else {
-        container.style.transition = 'transform 240ms cubic-bezier(0.22,1,0.36,1), border-radius 240ms ease, box-shadow 240ms ease';
-        container.style.transform = 'translate3d(0, 0, 0) scale(1)';
-        container.style.borderRadius = '';
-        container.style.boxShadow = '';
-        if (swipeBackdropRef.current) {
-          swipeBackdropRef.current.style.transition = 'opacity 220ms ease';
-          swipeBackdropRef.current.style.opacity = '0';
-        }
-        resetTimer = setTimeout(() => {
-          clearStyles();
-        }, 250);
-      }
-    };
-
-    container.addEventListener('touchstart', onTouchStart, { passive: true });
-    container.addEventListener('touchmove', onTouchMove, { passive: false });
-    container.addEventListener('touchend', onTouchEnd, { passive: false });
-    container.addEventListener('touchcancel', onTouchEnd, { passive: true });
-
-    return () => {
-      if (resetTimer) clearTimeout(resetTimer);
-      clearStyles();
-      container.removeEventListener('touchstart', onTouchStart);
-      container.removeEventListener('touchmove', onTouchMove);
-      container.removeEventListener('touchend', onTouchEnd);
-      container.removeEventListener('touchcancel', onTouchEnd);
-    };
-  }, [isMiniplayer, isMobileView, effectiveFullscreen, onToggleMiniplayer]);
-
   return (
-    <>
-      {!isMiniplayer && isMobileView && !effectiveFullscreen && (
-        <div
-          ref={swipeBackdropRef}
-          aria-hidden="true"
-          className="fixed inset-0 z-[80] bg-black pointer-events-none opacity-0"
-        />
-      )}
     <div
       ref={containerRef}
       data-player-fullscreen={!isMiniplayer && effectiveFullscreen ? 'true' : undefined}
@@ -3069,7 +2923,7 @@ export default function VideoPlayer({
       className={
         isMiniplayer
           ? 'relative w-full h-full bg-black select-none overflow-visible group/mini'
-          : `bg-black select-none overflow-hidden group/player ${isMobileView && !effectiveFullscreen ? 'touch-none ' : ''}${effectiveFullscreen
+          : `bg-black select-none overflow-hidden group/player ${effectiveFullscreen
             ? 'fixed inset-0 z-[100] h-dvh w-dvw border-0 rounded-none [--player-safe-top:env(safe-area-inset-top,0px)] [--player-safe-bottom:env(safe-area-inset-bottom,0px)]'
             : (videoRatio && videoRatio < 0.98)
               ? 'relative w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
@@ -3624,7 +3478,7 @@ export default function VideoPlayer({
         <>
           <div
             onClick={handlePlayerOverlayClick}
-            className={`absolute inset-0 z-10 ${isMobileView && !effectiveFullscreen ? 'touch-none' : 'touch-manipulation'}`}
+            className="absolute inset-0 z-10 touch-manipulation"
           />
 
           {/* Top Bar: Fullscreen / Mobile */}
@@ -3638,6 +3492,7 @@ export default function VideoPlayer({
         title={title}
         channelName={channelName}
         onBack={onBack}
+        onToggleMiniplayer={onToggleMiniplayer}
         isAutoplay={isAutoplay}
         setIsAutoplay={setIsAutoplay}
         isCcActive={isCcActive}
@@ -3888,6 +3743,5 @@ export default function VideoPlayer({
         </>
       )}
     </div>
-    </>
   );
 }

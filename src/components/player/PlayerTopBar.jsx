@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  ChevronRight, ArrowLeft, Play, Pause, Cast, Settings, Layers, LockKeyhole
+  ChevronDown, ChevronRight, ArrowLeft, Play, Pause, Cast, Settings, Layers, LockKeyhole
 } from 'lucide-react';
 import CcSubtitleIcon from '../icons/CcSubtitleIcon';
 import { getGearBadge, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
@@ -17,6 +17,7 @@ export default function PlayerTopBar({
   title,
   channelName,
   onBack,
+  onToggleMiniplayer = null,
   isAutoplay,
   setIsAutoplay,
   isCcActive,
@@ -131,17 +132,19 @@ export default function PlayerTopBar({
             </div>
           </div>
         )
-      ) : isMobileView && onBack ? (
+      ) : isMobileView && (onToggleMiniplayer || onBack) ? (
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            onBack();
+            if (onToggleMiniplayer) onToggleMiniplayer();
+            else onBack?.();
           }}
           className="p-2 -ml-1 rounded-full bg-black/40 active:bg-black/70 text-white backdrop-blur-sm transition-[background-color] duration-100 active:scale-90 cursor-pointer border border-white/15 shadow-sm"
-          title="ย้อนกลับ"
+          title={onToggleMiniplayer ? 'ย่อเป็น Miniplayer' : 'ย้อนกลับ'}
+          aria-label={onToggleMiniplayer ? 'ย่อเป็น Miniplayer' : 'ย้อนกลับ'}
         >
-          <ArrowLeft className="w-5 h-5" />
+          {onToggleMiniplayer ? <ChevronDown className="w-5 h-5" /> : <ArrowLeft className="w-5 h-5" />}
         </button>
       ) : (
         <div className="w-8" />

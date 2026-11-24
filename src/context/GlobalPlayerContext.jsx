@@ -222,6 +222,7 @@ export function GlobalPlayerProvider({ children }) {
   const parkingRef = useRef(null);
   const activeSlotRef = useRef(null);
   const videoRef = useRef(null);
+  const togglePlayRef = useRef(null);
 
   const initialSourceRef = useRef(null);
   const initialVideoIdRef = useRef(null);
@@ -244,6 +245,7 @@ export function GlobalPlayerProvider({ children }) {
   const isExpandingFromMiniRef = useRef(false);
   const miniLaunchRectRef = useRef(null);
   const lastNonWatchUrlRef = useRef('/');
+  const hasVisitedNonWatchRef = useRef(false);
   const [selection, setSelection] = useState({ id: null, startTime: 0 });
   const [video, setVideo] = useState(null);
   const [activeVersionKey, setActiveVersionKey] = useState(null);
@@ -423,6 +425,7 @@ export function GlobalPlayerProvider({ children }) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (pathname && !pathname.startsWith('/watch')) {
+      hasVisitedNonWatchRef.current = true;
       lastNonWatchUrlRef.current = `${window.location.pathname}${window.location.search}`;
     }
   }, [pathname]);
@@ -523,8 +526,12 @@ export function GlobalPlayerProvider({ children }) {
         ? lastNonWatchUrlRef.current
         : '/';
       // Wait 1 frame so FloatingMiniplayerShell commits and reparents #movie_player BEFORE /watch unmounts!
+      // Use router.back() when returning to a previously visited in-app page (0 RSC refetch & preserves history!)
       requestAnimationFrame(() => {
-        if (isMiniplayerRef.current) {
+        if (!isMiniplayerRef.current) return;
+        if (hasVisitedNonWatchRef.current && window.history.length > 1) {
+          router.back();
+        } else {
           router.push(target);
         }
       });
@@ -587,10 +594,14 @@ export function GlobalPlayerProvider({ children }) {
         expandMiniplayer();
       } else if (code === 'KeyK' || key === 'k') {
         e.preventDefault();
-        const v = videoRef.current;
-        if (!v) return;
-        if (v.paused || v.ended) v.play().catch(() => { });
-        else v.pause();
+        if (togglePlayRef.current) {
+          togglePlayRef.current();
+        } else {
+          const v = videoRef.current;
+          if (!v) return;
+          if (v.paused || v.ended) v.play().catch(() => { });
+          else v.pause();
+        }
       } else if (code === 'KeyM' || key === 'm') {
         e.preventDefault();
         const v = videoRef.current;
@@ -1549,6 +1560,17 @@ export function GlobalPlayerProvider({ children }) {
     return val;
   }, []);
 
+  const handleTogglePlayFromMini = useCallback(() => {
+    if (togglePlayRef.current) {
+      togglePlayRef.current();
+    } else {
+      const v = videoRef.current;
+      if (!v) return;
+      if (v.paused || v.ended) v.play().catch(() => { });
+      else v.pause();
+    }
+  }, []);
+
   return (
     <GlobalPlayerContext.Provider value={contextValue}>
       {children}
@@ -1571,6 +1593,7 @@ export function GlobalPlayerProvider({ children }) {
         consumeLaunchRect={consumeMiniLaunchRect}
         title={video?.title || ''}
         channelName={video?.author_name || 'DONUŤ'}
+        onTogglePlay={handleTogglePlayFromMini}
         onExpand={expandMiniplayer}
         onClose={closeMiniplayer}
       />
@@ -1595,6 +1618,7 @@ export function GlobalPlayerProvider({ children }) {
                 isMiniplayer={isMiniplayer}
                 onToggleMiniplayer={isMiniplayer ? expandMiniplayer : enterMiniplayer}
                 onCloseMiniplayer={closeMiniplayer}
+                togglePlayRef={togglePlayRef}
                 src={streamUrl}
                 partialSegmentMapRef={partialSegmentMapRef}
                 poster={watchPoster}

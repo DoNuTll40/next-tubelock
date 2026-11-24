@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VideoCard from '@/components/VideoCard';
 import CategoryChips from '@/components/CategoryChips';
@@ -10,11 +10,64 @@ import { formatResolutionBadge } from '@/lib/videoUtils';
 
 import { useViewMode } from '@/context/ViewModeContext';
 
+// Window-level SPA feed cache + scroll/category restoration (survives route transitions & HMR chunk reloads!)
+const FEED_CACHE_KEY = '__TUBELOCK_FEED_CACHE__';
+const FEED_CACHE_FRESH_MS = 10 * 60_000;
+
+function readFeedCache() {
+  if (typeof window === 'undefined') return null;
+  return window[FEED_CACHE_KEY] || null;
+}
+
+function writeFeedCache(patch) {
+  if (typeof window === 'undefined') return;
+  window[FEED_CACHE_KEY] = {
+    ...(window[FEED_CACHE_KEY] || { videos: null, fetchedAt: 0, scrollY: 0, category: 'all' }),
+    ...patch,
+  };
+}
+
 export default function FeedPage() {
   const { isMobile } = useViewMode();
-  const [videos, setVideos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [videos, setVideos] = useState(() => readFeedCache()?.videos || []);
+  const [loading, setLoading] = useState(() => !Array.isArray(readFeedCache()?.videos));
+  const [activeCategory, setActiveCategory] = useState(() => readFeedCache()?.category || 'all');
+
+  useEffect(() => {
+    writeFeedCache({ category: activeCategory });
+  }, [activeCategory]);
+
+  // Restore exact scroll position when returning to cached Home feed (runs after Next.js route-commit scroll reset)
+  useLayoutEffect(() => {
+    const cache = readFeedCache();
+    const targetY = cache?.scrollY || 0;
+    if (!Array.isArray(cache?.videos) || cache.videos.length === 0 || targetY <= 0) return;
+
+    window.scrollTo(0, targetY);
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      window.scrollTo(0, targetY);
+      raf2 = requestAnimationFrame(() => {
+        window.scrollTo(0, targetY);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, []);
+
+  // Save scroll position ONLY on real user scroll while on '/' (never overwrite with 0 during unmount!)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onScroll = () => {
+      if (window.location.pathname === '/') {
+        writeFeedCache({ scrollY: window.scrollY });
+      }
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   // Pull to Refresh States (Mobile)
   const [pullY, setPullY] = useState(0);
@@ -31,7 +84,9 @@ export default function FeedPage() {
       }
       const res = await fetch('/api/videos', { cache: 'no-store' });
       const json = await res.json();
-      setVideos(json?.data || []);
+      const nextVideos = json?.data || [];
+      writeFeedCache({ videos: nextVideos, fetchedAt: Date.now() });
+      setVideos(nextVideos);
     } catch (err) {
       console.error('Failed to load feed videos:', err);
     } finally {
@@ -42,6 +97,13 @@ export default function FeedPage() {
   }, []);
 
   useEffect(() => {
+    const cache = readFeedCache();
+    const isCacheFresh =
+      Array.isArray(cache?.videos) &&
+      cache.videos.length > 0 &&
+      Date.now() - (cache.fetchedAt || 0) < FEED_CACHE_FRESH_MS;
+    if (isCacheFresh) return;
+
     const timer = setTimeout(() => {
       loadData(false);
     }, 0);

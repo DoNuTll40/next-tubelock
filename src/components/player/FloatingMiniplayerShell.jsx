@@ -88,6 +88,7 @@ export default function FloatingMiniplayerShell({
   consumeLaunchRect = null,
   title = '',
   channelName = 'TubeLock',
+  onTogglePlay = null,
   onExpand,
   onClose,
 }) {
@@ -304,6 +305,10 @@ export default function FloatingMiniplayerShell({
   const handleTogglePlayMobile = (e) => {
     e.stopPropagation();
     e.preventDefault();
+    if (onTogglePlay) {
+      onTogglePlay();
+      return;
+    }
     const v = videoRef?.current || document.querySelector('#movie_player video');
     if (!v) return;
     if (v.paused || v.ended) {
@@ -431,7 +436,7 @@ export default function FloatingMiniplayerShell({
   if (!isOpen) return null;
 
   // ============================================
-  // MOBILE: YouTube-Style Floating Rounded PiP Card (4-Corner Touch Drag + Tap to Expand)
+  // MOBILE: Floating Rounded PiP Card + Dedicated Bottom Control Strip (100% tappable, 4-Corner Drag)
   // ============================================
   if (isMobile) {
     const mobileEffectivePos = pos || { x: MOBILE_SIDE_MARGIN, y: MOBILE_TOP_MARGIN };
@@ -445,40 +450,48 @@ export default function FloatingMiniplayerShell({
           if (e.target.closest('button')) return;
           onExpand?.();
         }}
-        className={`fixed top-0 left-0 z-[85] rounded-xl bg-black ring-1 ring-white/10 shadow-[0_12px_36px_rgba(0,0,0,0.85)] overflow-hidden select-none touch-none will-change-transform cursor-pointer ${
+        className={`fixed top-0 left-0 z-[85] rounded-xl bg-[#212121] ring-1 ring-white/10 shadow-[0_14px_40px_rgba(0,0,0,0.88)] overflow-hidden select-none touch-none will-change-transform cursor-pointer ${
           isDragging
-            ? 'shadow-[0_22px_56px_rgba(0,0,0,0.92)]'
+            ? 'shadow-[0_22px_56px_rgba(0,0,0,0.95)]'
             : 'transition-transform duration-[360ms] ease-[cubic-bezier(0.22,1,0.36,1)]'
         }`}
         style={{
-          width: 'min(200px, 48vw)',
+          width: 'min(216px, 54vw)',
           transform: `translate3d(${mobileEffectivePos.x}px, ${mobileEffectivePos.y}px, 0) scale(${isDragging ? 1.03 : 1})`,
           opacity: pos ? 1 : 0,
         }}
       >
-        {/* Dynamic-Aspect Live Video Slot (pointer-events-none so taps hit cardRef & expand cleanly across React Portal!) */}
+        {/* Clean Unobstructed Dynamic-Aspect Live Video Slot (tap to expand, drag to move corner) */}
         <div
           ref={slotRef}
           className="relative z-10 w-full bg-black overflow-hidden pointer-events-none"
           style={{ aspectRatio: String(safeRatio) }}
         />
 
-        {/* Top-Left Pause/Play + Top-Right Close (hides cleanly while dragging, exact YouTube Mobile behavior!) */}
-        <div
-          className={`absolute top-0 inset-x-0 z-30 flex items-center justify-between px-1 pt-1 pb-4 bg-gradient-to-b from-black/70 via-black/25 to-transparent pointer-events-none transition-opacity duration-150 ${
-            isDragging ? 'opacity-0' : 'opacity-100'
-          }`}
-        >
+        {/* Flush Seam Orange Progress Bar */}
+        <div className="relative z-20 w-full h-[3px] bg-white/20 pointer-events-none">
+          <div
+            ref={mobileProgressBarRef}
+            className="h-full bg-[#FF7A00] transition-[width] duration-150 linear"
+            style={{ width: '0%' }}
+          />
+        </div>
+
+        {/* Dedicated Compact Control Strip (Title tap-to-expand + 100% tappable Play/Pause & Close) */}
+        <div className="relative z-30 flex items-center gap-1 pl-2.5 pr-1 py-1 bg-[#212121]">
+          <p className="flex-1 min-w-0 text-[11.5px] font-semibold text-white truncate leading-snug">
+            {title || 'กำลังเล่นวิดีโอ'}
+          </p>
           <button
             type="button"
             tabIndex={-1}
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onClick={handleTogglePlayMobile}
-            className="pointer-events-auto p-2 rounded-full text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.95)] active:scale-90 transition cursor-pointer focus:outline-none"
+            className="p-1.5 rounded-lg text-white active:bg-white/15 active:scale-90 transition cursor-pointer focus:outline-none shrink-0"
             aria-label={isPlaying ? 'หยุดชั่วคราว' : 'เล่นต่อ'}
           >
-            {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
+            {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
           </button>
           <button
             type="button"
@@ -490,20 +503,11 @@ export default function FloatingMiniplayerShell({
               e.preventDefault();
               onClose?.();
             }}
-            className="pointer-events-auto p-2 rounded-full text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.95)] active:scale-90 transition cursor-pointer focus:outline-none"
+            className="p-1.5 rounded-lg text-zinc-300 active:text-white active:bg-white/15 active:scale-90 transition cursor-pointer focus:outline-none shrink-0"
             aria-label="ปิด Miniplayer"
           >
-            <X className="w-4.5 h-4.5" />
+            <X className="w-4 h-4" />
           </button>
-        </div>
-
-        {/* Flush Bottom Orange Progress Bar */}
-        <div className="absolute bottom-0 inset-x-0 z-20 h-[3px] bg-white/30 pointer-events-none">
-          <div
-            ref={mobileProgressBarRef}
-            className="h-full bg-[#FF7A00] transition-[width] duration-150 linear"
-            style={{ width: '0%' }}
-          />
         </div>
       </div>
     );
