@@ -3712,6 +3712,10 @@ export default function VideoPlayer({
           resetControlsTimer={resetControlsTimer}
           ambientMode={ambientMode}
           setAmbientMode={setAmbientMode}
+          isMuted={isMuted}
+          volume={volume}
+          toggleMute={toggleMute}
+          togglePiP={togglePiP}
           isCcActive={isCcActive}
           setIsCcActive={handleUserSetCcActive}
           hasSubtitles={hasSubtitles}

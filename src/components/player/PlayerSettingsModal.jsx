@@ -6,7 +6,7 @@ import {
   animate, AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform,
 } from 'framer-motion';
 import {
-  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, RotateCcw, Layers, Headphones
+  ChevronRight, Check, ArrowLeft, X, Sliders, Gauge, Maximize2, RotateCcw, Layers, Headphones, Volume2, VolumeX, PictureInPicture2
 } from 'lucide-react';
 import AmbientModeIcon from '../icons/AmbientModeIcon';
 import CcSubtitleIcon from '../icons/CcSubtitleIcon';
@@ -134,6 +134,10 @@ export default function PlayerSettingsModal({
   onSelectAudioMode = null,
   audioChannels = null,
   audioLayout = null,
+  isMuted = false,
+  volume = 1,
+  toggleMute = null,
+  togglePiP = null,
 }) {
   const [mounted, setMounted] = useState(false);
   const [isClientSmall, setIsClientSmall] = useState(false);
@@ -609,6 +613,45 @@ export default function PlayerSettingsModal({
                         </div>
                       </div>
                     </button>
+
+                    {/* Mute / Unmute Toggle (Moved here on Mobile to keep video player ultra-clean!) */}
+                    {toggleMute && (
+                      <button
+                        type="button"
+                        onClick={() => toggleMute()}
+                        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          {isMuted || volume === 0 ? (
+                            <VolumeX className="w-5 h-5 text-[#FF7A00] shrink-0" />
+                          ) : (
+                            <Volume2 className="w-5 h-5 text-zinc-300 shrink-0" />
+                          )}
+                          <span className="text-[14px] text-zinc-200 font-medium">เสียง</span>
+                        </div>
+                        <span className={`text-[13px] font-semibold ${isMuted || volume === 0 ? 'text-[#FF7A00]' : 'text-zinc-400'}`}>
+                          {isMuted || volume === 0 ? 'ปิดเสียง' : 'เปิดเสียง'}
+                        </span>
+                      </button>
+                    )}
+
+                    {/* OS Picture-in-Picture (Moved here on Mobile to keep video player ultra-clean!) */}
+                    {togglePiP && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSettingsMenu?.(false);
+                          togglePiP();
+                        }}
+                        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5">
+                          <PictureInPicture2 className="w-5 h-5 text-zinc-300 shrink-0" />
+                          <span className="text-[14px] text-zinc-200 font-medium">หน้าต่างลอยทับแอปอื่น (PiP)</span>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-zinc-400" />
+                      </button>
+                    )}
                   </motion.div>
                 )}
 

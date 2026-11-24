@@ -84,9 +84,9 @@ export default function PlayerBottomBar({
       inert={isMobileView && !isVisible ? true : undefined}
       className={`absolute bottom-0 left-0 right-0 ${
         isMobilePortrait
-          ? 'px-2.5 pb-0 pt-6 flex-col-reverse gap-0'
+          ? 'px-0 pb-0 pt-6 flex-col-reverse gap-0'
           : 'px-2.5 sm:px-6 pb-[calc(0.5rem+var(--player-safe-bottom,0px))] pt-0 sm:pt-8 flex-col gap-0 sm:gap-0.5'
-      } bg-gradient-to-t from-black/80 via-black/35 to-transparent flex z-30 transition-all duration-200 ${isVisible
+      } bg-gradient-to-t from-black/75 via-black/30 to-transparent flex z-30 transition-all duration-200 ${isVisible
         ? `opacity-100 translate-y-0 ${isMobileView ? 'pointer-events-none [&_button]:pointer-events-auto [&>[data-player-seek]]:pointer-events-auto' : 'pointer-events-auto'}`
         : 'opacity-0 pointer-events-none translate-y-1'
         }`}
@@ -118,6 +118,7 @@ export default function PlayerBottomBar({
         isScrubbingRef={isScrubbingRef}
         isMobileView={isMobileView}
         showSettingsMenu={showSettingsMenu}
+        flushBottom={isMobilePortrait}
       />
 
       {/* Bottom Bar: Desktop vs Mobile */}
@@ -509,55 +510,25 @@ export default function PlayerBottomBar({
         </div>
       ) : (
         /* ============================================================ */
-        /* MOBILE PORTRAIT BOTTOM BAR (Clean YouTube-style, zero blur!) */
+        /* MOBILE PORTRAIT BOTTOM BAR (Ultra-Clean: Time + Fullscreen!) */
         /* ============================================================ */
-        <div className="flex items-center justify-between text-white text-xs pt-1">
-          <div className="flex items-center gap-1.5">
-            <span
-              ref={timeDisplayRef}
-              className="px-1 text-[11.5px] font-mono font-medium text-white/95 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] select-none"
-            >
-              0:00 / 0:00
-            </span>
+        <div className="flex items-center justify-between px-3 pb-1 text-white text-xs">
+          <span
+            ref={timeDisplayRef}
+            className="text-[11.5px] font-mono font-medium text-white/95 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] select-none"
+          >
+            0:00 / 0:00
+          </span>
 
-            <button
-              type="button"
-              onClick={toggleMute}
-              aria-label={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
-              title={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
-              className={`p-1.5 rounded-full transition active:scale-90 cursor-pointer shrink-0 flex items-center justify-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)] ${
-                isMuted || volume === 0
-                  ? 'bg-[#FF7A00] text-white'
-                  : 'text-white/95 active:bg-white/15'
-              }`}
-            >
-              {isMuted || volume === 0 ? <VolumeX size={17} /> : <Volume2 size={17} />}
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1">
-            {togglePiP && (
-              <button
-                type="button"
-                onClick={togglePiP}
-                className="p-1.5 rounded-full text-white/95 active:bg-white/15 transition active:scale-90 cursor-pointer drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]"
-                title="หน้าต่างลอยทับแอปอื่น (PiP)"
-                aria-label="หน้าต่างลอยทับแอปอื่น"
-              >
-                <PictureInPicture2 size={19} />
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={toggleFullscreen}
-              className="p-1.5 rounded-full text-white/95 active:bg-white/15 transition active:scale-90 cursor-pointer drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]"
-              title="เต็มจอ"
-              aria-label="เต็มจอ"
-            >
-              <Maximize size={19} />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="p-1.5 -mr-1 rounded-full text-white/95 active:bg-white/15 transition active:scale-90 cursor-pointer drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]"
+            title="เต็มจอ"
+            aria-label="เต็มจอ"
+          >
+            <Maximize size={19} />
+          </button>
         </div>
       )}
     </div>

@@ -20,6 +20,7 @@ export default function PlayerScrubber({
   handlePointerUp,
   isMobileView,
   showSettingsMenu,
+  flushBottom = false,
 }) {
   // Position, width & preview timestamp are updated 100% via direct DOM refs (zero React re-renders during playback or hover/scrub!)
   const showPreview = (isScrubbing || isHoveringSeek) && !showSettingsMenu;
@@ -38,7 +39,9 @@ export default function PlayerScrubber({
         if (!isMobileView && e?.pointerType !== 'touch' && !showSettingsMenu) setIsHoveringSeek?.(true);
       }}
       onMouseLeave={() => setIsHoveringSeek?.(false)}
-      className="relative flex items-center h-6 sm:h-5 cursor-pointer touch-none group/seek py-1"
+      className={`relative flex cursor-pointer touch-none group/seek ${
+        flushBottom ? 'h-4 items-end py-0' : 'h-6 sm:h-5 items-center py-1'
+      }`}
     >
       {/* YouTube-Style Timeline Thumbnail Scrub Preview Window */}
       <div
@@ -81,7 +84,11 @@ export default function PlayerScrubber({
       </div>
 
       {/* Progress Background Track */}
-      <div className="w-full h-1 group-hover/seek:h-1.5 bg-white/20 rounded-full overflow-hidden relative pointer-events-none transition-all duration-150">
+      <div
+        className={`w-full bg-white/25 overflow-hidden relative pointer-events-none transition-all duration-150 ${
+          flushBottom ? 'h-[3px] rounded-none' : 'h-1 group-hover/seek:h-1.5 rounded-full'
+        }`}
+      >
         {/* Buffer Track (Direct DOM) */}
         <div ref={bufferBarRef} className="absolute left-0 top-0 bottom-0 w-0 bg-white/40" />
         {/* Hover Preview Track (Direct DOM) */}
@@ -98,7 +105,11 @@ export default function PlayerScrubber({
       {/* Scrubber Knob (Direct DOM - TubeLock Orange) */}
       <div
         ref={scrubberKnobRef}
-        className={`left-0 absolute -translate-x-1/2 w-3.5 h-3.5 bg-[#FF7A00] ring-2 ring-white/90 rounded-full shadow-md pointer-events-none transition-transform duration-100 ${isScrubbing
+        className={`left-0 absolute -translate-x-1/2 bg-[#FF7A00] rounded-full shadow-md pointer-events-none transition-transform duration-100 ${
+          flushBottom
+            ? 'bottom-[1.5px] translate-y-1/2 w-3 h-3'
+            : 'w-3.5 h-3.5 ring-2 ring-white/90'
+        } ${isScrubbing
           ? 'scale-125'
           : showSettingsMenu
             ? 'scale-0'
