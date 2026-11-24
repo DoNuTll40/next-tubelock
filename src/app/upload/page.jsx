@@ -121,6 +121,7 @@ export default function UploadPage() {
 
   // Step 3: Content Rating & Sprite Sheet Vision State
   const [contentRating, setContentRating] = useState('all'); // 'all' | '13+' | '18+' | 'mature' | 'auto'
+  const [visibility, setVisibility] = useState('public'); // 'public' | 'unlisted' | 'private'
   const [spritePreviewUrl, setSpritePreviewUrl] = useState('');
   const [ratingCheckStatus, setRatingCheckStatus] = useState('pending');
   const [visionResult, setVisionResult] = useState(null);
@@ -1063,6 +1064,7 @@ export default function UploadPage() {
           tags: finalTags,
           playlistIds: selectedPlaylistIdsRef.current,
           contentRating,
+          visibility,
           subtitleMode,
           manualSubtitleSrt:
             subtitleMode === 'manual' && manualSubtitleFile?.ext === 'srt'
@@ -1541,6 +1543,8 @@ export default function UploadPage() {
                     category={category}
                     tags={tags}
                     contentRating={contentRating}
+                    visibility={visibility}
+                    setVisibility={setVisibility}
                     subtitleMode={subtitleMode}
                     manualSubtitleFile={manualSubtitleFile}
                     isUploading={isUploading}

@@ -45,6 +45,7 @@ import {
   CONTENT_RATINGS,
 } from '@/lib/videoEditorUtils';
 import { normalizeVideoLanguageCode } from '@/lib/videoLanguages';
+import { normalizeVideoVisibility } from '@/lib/videoVisibility';
 
 function parseTagsField(rawTags) {
   if (Array.isArray(rawTags)) {
@@ -66,6 +67,7 @@ function buildFormSnapshot(video) {
     tags: parseTagsField(video.tags),
     thumbnailUrl: video.thumbnailUrl || '',
     contentRating: video.contentRating || 'all',
+    visibility: normalizeVideoVisibility(video.visibility),
     subtitleTracks: normalizeSubtitleTracks(
       video.subtitleTracks,
       video.subtitleSrt || '',
@@ -93,6 +95,7 @@ function areSnapshotsEqual(a, b) {
   if (a.category !== b.category) return false;
   if (a.thumbnailUrl !== b.thumbnailUrl) return false;
   if (a.contentRating !== b.contentRating) return false;
+  if (a.visibility !== b.visibility) return false;
   if (JSON.stringify(a.tags) !== JSON.stringify(b.tags)) return false;
   if (serializeTracksForDiff(a.subtitleTracks) !== serializeTracksForDiff(b.subtitleTracks)) {
     return false;
@@ -139,6 +142,7 @@ function StudioEditorInner() {
   const [tags, setTags] = useState([]);
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [contentRating, setContentRating] = useState('all');
+  const [visibility, setVisibility] = useState('public');
   const [subtitleTracks, setSubtitleTracks] = useState([]);
   const [playlistState, setPlaylistState] = useState(null);
   const playlistDraft = playlistState?.videoId === videoId ? playlistState : null;
@@ -212,6 +216,7 @@ function StudioEditorInner() {
         setTags(snap.tags);
         setThumbnailUrl(snap.thumbnailUrl);
         setContentRating(snap.contentRating);
+        setVisibility(snap.visibility);
         setSubtitleTracks(snap.subtitleTracks);
         setSavedSnapshot(snap);
         setLoadError({ status: 0, message: '' });
@@ -281,9 +286,10 @@ function StudioEditorInner() {
       tags,
       thumbnailUrl,
       contentRating,
+      visibility,
       subtitleTracks,
     }),
-    [title, description, sourceLanguage, category, tags, thumbnailUrl, contentRating, subtitleTracks]
+    [title, description, sourceLanguage, category, tags, thumbnailUrl, contentRating, visibility, subtitleTracks]
   );
 
   const isMetadataDirty = useMemo(
@@ -472,6 +478,7 @@ function StudioEditorInner() {
     setTags(savedSnapshot.tags);
     setThumbnailUrl(savedSnapshot.thumbnailUrl);
     setContentRating(savedSnapshot.contentRating);
+    setVisibility(savedSnapshot.visibility);
     setSubtitleTracks(savedSnapshot.subtitleTracks);
     if (isPlaylistDirty) {
       setPlaylistState((draft) => ({ ...draft, selectedIds: draft.savedIds }));
@@ -494,6 +501,7 @@ function StudioEditorInner() {
         tags,
         thumbnailUrl,
         thumbnailOptions: Array.isArray(video.thumbnailOptions) ? video.thumbnailOptions : [],
+        visibility,
         ...(!isRatingEvaluated(video.ratingCheckStatus) && contentRating !== savedSnapshot?.contentRating && { contentRating }),
         subtitleTracks: normalizedTracks,
       }),
@@ -512,6 +520,7 @@ function StudioEditorInner() {
       tags: parseTagsField(savedV.tags ?? tags),
       thumbnailUrl: savedV.thumbnailUrl ?? thumbnailUrl,
       contentRating: savedV.contentRating ?? contentRating,
+      visibility: normalizeVideoVisibility(savedV.visibility ?? visibility),
       subtitleTracks: normalizeSubtitleTracks(
         savedV.subtitleTracks ?? normalizedTracks,
         savedV.subtitleSrt || '',
@@ -529,6 +538,7 @@ function StudioEditorInner() {
       tags: nextSnap.tags.join(', '),
       thumbnailUrl: nextSnap.thumbnailUrl,
       contentRating: nextSnap.contentRating,
+      visibility: nextSnap.visibility,
       subtitleTracks: nextSnap.subtitleTracks,
       subtitleStatus: savedV.subtitleStatus ?? prev.subtitleStatus,
     }));
@@ -539,6 +549,7 @@ function StudioEditorInner() {
     setTags((value) => value === tags ? nextSnap.tags : value);
     setThumbnailUrl((value) => value === thumbnailUrl ? nextSnap.thumbnailUrl : value);
     setContentRating((value) => value === contentRating ? nextSnap.contentRating : value);
+    setVisibility((value) => value === visibility ? nextSnap.visibility : value);
     setSubtitleTracks((value) => value === subtitleTracks ? nextSnap.subtitleTracks : value);
     setSavedSnapshot(nextSnap);
 
@@ -1021,6 +1032,8 @@ function StudioEditorInner() {
                   thumbnailStatus={video.thumbnailStatus || 'waiting'}
                   contentRating={contentRating}
                   setContentRating={setContentRating}
+                  visibility={visibility}
+                  setVisibility={setVisibility}
                   ratingCheckStatus={video.ratingCheckStatus || 'pending'}
                   visionResult={video.visionAnalysis || null}
                   hasRawFile={Boolean(video.rawFileName)}

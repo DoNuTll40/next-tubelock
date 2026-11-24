@@ -1,7 +1,8 @@
-import { getSessionUserId } from '@/lib/access';
+import { getSessionUserId, isAdmin } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { decodeVideoSlug } from '@/lib/videoUtils';
+import { canViewVideo } from '@/lib/videoVisibility';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
 import { protectSourcePreviews, resolveVideoSourceServer } from '@/lib/videoSourceService';
 
@@ -40,9 +41,10 @@ export async function GET(request, context) {
     const preferFull = searchParams.get('full') === '1';
     const requestedVersion = searchParams.get('v') || searchParams.get('versionId') || null;
     const sql = getDb();
+    const viewerUserId = await getSessionUserId(sql);
     const wantsAdultPreviews = searchParams.get('previews') === '1' &&
       request.cookies.get(POSTER_PREFERENCE)?.value === '1';
-    const showAdultPreviews = wantsAdultPreviews && Boolean(await getSessionUserId(sql));
+    const showAdultPreviews = wantsAdultPreviews && Boolean(viewerUserId);
 
     const { data, path, notReady } = await resolveVideoSourceServer(id, {
       forceFresh,
@@ -54,6 +56,9 @@ export async function GET(request, context) {
     const rating = data?.video;
     if (notReady || !rating || (rating.status && rating.status !== 'READY')) {
       return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404, headers: timing(path) });
+    }
+    if (!canViewVideo(rating, viewerUserId, viewerUserId != null && isAdmin(viewerUserId))) {
+      return NextResponse.json({ success: false, error: 'วิดีโอนี้ตั้งค่าเป็นส่วนตัว' }, { status: 403, headers: timing(path) });
     }
 
     return NextResponse.json(showAdultPreviews ? data : protectSourcePreviews(data, rating), { headers: timing(path) });

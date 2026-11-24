@@ -74,6 +74,7 @@ export async function GET(request, context) {
         id, title, description, tags, category, status, transcode_progress, stage_detail,
         error_message, raw_file_name, master_playlist_path, onedrive_folder_id, duration,
         resolution, fps, codec, bitrate, thumbnail_url, file_size_bytes, created_at, updated_at,
+        COALESCE(visibility, 'public') AS visibility,
         extras.metadata - ARRAY['subtitle_srt', 'subtitle_vtt', 'subtitle_tracks', 'worker_logs', 'thumbnail_options', 'vision_analysis', 'sprite_preview_url'] AS metadata,
         CASE WHEN revisions.subtitles <> ${query.get('subtitlesRevision') || ''}
           THEN jsonb_build_object('subtitle_srt', extras.metadata->'subtitle_srt',
@@ -210,6 +211,7 @@ export async function GET(request, context) {
         sourceLanguage: video.source_language || '',
         spriteStatus: video.sprite_status || 'waiting',
         contentRating: video.content_rating || 'all',
+        visibility: video.visibility || 'public',
         userSelectedRating: video.user_selected_rating || 'all',
         aiSuggestedRating: video.ai_suggested_rating || '',
         ratingCheckStatus: video.rating_check_status || 'pending',

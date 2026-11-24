@@ -625,6 +625,8 @@ export async function resolveVideoSourceServer(
           THEN v.source_cache ELSE NULL END AS source_cache,
         u.name AS author_name,
         u.picture AS author_picture,
+        u.handle AS author_handle,
+        COALESCE(v.visibility, 'public') AS visibility,
         vv.id AS vv_id,
         vv.version_key AS vv_key,
         vv.label AS vv_label,
@@ -692,7 +694,9 @@ export async function resolveVideoSourceServer(
         CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry} AND v.source_cache_br IS NULL
           THEN v.source_cache ELSE NULL END AS source_cache,
         u.name AS author_name,
-        u.picture AS author_picture
+        u.picture AS author_picture,
+        u.handle AS author_handle,
+        COALESCE(v.visibility, 'public') AS visibility
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id
       WHERE v.id = ${id}

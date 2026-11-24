@@ -29,6 +29,8 @@ import {
   UploadCloud,
   AlertCircle,
   ArrowLeft,
+  Lock,
+  Link2,
 } from 'lucide-react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
 
@@ -308,9 +310,34 @@ export default function WatchClient({
           {/* 📱 YouTube-Style Video Details Section (SSR Rendered Immediately!) */}
           <div className="relative z-10 w-full flex flex-col gap-3 p-3.5 sm:px-0 sm:pt-3.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] sm:bg-transparent dark:sm:bg-transparent transition-colors">
             {/* 1. Title */}
-            <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-snug tracking-tight">
-              {video?.title || ''}
-            </h1>
+            <div className="flex flex-col gap-1.5">
+              <h1 className="text-[17px] sm:text-xl font-bold text-[#0F0F0F] dark:text-[#F1F1F1] leading-snug tracking-tight">
+                {video?.title || ''}
+              </h1>
+              {video?.visibility && video.visibility !== 'public' && (
+                <div className="flex items-center">
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                      video.visibility === 'private'
+                        ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25'
+                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25'
+                    }`}
+                  >
+                    {video.visibility === 'private' ? (
+                      <>
+                        <Lock className="w-3 h-3" />
+                        <span>ส่วนตัว</span>
+                      </>
+                    ) : (
+                      <>
+                        <Link2 className="w-3 h-3" />
+                        <span>ไม่แสดงในรายการ</span>
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+            </div>
 
             {/* 2. YouTube-Style Channel (Left) + Action Buttons (Right) */}
             <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 py-1">

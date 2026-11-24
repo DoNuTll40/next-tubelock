@@ -1,4 +1,5 @@
-import { getCachedServerSession } from '@/lib/access';
+import { getCachedServerSession, isAdmin } from '@/lib/access';
+import { canViewVideo } from '@/lib/videoVisibility';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
 import { protectVideoPoster } from '@/lib/videoUtils';
 import { notFound, redirect } from 'next/navigation';
@@ -32,8 +33,8 @@ const getVideoById = cache(async (numericId) => {
         v.subtitle_status,
         CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_srt, '') END AS subtitle_srt,
         CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_vtt, '') END AS subtitle_vtt,
-        v.subtitle_tracks, v.content_rating,
-        u.name AS author_name, u.picture AS author_picture
+        v.subtitle_tracks, v.content_rating, COALESCE(v.visibility, 'public') AS visibility,
+        u.name AS author_name, u.picture AS author_picture, u.handle AS author_handle
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id
       WHERE v.id = ${numericId} AND (v.status = 'READY' OR v.status IS NULL)
@@ -80,6 +81,15 @@ export async function generateMetadata({ params }) {
       };
     }
 
+    const visibility = String(video.visibility || 'public').toLowerCase();
+    if (visibility === 'private') {
+      return {
+        title: 'วิดีโอส่วนตัว - TubeLock',
+        description: 'วิดีโอนี้ถูกตั้งค่าเป็นส่วนตัวบน TubeLock',
+        robots: { index: false, follow: false },
+      };
+    }
+
     const canonicalSlug = encodeVideoSlug(video.id, video.category) || rawSlug;
     const rawTitle = (video.title || 'TubeLock').trim();
 
@@ -106,6 +116,7 @@ export async function generateMetadata({ params }) {
         absolute: `${cleanTitle} - TubeLock`,
       },
       description: pageDescription,
+      ...(visibility !== 'public' ? { robots: { index: false, follow: false } } : {}),
       alternates: {
         canonical: canonicalPath,
       },
@@ -178,6 +189,7 @@ export default async function WatchPage({ params, searchParams }) {
 
   let video = null;
   let relatedVideos = [];
+  let isPrivateBlocked = false;
 
   try {
     // ⚡ Performance Optimization:
@@ -196,7 +208,9 @@ export default async function WatchPage({ params, searchParams }) {
           FROM videos v
           LEFT JOIN users u ON v.user_id = u.id
           LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
-          WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
+          WHERE (v.status = 'READY' OR v.status IS NULL)
+            AND COALESCE(v.visibility, 'public') = 'public'
+            AND v.id != ${numericId}
           ORDER BY v.created_at DESC
           LIMIT 48;
         `
@@ -207,10 +221,12 @@ export default async function WatchPage({ params, searchParams }) {
             v.status, v.source_type, v.user_id,
             NULL AS last_position_seconds,
             FALSE AS has_watched,
-            u.name AS author_name, u.picture AS author_picture
+            u.name AS author_name, u.picture AS author_picture, u.handle AS author_handle
           FROM videos v
           LEFT JOIN users u ON v.user_id = u.id
-          WHERE (v.status = 'READY' OR v.status IS NULL) AND v.id != ${numericId}
+          WHERE (v.status = 'READY' OR v.status IS NULL)
+            AND COALESCE(v.visibility, 'public') = 'public'
+            AND v.id != ${numericId}
           ORDER BY v.created_at DESC
           LIMIT 48;
         `).catch((relErr) => {
@@ -228,6 +244,9 @@ export default async function WatchPage({ params, searchParams }) {
       notFound();
     }
 
+    if (!canViewVideo(rawVideo, userId, userId != null && isAdmin(userId))) {
+      isPrivateBlocked = true;
+    } else {
     let lastWatchedVersionId = null;
     if (userId && !requestedVersion && readyVersions.length > 1) {
       try {
@@ -329,6 +348,7 @@ export default async function WatchPage({ params, searchParams }) {
     });
 
     relatedVideos = rankRelatedVideos(video, mappedRelated, { limit: 48 });
+    }
   } catch (err) {
     // Re-throw Next.js redirect or notFound
     if (
@@ -341,6 +361,20 @@ export default async function WatchPage({ params, searchParams }) {
     }
     console.error('[WatchPage SSR Error]:', err);
     notFound();
+  }
+
+  if (isPrivateBlocked) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center px-6 text-center gap-3">
+        <div className="w-14 h-14 rounded-2xl bg-[#FF7A00]/15 border border-[#FF7A00]/30 flex items-center justify-center text-[#FF7A00] text-2xl">
+          🔒
+        </div>
+        <h1 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">วิดีโอนี้เป็นส่วนตัว</h1>
+        <p className="text-sm text-[#6C757D] dark:text-[#AAAAAA] max-w-md">
+          เจ้าของวิดีโอตั้งค่าความเป็นส่วนตัวไว้ เฉพาะเจ้าของเท่านั้นที่สามารถเปิดรับชมได้
+        </p>
+      </div>
+    );
   }
 
   const isMusic = isMusicVideo(video);

@@ -7,6 +7,7 @@ import { ensureSourceCacheColumns, invalidateVideoCaches } from '@/lib/videoSour
 import { normalizeSubtitleTracks } from '@/lib/videoEditorUtils';
 import { normalizeVideoLanguageCode } from '@/lib/videoLanguages';
 import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
+import { canViewVideo, normalizeVideoVisibility } from '@/lib/videoVisibility';
 import {
   getVideoVersions,
   formatVersionSummary,
@@ -52,9 +53,10 @@ export async function GET(request, context) {
           CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_srt, '') END AS subtitle_srt,
           CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_vtt, '') END AS subtitle_vtt,
           v.subtitle_tracks, v.content_rating,
-          v.user_id,
+          v.user_id, COALESCE(v.visibility, 'public') AS visibility,
           u.name AS author_name,
-          u.picture AS author_picture
+          u.picture AS author_picture,
+          u.handle AS author_handle
         FROM videos v
         LEFT JOIN users u ON v.user_id = u.id
         WHERE v.id = ${id} AND (v.status = 'READY' OR v.status IS NULL)
@@ -67,10 +69,13 @@ export async function GET(request, context) {
     }
 
     const baseVideo = rows[0];
+    const viewerUserId = await getSessionUserId(sql);
+    const viewerIsAdmin = viewerUserId != null && isAdmin(viewerUserId);
+    if (!canViewVideo(baseVideo, viewerUserId, viewerIsAdmin)) {
+      return NextResponse.json({ success: false, error: 'วิดีโอนี้ตั้งค่าเป็นส่วนตัว' }, { status: 403 });
+    }
     const isOwnerOrAdmin = allowAllVersions
-      ? Boolean(
-          await getSessionUserId(sql).then((uid) => uid != null && (isAdmin(uid) || baseVideo.user_id === uid))
-        )
+      ? Boolean(viewerUserId != null && (viewerIsAdmin || baseVideo.user_id === viewerUserId))
       : false;
     const visibleVersions = isOwnerOrAdmin
       ? rawVersions
@@ -412,6 +417,9 @@ export async function PATCH(request, context) {
       }
     }
 
+    const sanitizedVisibility =
+      body.visibility !== undefined ? normalizeVideoVisibility(body.visibility, null) : null;
+
     const updated = await sql`
       UPDATE videos v
       SET thumbnail_url = COALESCE(${validThumbUrl}, thumbnail_url),
@@ -423,6 +431,7 @@ export async function PATCH(request, context) {
           source_language = CASE WHEN ${hasSourceLanguageUpdate} THEN ${sanitizedSourceLanguage || ''} ELSE source_language END,
           category = COALESCE(${sanitizedCategory}, category),
           tags = COALESCE(${sanitizedTags}, tags),
+          visibility = COALESCE(${sanitizedVisibility}, visibility),
           content_rating = CASE
             WHEN to_jsonb(v)->>'rating_check_status' = ANY(${EVALUATED_RATING_STATUSES}::text[]) THEN content_rating
             ELSE COALESCE(${sanitizedRating && sanitizedRating !== 'auto' ? sanitizedRating : null}, content_rating) END,
@@ -440,7 +449,7 @@ export async function PATCH(request, context) {
           updated_at = NOW()
       WHERE id = ${id} AND (${admin} OR user_id = ${userId})
       RETURNING
-        id, title, description, source_language, category, tags, content_rating, user_selected_rating,
+        id, title, description, source_language, category, tags, visibility, content_rating, user_selected_rating,
         thumbnail_url, thumbnail_status, thumbnail_options,
         subtitle_status, subtitle_srt, subtitle_vtt, subtitle_tracks, updated_at;
     `;
@@ -461,6 +470,7 @@ export async function PATCH(request, context) {
         sourceLanguage: row.source_language || '',
         category: row.category || 'general',
         tags: row.tags || [],
+        visibility: row.visibility || 'public',
         contentRating: row.content_rating || 'all',
         userSelectedRating: row.user_selected_rating || 'all',
         thumbnailUrl: row.thumbnail_url || '',

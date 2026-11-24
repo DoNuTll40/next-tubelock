@@ -7,6 +7,7 @@ import { triggerGitHubWorkflow } from '@/app/api/upload/dispatch-action/route';
 import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
 import { EVALUATED_RATING_STATUSES, isRatingEvaluated } from '@/lib/ratingStatus';
 import { normalizeVideoLanguageCode, getVideoLanguage } from '@/lib/videoLanguages';
+import { normalizeVideoVisibility } from '@/lib/videoVisibility';
 import { addVideoToPlaylists, ensurePlaylistSchema } from '@/lib/playlists';
 
 /**
@@ -27,6 +28,7 @@ export async function POST(request) {
       tags,
       playlistIds = [],
       contentRating = 'all',
+      visibility = 'public',
       subtitleMode = 'auto', // 'manual' | 'requested-ai' | 'auto'
       manualSubtitleSrt = '',
       manualSubtitleVtt = '',
@@ -263,6 +265,7 @@ export async function POST(request) {
     const finalCategory = typeof category === 'string' && category.trim() ? category.trim() : 'general';
     const finalTags = Array.isArray(tags) ? tags : [];
     const finalRating = contentRating || 'all';
+    const finalVisibility = normalizeVideoVisibility(visibility);
 
     // Handle manual subtitle upload if provided
     const hasManualSub = subtitleMode === 'manual' && (manualSubtitleSrt || manualSubtitleVtt);
@@ -283,6 +286,7 @@ export async function POST(request) {
         source_language = ${finalSourceLanguage},
         category = ${finalCategory},
         tags = ${finalTags},
+        visibility = ${finalVisibility},
         content_rating = CASE WHEN rating_check_status = ANY(${EVALUATED_RATING_STATUSES}::text[])
           THEN content_rating ELSE ${finalRating === 'auto' ? 'all' : finalRating} END,
         user_selected_rating = CASE WHEN rating_check_status = ANY(${EVALUATED_RATING_STATUSES}::text[])

@@ -6,9 +6,14 @@ import {
   AlertCircle,
   Loader2,
   ExternalLink,
+  Globe,
+  Link2,
+  Lock,
+  Check,
 } from 'lucide-react';
 import { encodeVideoSlug } from '@/lib/videoUtils';
 import { getVideoLanguage } from '@/lib/videoLanguages';
+import { VISIBILITY_OPTIONS } from '@/lib/videoVisibility';
 
 export default function StepPublish({
   title,
@@ -16,6 +21,8 @@ export default function StepPublish({
   category,
   tags,
   contentRating,
+  visibility = 'public',
+  setVisibility,
   subtitleMode,
   manualSubtitleFile,
   isUploading,
@@ -156,6 +163,49 @@ export default function StepPublish({
           </span>
         </div>
       </div>
+
+      {/* Visibility Selector */}
+      {setVisibility && (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs sm:text-sm font-bold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-1.5">
+              <Globe className="w-4 h-4 text-[#FF7A00]" />
+              <span>ระดับการแสดงผล (Visibility)</span>
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {VISIBILITY_OPTIONS.map((opt) => {
+              const isSelected = visibility === opt.id;
+              const Icon = opt.id === 'private' ? Lock : opt.id === 'unlisted' ? Link2 : Globe;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  disabled={Boolean(completedVideo) || isStartingPipeline}
+                  aria-pressed={isSelected}
+                  onClick={() => setVisibility(opt.id)}
+                  className={`p-3 rounded-xl border text-left transition enabled:cursor-pointer ${
+                    isSelected
+                      ? 'bg-[#FF7A00]/10 border-[#FF7A00]'
+                      : 'bg-[#F4F0E8] dark:bg-[#222222] border-[#EFECE6] dark:border-white/10 enabled:hover:border-[#D5CFC5] dark:enabled:hover:border-white/20'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-xs font-bold text-[#212529] dark:text-[#F1F1F1] inline-flex items-center gap-1.5">
+                      <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-[#FF7A00]' : 'text-[#6C655D] dark:text-[#AAAAAA]'}`} />
+                      {opt.label}
+                    </span>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-[#FF7A00] shrink-0" />}
+                  </div>
+                  <p className="text-[11px] text-[#6C655D] dark:text-[#9A9A9A] leading-relaxed">
+                    {opt.desc}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Configuration Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">

@@ -24,9 +24,13 @@ import {
   Cpu,
   Clock,
   SlidersHorizontal,
+  Globe,
+  Link2,
+  Lock,
 } from 'lucide-react';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
 import VideoCard from '@/components/VideoCard';
+import { getVisibilityMeta } from '@/lib/videoVisibility';
 import { useSession } from '@/context/SessionContext';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { usePosterReveal } from '@/lib/usePosterReveal';
@@ -330,6 +334,16 @@ function StudioVideoCard({
             <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold border ${statusMeta.badgeClass}`}>
               {statusMeta.label}
             </span>
+            {(() => {
+              const vis = getVisibilityMeta(video.visibility);
+              const VisIcon = vis.id === 'private' ? Lock : vis.id === 'unlisted' ? Link2 : Globe;
+              return (
+                <span className={`px-1.5 py-0.2 rounded text-[10px] font-semibold border inline-flex items-center gap-0.5 ${vis.badgeClass}`}>
+                  <VisIcon className="w-2.5 h-2.5" />
+                  {vis.label}
+                </span>
+              );
+            })()}
             {isMature && (
               <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
                 18+
@@ -429,6 +443,16 @@ function StudioVideoRow({
           <span className={`px-2 py-0.5 rounded-md border ${statusMeta.badgeClass}`}>
             {statusMeta.label}
           </span>
+          {(() => {
+            const vis = getVisibilityMeta(video.visibility);
+            const VisIcon = vis.id === 'private' ? Lock : vis.id === 'unlisted' ? Link2 : Globe;
+            return (
+              <span className={`px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${vis.badgeClass}`}>
+                <VisIcon className="w-3 h-3" />
+                {vis.label}
+              </span>
+            );
+          })()}
           <span className={`px-2 py-0.5 rounded-md border ${ratingMeta.className}`}>
             {ratingMeta.label}
           </span>

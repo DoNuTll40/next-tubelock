@@ -108,7 +108,7 @@ export async function GET(request) {
           v.id, v.title, v.description, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec,
           v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.updated_at,
           v.status, v.transcode_progress, v.stage_detail, v.error_message, v.raw_file_name, v.source_type,
-          v.user_id,
+          v.user_id, COALESCE(v.visibility, 'public') AS visibility,
           to_jsonb(v)->>'subtitle_status' AS subtitle_status,
           to_jsonb(v)->>'thumbnail_status' AS thumbnail_status,
           to_jsonb(v)->>'user_selected_rating' AS user_selected_rating,
@@ -170,14 +170,15 @@ export async function GET(request) {
           SELECT 
             v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
             v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
-            v.user_id,
+            v.user_id, COALESCE(v.visibility, 'public') AS visibility,
             h.last_position_seconds,
             h.last_version_id,
             (h.id IS NOT NULL) AS has_watched,
             COALESCE(vv_meta.version_count, 0) AS version_count,
             COALESCE(vv_meta.version_badges, '[]'::jsonb) AS version_badges,
             u.name AS author_name,
-            u.picture AS author_picture
+            u.picture AS author_picture,
+            u.handle AS author_handle
           FROM videos v
           LEFT JOIN users u ON v.user_id = u.id
           LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
@@ -199,7 +200,8 @@ export async function GET(request) {
             FROM video_versions vv
             WHERE vv.video_id = v.id AND (vv.status = 'READY' OR vv.status IS NULL)
           ) vv_meta ON TRUE
-          WHERE v.status = 'READY' OR v.status IS NULL 
+          WHERE (v.status = 'READY' OR v.status IS NULL)
+            AND COALESCE(v.visibility, 'public') = 'public'
           ORDER BY v.created_at DESC;
         `;
       }
@@ -207,14 +209,15 @@ export async function GET(request) {
         SELECT 
           v.id, v.title, v.duration, v.file_size_bytes, v.resolution, v.fps, v.codec, 
           v.thumbnail_url, v.tags, v.category, v.content_rating, v.views_count, v.created_at, v.status, v.source_type,
-          v.user_id,
+          v.user_id, COALESCE(v.visibility, 'public') AS visibility,
           NULL AS last_position_seconds,
           NULL AS last_version_id,
           FALSE AS has_watched,
           COALESCE(vv_meta.version_count, 0) AS version_count,
           COALESCE(vv_meta.version_badges, '[]'::jsonb) AS version_badges,
           u.name AS author_name,
-          u.picture AS author_picture
+          u.picture AS author_picture,
+          u.handle AS author_handle
         FROM videos v
         LEFT JOIN users u ON v.user_id = u.id
         LEFT JOIN LATERAL (
@@ -235,7 +238,8 @@ export async function GET(request) {
           FROM video_versions vv
           WHERE vv.video_id = v.id AND (vv.status = 'READY' OR vv.status IS NULL)
         ) vv_meta ON TRUE
-        WHERE v.status = 'READY' OR v.status IS NULL 
+        WHERE (v.status = 'READY' OR v.status IS NULL)
+          AND COALESCE(v.visibility, 'public') = 'public'
         ORDER BY v.created_at DESC;
       `;
     };
