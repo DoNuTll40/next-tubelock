@@ -98,6 +98,7 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
   const [coverColor, setCoverColor] = useState(null);
   const [items, setItems] = useState(initialItems);
   const [dialog, setDialog] = useState(null);
+  const [openMenuId, setOpenMenuId] = useState(null);
   const [notice, setNotice] = useState(null);
   const [removing, setRemoving] = useState(false);
   const [recovering, setRecovering] = useState(false);
