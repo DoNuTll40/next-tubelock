@@ -13,9 +13,9 @@ export function generateSessionToken() {
 }
 
 /**
- * Parse User-Agent string into structured device info
+ * Parse User-Agent string (plus optional Client Hints) into structured device info
  */
-export function parseUserAgent(ua = '') {
+export function parseUserAgent(ua = '', hints = null) {
   const ual = ua.toLowerCase();
 
   // ── Device type ───────────────────────────────────────────────
@@ -28,16 +28,21 @@ export function parseUserAgent(ua = '') {
 
   // ── OS ────────────────────────────────────────────────────────
   let os = 'Unknown OS';
-  if (/windows nt 10\.0/.test(ual))      os = 'Windows 10/11';
-  else if (/windows nt 6\.3/.test(ual))  os = 'Windows 8.1';
-  else if (/windows nt 6\.1/.test(ual))  os = 'Windows 7';
-  else if (/windows/.test(ual))          os = 'Windows';
+  if (/windows nt 10\.0/.test(ual)) {
+    const pv = Number(String(hints?.platformVersion || '').split('.')[0]);
+    if (Number.isFinite(pv) && pv >= 13) os = 'Windows 11';
+    else if (Number.isFinite(pv) && pv > 0) os = 'Windows 10';
+    else os = 'Windows 10/11';
+  } else if (/windows nt 6\.3/.test(ual)) os = 'Windows 8.1';
+  else if (/windows nt 6\.1/.test(ual)) os = 'Windows 7';
+  else if (/windows/.test(ual)) os = 'Windows';
   else if (/macintosh|mac os x/.test(ual)) {
     const m = ua.match(/Mac OS X ([\d_]+)/);
     os = m ? `macOS ${m[1].replace(/_/g, '.')}` : 'macOS';
   } else if (/android/.test(ual)) {
+    const pv = String(hints?.platformVersion || '').split('.')[0];
     const m = ua.match(/Android ([\d.]+)/);
-    os = m ? `Android ${m[1]}` : 'Android';
+    os = pv && Number(pv) > 0 ? `Android ${pv}` : (m ? `Android ${m[1]}` : 'Android');
   } else if (/iphone os|ios/.test(ual)) {
     const m = ua.match(/(?:iPhone OS|iOS) ([\d_]+)/);
     os = m ? `iOS ${m[1].replace(/_/g, '.')}` : 'iOS';
@@ -64,42 +69,89 @@ export function parseUserAgent(ua = '') {
     browser = 'Internet Explorer';
   }
 
+  const model = String(hints?.model || '').trim();
+  const arch = String(hints?.architecture || '').trim();
+  const isPwa = Boolean(hints?.isPwa);
+
+  const parts = [browser];
+  if (model) parts.push(model);
+  parts.push(os);
+  if (arch && !model) parts.push(arch);
+  if (isPwa) parts.push('PWA');
+
   return {
     device_type,
     os,
     browser,
-    device_name: `${browser} on ${os}`,
+    device_name: model || arch || isPwa ? parts.join(' · ') : `${browser} on ${os}`,
   };
 }
 
+export function isPrivateIP(ip) {
+  if (!ip) return true;
+  const s = String(ip).trim();
+  return (
+    s === '127.0.0.1' ||
+    s === '::1' ||
+    s.startsWith('::ffff:127.') ||
+    s.startsWith('192.168.') ||
+    s.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(s)
+  );
+}
+
 /**
- * Fetch geographic info from IP address using ip-api.com (free, no key needed)
- * Non-blocking — returns null on failure or timeout
+ * Fetch geographic info from IP address using ipwho.is (HTTPS free, no key) with ip-api.com HTTP fallback.
+ * Non-blocking — returns null on failure or timeout.
  */
 export async function fetchGeoIP(ip) {
-  // Skip private / loopback IPs
-  if (
-    !ip ||
-    ip === '127.0.0.1' ||
-    ip === '::1' ||
-    ip.startsWith('192.168.') ||
-    ip.startsWith('10.') ||
-    ip.startsWith('172.')
-  ) {
+  if (isPrivateIP(ip)) {
     return { country: 'Localhost', city: 'Local Network' };
   }
 
+  const cleanIp = String(ip).replace(/^::ffff:/, '').trim();
+
+  // Primary: ipwho.is (supports HTTPS for free + returns city, region, country, ISP)
   try {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch(`https://ip-api.com/json/${ip}?fields=country,city,status`, {
+    const res = await fetch(`https://ipwho.is/${encodeURIComponent(cleanIp)}`, {
       signal: controller.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(tid);
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.success) {
+        const isp = data.connection?.isp ? ` (${data.connection.isp})` : '';
+        const cityLabel = data.city || data.region || null;
+        return {
+          country: data.country ? `${data.country}${isp}` : null,
+          city: cityLabel,
+        };
+      }
+    }
+  } catch {
+    // fallback below
+  }
+
+  // Fallback: ip-api.com (HTTP only on free tier)
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch(`http://ip-api.com/json/${encodeURIComponent(cleanIp)}?fields=country,city,isp,status`, {
+      signal: controller.signal,
+      cache: 'no-store',
     });
     clearTimeout(tid);
     if (!res.ok) return null;
     const data = await res.json();
     if (data.status !== 'success') return null;
-    return { country: data.country || null, city: data.city || null };
+    const isp = data.isp ? ` (${data.isp})` : '';
+    return {
+      country: data.country ? `${data.country}${isp}` : null,
+      city: data.city || null,
+    };
   } catch {
     return null;
   }
@@ -123,13 +175,13 @@ export function getRealIP(request) {
 export function formatRelativeTime(dateStr) {
   if (!dateStr) return 'ไม่ทราบ';
   const diff = Date.now() - new Date(dateStr).getTime();
-  const mins  = Math.floor(diff / 60_000);
+  const mins = Math.floor(diff / 60_000);
   const hours = Math.floor(diff / 3_600_000);
-  const days  = Math.floor(diff / 86_400_000);
+  const days = Math.floor(diff / 86_400_000);
 
-  if (mins  < 1)  return 'เมื่อกี้';
-  if (mins  < 60) return `${mins} นาทีที่แล้ว`;
+  if (mins < 1) return 'เมื่อกี้';
+  if (mins < 60) return `${mins} นาทีที่แล้ว`;
   if (hours < 24) return `${hours} ชั่วโมงที่แล้ว`;
-  if (days  < 7)  return `${days} วันที่แล้ว`;
+  if (days < 7) return `${days} วันที่แล้ว`;
   return new Date(dateStr).toLocaleDateString('th-TH');
 }

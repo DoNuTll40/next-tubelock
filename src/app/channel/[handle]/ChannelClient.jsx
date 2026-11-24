@@ -14,10 +14,103 @@ import {
   Eye,
   UploadCloud,
   Loader2,
+  ExternalLink,
+  Link2,
+  Copy,
+  Check,
+  X,
+  Users,
 } from 'lucide-react';
 import VideoCard from '@/components/VideoCard';
 import PlaylistCard from '@/components/playlist/PlaylistCard';
 import { useSession } from '@/context/SessionContext';
+
+const URL_REGEX = /(https?:\/\/[^\s<>"']+)/g;
+
+function getPlatformName(hostname) {
+  const h = hostname.replace(/^www\./, '').toLowerCase();
+  if (h.includes('github.com')) return 'GitHub';
+  if (h.includes('youtube.com') || h.includes('youtu.be')) return 'YouTube';
+  if (h.includes('facebook.com') || h.includes('fb.com')) return 'Facebook';
+  if (h.includes('instagram.com')) return 'Instagram';
+  if (h.includes('tiktok.com')) return 'TikTok';
+  if (h === 'x.com' || h.includes('twitter.com')) return 'X (Twitter)';
+  if (h.includes('discord.gg') || h.includes('discord.com')) return 'Discord';
+  if (h.includes('twitch.tv')) return 'Twitch';
+  if (h.includes('line.me')) return 'LINE';
+  return h;
+}
+
+function extractBioLinks(bio = '') {
+  if (!bio) return [];
+  const matches = String(bio).match(URL_REGEX) || [];
+  const seen = new Set();
+  const links = [];
+  for (const raw of matches) {
+    const cleanUrl = raw.replace(/[.,;!?)]+$/, '');
+    try {
+      const parsed = new URL(cleanUrl);
+      if (seen.has(parsed.href)) continue;
+      seen.add(parsed.href);
+      const host = parsed.hostname.replace(/^www\./, '');
+      const displayUrl = `${host}${parsed.pathname === '/' ? '' : parsed.pathname}${parsed.search}`;
+      links.push({
+        href: parsed.href,
+        hostname: parsed.hostname,
+        label: getPlatformName(parsed.hostname),
+        displayUrl,
+      });
+    } catch {
+      // skip invalid url
+    }
+  }
+  return links;
+}
+
+function renderBioWithLinks(bio = '') {
+  if (!bio) return null;
+  const parts = String(bio).split(URL_REGEX);
+  return parts.map((part, idx) => {
+    if (/^https?:\/\//i.test(part)) {
+      const cleanUrl = part.replace(/[.,;!?)]+$/, '');
+      const trailing = part.slice(cleanUrl.length);
+      return (
+        <span key={`bio-url-${idx}`}>
+          <a
+            href={cleanUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#FF7A00] hover:underline break-all"
+          >
+            {cleanUrl}
+          </a>
+          {trailing}
+        </span>
+      );
+    }
+    return <span key={`bio-txt-${idx}`}>{part}</span>;
+  });
+}
+
+function ChannelLinkIcon({ hostname }) {
+  const [failed, setFailed] = useState(false);
+  if (!hostname || failed) {
+    return <ExternalLink className="w-4 h-4 text-[#FF7A00] shrink-0" />;
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`https://a.favicon.im/${encodeURIComponent(hostname)}?throw-error-on-404=true`}
+      alt=""
+      width={18}
+      height={18}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className="w-4.5 h-4.5 rounded-sm object-contain shrink-0"
+    />
+  );
+}
 
 function formatThaiJoinDate(iso) {
   if (!iso) return '-';
@@ -42,6 +135,18 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
   const [subscriberCount, setSubscriberCount] = useState(Number(channel?.subscriberCount || 0));
   const [isTogglingSub, setIsTogglingSub] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
+  const [copiedChannelUrl, setCopiedChannelUrl] = useState(false);
+
+  const bioLinks = useMemo(() => extractBioLinks(channel?.bio), [channel?.bio]);
+  const primaryLink = bioLinks[0] || null;
+
+  const handleCopyChannelUrl = () => {
+    if (typeof window === 'undefined' || !channel?.handle) return;
+    navigator.clipboard?.writeText(`${window.location.origin}/@${channel.handle}`);
+    setCopiedChannelUrl(true);
+    setTimeout(() => setCopiedChannelUrl(false), 2000);
+  };
 
   const isOwner = Boolean(
     channel?.isOwner || (session?.id != null && Number(session.id) === Number(channel?.id))
@@ -146,10 +251,42 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
               <span>วิดีโอ {initialVideos.length.toLocaleString('th-TH')} รายการ</span>
             </div>
 
-            {channel?.bio && (
-              <p className="text-xs sm:text-sm text-[#606060] dark:text-[#AAAAAA] line-clamp-2 max-w-2xl pt-0.5">
-                {channel.bio}
-              </p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 max-w-2xl pt-0.5 text-xs sm:text-sm text-[#606060] dark:text-[#AAAAAA]">
+              {channel?.bio ? (
+                <span className="line-clamp-1">{channel.bio.replace(URL_REGEX, '').trim() || primaryLink?.displayUrl}</span>
+              ) : (
+                <span>ดูข้อมูลเพิ่มเติมเกี่ยวกับช่องนี้</span>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowAboutModal(true)}
+                className="font-bold text-[#0F0F0F] dark:text-[#F1F1F1] hover:text-[#FF7A00] transition cursor-pointer shrink-0"
+              >
+                ...เพิ่มเติม
+              </button>
+            </div>
+
+            {primaryLink && (
+              <div className="flex flex-wrap items-center gap-2 pt-0.5 text-xs">
+                <a
+                  href={primaryLink.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-[#FF7A00] hover:underline font-semibold"
+                >
+                  <ChannelLinkIcon hostname={primaryLink.hostname} />
+                  <span className="truncate max-w-[240px] sm:max-w-[320px]">{primaryLink.displayUrl}</span>
+                </a>
+                {bioLinks.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAboutModal(true)}
+                    className="text-[#606060] dark:text-[#AAAAAA] hover:text-[#0F0F0F] dark:hover:text-[#F1F1F1] font-semibold cursor-pointer"
+                  >
+                    และอีก {bioLinks.length - 1} ลิงก์
+                  </button>
+                )}
+              </div>
             )}
 
             <div className="flex flex-wrap items-center gap-2.5 pt-2">
@@ -310,32 +447,191 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
         {/* Tab 3: About */}
         {activeTab === 'about' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 rounded-2xl bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-6 space-y-3">
-              <h2 className="text-base font-bold">คำอธิบายช่อง</h2>
-              <p className="text-sm text-[#4A4540] dark:text-[#CCCCCC] whitespace-pre-wrap leading-relaxed">
-                {channel?.bio || 'เจ้าของช่องยังไม่ได้เพิ่มคำอธิบายช่อง'}
-              </p>
+            <div className="lg:col-span-2 space-y-6">
+              <div className="rounded-2xl bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-6 space-y-3">
+                <h2 className="text-base font-bold">คำอธิบายช่อง</h2>
+                <p className="text-sm text-[#4A4540] dark:text-[#CCCCCC] whitespace-pre-wrap leading-relaxed">
+                  {channel?.bio ? renderBioWithLinks(channel.bio) : 'เจ้าของช่องยังไม่ได้เพิ่มคำอธิบายช่อง'}
+                </p>
+              </div>
+
+              {bioLinks.length > 0 && (
+                <div className="rounded-2xl bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-6 space-y-3.5">
+                  <h2 className="text-base font-bold">ลิงก์ของช่อง</h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {bioLinks.map((lnk) => (
+                      <a
+                        key={lnk.href}
+                        href={lnk.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 p-3 rounded-xl bg-[#FBF9F5] dark:bg-white/5 hover:bg-[#F4F0E8] dark:hover:bg-white/10 border border-[#EFECE6] dark:border-white/10 transition group"
+                      >
+                        <div className="w-9 h-9 rounded-lg bg-white dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 flex items-center justify-center shrink-0">
+                          <ChannelLinkIcon hostname={lnk.hostname} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-[#0F0F0F] dark:text-[#F1F1F1] group-hover:text-[#FF7A00] transition truncate">
+                            {lnk.label}
+                          </div>
+                          <div className="text-[11px] text-[#606060] dark:text-[#AAAAAA] truncate">
+                            {lnk.displayUrl}
+                          </div>
+                        </div>
+                        <ExternalLink className="w-3.5 h-3.5 text-[#8C857B] shrink-0 opacity-60 group-hover:opacity-100" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="rounded-2xl bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-6 space-y-4">
-              <h2 className="text-base font-bold">สถิติของช่อง</h2>
+
+            <div className="rounded-2xl bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-6 space-y-4 h-fit">
+              <h2 className="text-base font-bold">ข้อมูลช่อง</h2>
               <div className="space-y-3 text-sm text-[#4A4540] dark:text-[#CCCCCC]">
+                <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-[#FBF9F5] dark:bg-white/5 border border-[#EFECE6] dark:border-white/10">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Link2 className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                    <span className="text-xs font-mono truncate">/@{channel?.handle}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyChannelUrl}
+                    className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-[#606060] dark:text-[#AAAAAA] cursor-pointer shrink-0"
+                    title="คัดลอกลิงก์ช่อง"
+                  >
+                    {copiedChannelUrl ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
                 <div className="flex items-center gap-2.5">
-                  <Calendar className="w-4 h-4 text-[#FF7A00] shrink-0" />
-                  <span>เข้าร่วมเมื่อ {formatThaiJoinDate(channel?.createdAt)}</span>
+                  <Users className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span>ผู้ติดตาม {subscriberCount.toLocaleString('th-TH')} คน</span>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <Film className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span>วิดีโอสาธารณะ {initialVideos.length.toLocaleString('th-TH')} รายการ</span>
                 </div>
                 <div className="flex items-center gap-2.5">
                   <Eye className="w-4 h-4 text-[#FF7A00] shrink-0" />
                   <span>ยอดรับชมรวม {Number(channel?.totalViews || 0).toLocaleString('th-TH')} ครั้ง</span>
                 </div>
                 <div className="flex items-center gap-2.5">
-                  <Film className="w-4 h-4 text-[#FF7A00] shrink-0" />
-                  <span>วิดีโอสาธารณะ {initialVideos.length.toLocaleString('th-TH')} รายการ</span>
+                  <Calendar className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span>เข้าร่วมเมื่อ {formatThaiJoinDate(channel?.createdAt)}</span>
                 </div>
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* Channel Info Modal (TubeLock Style) */}
+      {showAboutModal && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setShowAboutModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg max-h-[82vh] overflow-y-auto rounded-3xl bg-white dark:bg-[#1C1C1C] border border-[#EFECE6] dark:border-white/10 shadow-2xl p-6 space-y-5"
+          >
+            <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#EFECE6] dark:border-white/10">
+              <div className="min-w-0">
+                <h2 className="text-lg font-extrabold truncate">{channel?.name}</h2>
+                <p className="text-xs text-[#606060] dark:text-[#AAAAAA]">@{channel?.handle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAboutModal(false)}
+                className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-[#606060] dark:text-[#AAAAAA] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {channel?.bio && (
+              <div className="space-y-2">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#8C857B] dark:text-[#888888]">
+                  คำอธิบาย
+                </h3>
+                <p className="text-sm text-[#212529] dark:text-[#E5E5E5] whitespace-pre-wrap leading-relaxed">
+                  {renderBioWithLinks(channel.bio)}
+                </p>
+              </div>
+            )}
+
+            {bioLinks.length > 0 && (
+              <div className="space-y-2.5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#8C857B] dark:text-[#888888]">
+                  ลิงก์
+                </h3>
+                <div className="flex flex-col gap-2">
+                  {bioLinks.map((lnk) => (
+                    <a
+                      key={lnk.href}
+                      href={lnk.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 p-2.5 rounded-xl bg-[#FBF9F5] dark:bg-white/5 hover:bg-[#F4F0E8] dark:hover:bg-white/10 border border-[#EFECE6] dark:border-white/10 transition group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-white dark:bg-[#262626] flex items-center justify-center shrink-0">
+                        <ChannelLinkIcon hostname={lnk.hostname} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold group-hover:text-[#FF7A00] transition truncate">
+                          {lnk.label}
+                        </div>
+                        <div className="text-[11px] text-[#606060] dark:text-[#AAAAAA] truncate">
+                          {lnk.displayUrl}
+                        </div>
+                      </div>
+                      <ExternalLink className="w-3.5 h-3.5 text-[#8C857B] shrink-0" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2.5 pt-2 border-t border-[#EFECE6] dark:border-white/10">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-[#8C857B] dark:text-[#888888]">
+                ข้อมูลเพิ่มเติม
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs text-[#4A4540] dark:text-[#CCCCCC]">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span>ผู้ติดตาม {subscriberCount.toLocaleString('th-TH')} คน</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Film className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span>วิดีโอ {initialVideos.length.toLocaleString('th-TH')} รายการ</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span>ยอดดูรวม {Number(channel?.totalViews || 0).toLocaleString('th-TH')} ครั้ง</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span>เข้าร่วม {formatThaiJoinDate(channel?.createdAt)}</span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-[#FBF9F5] dark:bg-white/5 border border-[#EFECE6] dark:border-white/10 mt-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Link2 className="w-4 h-4 text-[#FF7A00] shrink-0" />
+                  <span className="text-xs font-mono truncate">/@{channel?.handle}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyChannelUrl}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#FF7A00]/10 hover:bg-[#FF7A00]/20 text-[#FF7A00] text-[11px] font-bold cursor-pointer shrink-0 transition"
+                >
+                  {copiedChannelUrl ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedChannelUrl ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

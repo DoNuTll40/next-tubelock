@@ -9,7 +9,7 @@ import {
   RefreshCw, AlertTriangle, Loader2,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { formatRelativeTime } from '@/lib/sessionUtils';
+import { formatThaiRelativeTime } from '@/lib/formatThaiMeta';
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
 function GoogleIcon({ className = 'w-5 h-5' }) {
@@ -61,25 +61,30 @@ function DeviceIcon({ type, className = 'w-5 h-5' }) {
 // ── Session Row Card ──────────────────────────────────────────────────────────
 function SessionCard({ session, onRevoke, revoking }) {
   const { id, device_type, device_name, os, browser, ip_address, country, city,
-    created_at, last_seen_at, is_current } = session;
+    created_at, last_seen_at, expires_at, is_current } = session;
+
+  const locationText = [city, country].filter(Boolean).join(', ') || 'ไม่ทราบตำแหน่ง';
+  const expiresLabel = expires_at
+    ? new Date(expires_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+    : null;
 
   return (
-    <div className={`relative flex items-start gap-3 p-4 transition-colors ${is_current
+    <div className={`relative flex items-start gap-3.5 p-4 transition-colors ${is_current
         ? 'bg-[#FF7A00]/5 dark:bg-[#FF7A00]/8'
         : 'hover:bg-zinc-50 dark:hover:bg-white/5'
       }`}>
       {/* Device Icon */}
-      <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${is_current
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${is_current
           ? 'bg-[#FF7A00]/15 text-[#FF7A00]'
           : 'bg-[#EFECE6] dark:bg-white/10 text-[#8C857B] dark:text-[#888888]'
         }`}>
-        <DeviceIcon type={device_type} className="w-4 h-4" />
+        <DeviceIcon type={device_type} className="w-5 h-5" />
       </div>
 
       {/* Info */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 space-y-1.5">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] truncate">
+          <span className="text-xs sm:text-sm font-bold text-[#212529] dark:text-[#F1F1F1] truncate">
             {device_name || 'Unknown Device'}
           </span>
           {is_current && (
@@ -89,25 +94,44 @@ function SessionCard({ session, onRevoke, revoking }) {
           )}
         </div>
 
-        {/* Location + IP */}
-        <div className="flex items-center gap-1.5 mt-0.5">
-          <MapPin className="w-3 h-3 text-[#8C857B] dark:text-[#888888] shrink-0" />
-          <span className="text-[11px] text-[#8C857B] dark:text-[#888888] truncate">
-            {[city, country].filter(Boolean).join(', ') || 'ไม่ทราบตำแหน่ง'}
-            {ip_address ? ` · ${ip_address}` : ''}
+        {/* Spec Pills: OS · Browser · Device Type */}
+        <div className="flex items-center flex-wrap gap-1.5 text-[10px]">
+          {os && (
+            <span className="px-2 py-0.5 rounded-md bg-[#F4F0E8] dark:bg-white/8 text-[#4A4540] dark:text-[#CCCCCC] font-semibold">
+              {os}
+            </span>
+          )}
+          {browser && (
+            <span className="px-2 py-0.5 rounded-md bg-[#F4F0E8] dark:bg-white/8 text-[#4A4540] dark:text-[#CCCCCC] font-semibold">
+              {browser}
+            </span>
+          )}
+          {ip_address && (
+            <span className="px-2 py-0.5 rounded-md bg-[#F4F0E8] dark:bg-white/8 text-[#8C857B] dark:text-[#999999] font-mono">
+              IP {ip_address}
+            </span>
+          )}
+        </div>
+
+        {/* Location */}
+        <div className="flex items-center gap-1.5">
+          <MapPin className="w-3 h-3 text-[#FF7A00]/80 shrink-0" />
+          <span className="text-[11px] text-[#606060] dark:text-[#AAAAAA] truncate">
+            {locationText}
           </span>
         </div>
 
         {/* Timestamps */}
-        <div className="flex items-center gap-3 mt-1">
-          <span className="text-[10px] text-[#8C857B] dark:text-[#888888] flex items-center gap-1">
+        <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-[#8C857B] dark:text-[#888888]">
+          <span className="flex items-center gap-1">
             <Clock className="w-2.5 h-2.5" />
-            เข้าสู่ระบบ {formatRelativeTime(created_at)}
+            เข้าสู่ระบบ {formatThaiRelativeTime(created_at) || 'ไม่ทราบ'}
           </span>
           {!is_current && last_seen_at && (
-            <span className="text-[10px] text-[#8C857B] dark:text-[#888888]">
-              · active {formatRelativeTime(last_seen_at)}
-            </span>
+            <span>· ใช้งานล่าสุด {formatThaiRelativeTime(last_seen_at)}</span>
+          )}
+          {expiresLabel && (
+            <span>· หมดอายุ {expiresLabel}</span>
           )}
         </div>
       </div>
@@ -156,7 +180,42 @@ export default function AccountSection({ session }) {
   }, []);
 
   useEffect(() => {
-    if (session) fetchSessions();
+    if (!session) return;
+    let cancelled = false;
+    const syncAndFetch = async () => {
+      try {
+        // Enrich current session with high-entropy Client Hints (Windows 11 vs 10, phone model, arch, PWA)
+        let hints = { isPwa: typeof window !== 'undefined' && window.matchMedia?.('(display-mode: standalone)')?.matches };
+        if (typeof navigator !== 'undefined' && navigator.userAgentData?.getHighEntropyValues) {
+          try {
+            const vals = await navigator.userAgentData.getHighEntropyValues([
+              'model',
+              'platformVersion',
+              'architecture',
+            ]);
+            hints = {
+              ...hints,
+              model: vals.model || '',
+              platformVersion: vals.platformVersion || '',
+              architecture: vals.architecture || '',
+            };
+          } catch {
+            // ignore
+          }
+        }
+        await fetch('/api/auth/sessions', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(hints),
+        }).catch(() => {});
+      } finally {
+        if (!cancelled) await fetchSessions();
+      }
+    };
+    void syncAndFetch();
+    return () => {
+      cancelled = true;
+    };
   }, [session, fetchSessions]);
 
   // ── Revoke single session ──────────────────────────────────────
