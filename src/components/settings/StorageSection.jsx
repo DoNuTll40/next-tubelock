@@ -11,8 +11,11 @@ import {
   FolderSync,
   Film,
 } from 'lucide-react';
+import { usePosterPreference } from '@/lib/usePosterPreference';
+import { RESTRICTED_POSTER } from '@/lib/videoUtils';
 
 export default function StorageSection() {
+  const allow18Plus = usePosterPreference(true);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -144,6 +147,14 @@ export default function StorageSection() {
                 hour: '2-digit',
                 minute: '2-digit',
               });
+              const isRestrictedThumb =
+                folder.imageUrl === RESTRICTED_POSTER ||
+                String(folder.imageUrl || '').includes('restricted-poster');
+              const matchedVidId = String(folder.name || '').match(/^stream_vid_(\d+)/)?.[1];
+              const resolvedThumb =
+                isRestrictedThumb && allow18Plus && matchedVidId
+                  ? `/api/videos/${matchedVidId}/poster`
+                  : folder.imageUrl;
 
               return (
                 <div
@@ -153,10 +164,10 @@ export default function StorageSection() {
                   <div className="flex items-center gap-3.5 min-w-0">
                     {/* Thumbnail หรือ Fallback Poster Icon */}
                     <div className="w-16 h-10 sm:w-20 sm:h-12 rounded-lg bg-[#EFECE6] dark:bg-white/10 overflow-hidden shrink-0 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center relative shadow-2xs">
-                      {folder.imageUrl ? (
+                      {resolvedThumb ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={folder.imageUrl}
+                          src={resolvedThumb}
                           alt={folder.name}
                           className="w-full h-full object-cover"
                           loading="lazy"
