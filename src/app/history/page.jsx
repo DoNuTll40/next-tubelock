@@ -40,7 +40,8 @@ export default async function HistoryPage() {
             h.id AS history_id,
             h.video_id,
             h.last_position_seconds,
-            h.updated_at,
+            h.watched_date,
+            h.watched_at AS updated_at,
             v.id,
             v.title,
             v.description,
@@ -57,13 +58,14 @@ export default async function HistoryPage() {
             v.source_type,
             u.name AS author_name,
             u.email AS author_email,
-            u.picture AS author_picture
-          FROM watch_history h
+            u.picture AS author_picture,
+            u.handle AS author_handle
+          FROM watch_history_log h
           JOIN videos v ON h.video_id = v.id
           LEFT JOIN users u ON v.user_id = u.id
           WHERE h.user_id = ${user.user_id}
-          ORDER BY h.updated_at DESC
-          LIMIT 100;
+          ORDER BY h.watched_at DESC
+          LIMIT 150;
         `;
 
         history = rows.map((r) => ({

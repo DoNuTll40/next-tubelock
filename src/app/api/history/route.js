@@ -30,7 +30,8 @@ export async function GET(request) {
           h.video_id,
           h.last_position_seconds,
           h.last_version_id,
-          h.updated_at,
+          h.watched_date,
+          h.watched_at AS updated_at,
           v.id,
           v.title,
           v.description,
@@ -47,14 +48,15 @@ export async function GET(request) {
           v.source_type,
           u.name AS author_name,
           u.email AS author_email,
-          u.picture AS author_picture
-        FROM watch_history h
+          u.picture AS author_picture,
+          u.handle AS author_handle
+        FROM watch_history_log h
         JOIN videos v ON h.video_id = v.id
         LEFT JOIN users u ON v.user_id = u.id
         WHERE h.user_id = ${session.id}
           AND (v.title ILIKE ${searchPattern} OR v.description ILIKE ${searchPattern})
-        ORDER BY h.updated_at DESC
-        LIMIT 100;
+        ORDER BY h.watched_at DESC
+        LIMIT 150;
       `;
     } else {
       history = await sql`
@@ -63,7 +65,8 @@ export async function GET(request) {
           h.video_id,
           h.last_position_seconds,
           h.last_version_id,
-          h.updated_at,
+          h.watched_date,
+          h.watched_at AS updated_at,
           v.id,
           v.title,
           v.description,
@@ -80,13 +83,14 @@ export async function GET(request) {
           v.source_type,
           u.name AS author_name,
           u.email AS author_email,
-          u.picture AS author_picture
-        FROM watch_history h
+          u.picture AS author_picture,
+          u.handle AS author_handle
+        FROM watch_history_log h
         JOIN videos v ON h.video_id = v.id
         LEFT JOIN users u ON v.user_id = u.id
         WHERE h.user_id = ${session.id}
-        ORDER BY h.updated_at DESC
-        LIMIT 100;
+        ORDER BY h.watched_at DESC
+        LIMIT 150;
       `;
     }
 
@@ -151,15 +155,33 @@ export async function POST(request) {
     }
     const finalPosition = isMusic ? 0 : position;
 
-    await sql`
-      INSERT INTO watch_history (user_id, video_id, last_position_seconds, last_version_id, updated_at)
-      VALUES (${session.id}, ${videoId}, ${finalPosition}, ${versionId}, NOW())
-      ON CONFLICT (user_id, video_id)
-      DO UPDATE SET
-        last_position_seconds = ${finalPosition},
-        last_version_id = COALESCE(${versionId}, watch_history.last_version_id),
-        updated_at = NOW();
-    `;
+    await Promise.all([
+      sql`
+        INSERT INTO watch_history (user_id, video_id, last_position_seconds, last_version_id, updated_at)
+        VALUES (${session.id}, ${videoId}, ${finalPosition}, ${versionId}, NOW())
+        ON CONFLICT (user_id, video_id)
+        DO UPDATE SET
+          last_position_seconds = ${finalPosition},
+          last_version_id = COALESCE(${versionId}, watch_history.last_version_id),
+          updated_at = NOW();
+      `,
+      sql`
+        INSERT INTO watch_history_log (user_id, video_id, watched_date, last_position_seconds, last_version_id, watched_at)
+        VALUES (
+          ${session.id},
+          ${videoId},
+          (NOW() AT TIME ZONE 'Asia/Bangkok')::date,
+          ${finalPosition},
+          ${versionId},
+          NOW()
+        )
+        ON CONFLICT (user_id, video_id, watched_date)
+        DO UPDATE SET
+          last_position_seconds = ${finalPosition},
+          last_version_id = COALESCE(${versionId}, watch_history_log.last_version_id),
+          watched_at = NOW();
+      `,
+    ]);
 
     return NextResponse.json({ success: true, isMusic });
   } catch (error) {
@@ -182,23 +204,50 @@ export async function DELETE(request) {
     const sql = getDb();
     const { searchParams } = new URL(request.url);
     const clearAll = searchParams.get('all') === 'true';
+    const historyIdStr = searchParams.get('historyId');
     const videoIdStr = searchParams.get('videoId');
 
     if (clearAll) {
-      await sql`
-        DELETE FROM watch_history 
-        WHERE user_id = ${session.id};
-      `;
+      await Promise.all([
+        sql`DELETE FROM watch_history_log WHERE user_id = ${session.id};`,
+        sql`DELETE FROM watch_history WHERE user_id = ${session.id};`,
+      ]);
       return NextResponse.json({ success: true, message: 'All history cleared' });
+    }
+
+    if (historyIdStr) {
+      const historyId = parseInt(historyIdStr, 10);
+      if (historyId && !isNaN(historyId)) {
+        const deleted = await sql`
+          DELETE FROM watch_history_log
+          WHERE id = ${historyId} AND user_id = ${session.id}
+          RETURNING video_id;
+        `;
+        const deletedVideoId = deleted[0]?.video_id;
+        if (deletedVideoId != null) {
+          const remaining = await sql`
+            SELECT 1 FROM watch_history_log
+            WHERE user_id = ${session.id} AND video_id = ${deletedVideoId}
+            LIMIT 1;
+          `;
+          if (remaining.length === 0) {
+            await sql`
+              DELETE FROM watch_history
+              WHERE user_id = ${session.id} AND video_id = ${deletedVideoId};
+            `;
+          }
+        }
+        return NextResponse.json({ success: true, message: 'History entry removed' });
+      }
     }
 
     if (videoIdStr) {
       const videoId = parseInt(videoIdStr, 10);
       if (videoId && !isNaN(videoId)) {
-        await sql`
-          DELETE FROM watch_history 
-          WHERE user_id = ${session.id} AND video_id = ${videoId};
-        `;
+        await Promise.all([
+          sql`DELETE FROM watch_history_log WHERE user_id = ${session.id} AND video_id = ${videoId};`,
+          sql`DELETE FROM watch_history WHERE user_id = ${session.id} AND video_id = ${videoId};`,
+        ]);
         return NextResponse.json({ success: true, message: 'Video removed from history' });
       }
     }

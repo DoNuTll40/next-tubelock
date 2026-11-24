@@ -7,7 +7,9 @@ import {
   Search, Trash2, PauseCircle, PlayCircle,
   X, AlertTriangle, ArrowRight, Film
 } from 'lucide-react';
-import { formatResolutionBadge, isMusicVideo, encodeVideoSlug, getVideoResumeTime } from '@/lib/videoUtils';
+import { formatResolutionBadge, isMusicVideo, isMatureVideo, encodeVideoSlug, getVideoResumeTime, RESTRICTED_POSTER } from '@/lib/videoUtils';
+import { formatThaiRelativeTime, formatThaiViews } from '@/lib/formatThaiMeta';
+import { usePosterPreference } from '@/lib/usePosterPreference';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { prewarmVideoSourceClient, preloadHlsModule } from '@/lib/playbackResolver';
 import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
@@ -86,6 +88,8 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   const imgRef = useRef(null);
 
   const isMusic = isMusicVideo(item);
+  const isMature = isMatureVideo(item);
+  const allow18Plus = usePosterPreference(isMature);
   const resBadge = formatResolutionBadge(item.resolution);
   const dur = item.duration || 0;
   const pos = isMusic ? 0 : (item.last_position_seconds || 0);
@@ -95,6 +99,10 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   const videoSlug = encodeVideoSlug(safeId, item?.category) || (safeId ? String(safeId) : '');
   const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, dur);
   const watchUrl = videoSlug ? `/watch/${videoSlug}${resumeTime ? `?t=${resumeTime}` : ''}` : '/';
+  const effectiveThumbnail = isMature
+    ? (allow18Plus && safeId ? `/api/videos/${safeId}/poster` : RESTRICTED_POSTER)
+    : item.thumbnail_url;
+  const isMasked = isMature && !allow18Plus;
 
   const handlePrewarmItem = () => {
     if (!safeId) return;
@@ -123,16 +131,18 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   };
 
   const handleImageLoad = (e) => {
+    if (isMasked) return;
     const color = extractDominantColor(e.target);
     if (color) setDominantColor(color);
   };
 
   useEffect(() => {
+    if (isMasked) return;
     if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
       const color = extractDominantColor(imgRef.current);
       if (color) setDominantColor(color);
     }
-  }, [item.thumbnail_url]);
+  }, [effectiveThumbnail, isMasked]);
 
   useEffect(() => {
     if (isMusic && item.video_id && typeof window !== 'undefined') {
@@ -161,12 +171,13 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
         onClick={handlePrimeItemClick}
         className="relative aspect-video w-[140px] sm:w-[200px] md:w-[240px] shrink-0 rounded-xl overflow-hidden bg-zinc-900 shadow-2xs group-hover:opacity-95 transition"
       >
-        {item.thumbnail_url ? (
+        {effectiveThumbnail ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             ref={imgRef}
-            src={item.thumbnail_url}
+            src={effectiveThumbnail}
             alt={item.title}
-            crossOrigin="anonymous"
+            crossOrigin={isMasked ? undefined : "anonymous"}
             onLoad={handleImageLoad}
             className="w-full h-full object-cover"
           />
@@ -230,10 +241,15 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
         </div>
 
         {/* Views & Relative Watch Date */}
-        <div className="flex items-center gap-1 text-xs text-[#606060] dark:text-[#AAAAAA] mt-0.5">
-          <span>{item.views_count ? `${item.views_count.toLocaleString()} ครั้ง` : '0 ครั้ง'}</span>
+        <div className="flex items-center gap-1.5 text-xs text-[#606060] dark:text-[#AAAAAA] mt-0.5">
+          <span>{formatThaiViews(item.views_count)} ครั้ง</span>
           <span>•</span>
-          <span>{formatRelativeTime(item.updated_at)}</span>
+          <span>{formatThaiRelativeTime(item.updated_at)}</span>
+          {isMature && (
+            <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
+              18+
+            </span>
+          )}
         </div>
       </div>
 
@@ -241,7 +257,7 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
       <div className="absolute right-1.5 top-2.5">
         <button
           type="button"
-          onClick={(e) => onDelete(e, item.video_id)}
+          onClick={(e) => onDelete(e, item)}
           disabled={isDeleting}
           className="p-1.5 rounded-full text-[#8C857B] dark:text-[#888888] hover:text-[#0F0F0F] dark:hover:text-white hover:bg-black/10 dark:hover:bg-white/10 opacity-60 sm:opacity-0 group-hover:opacity-100 transition cursor-pointer"
           title="ลบออกจากประวัติการรับชม"
@@ -277,17 +293,27 @@ export default function HistoryClient({ initialHistory = [], initialUser, initia
     return groupHistoryByDate(filteredHistory);
   }, [filteredHistory]);
 
-  // Delete single video
-  const handleDeleteItem = async (e, videoId) => {
+  // Delete single history entry (for that specific day)
+  const handleDeleteItem = async (e, targetItem) => {
     e.preventDefault();
     e.stopPropagation();
-    setDeletingId(videoId);
+    const targetHistoryId = targetItem?.history_id;
+    const targetVideoId = targetItem?.video_id;
+    const targetKey = targetHistoryId || targetVideoId;
+    setDeletingId(targetKey);
 
     // Optimistic UI update
-    setHistory((prev) => prev.filter((item) => item.video_id !== videoId));
+    setHistory((prev) =>
+      prev.filter((item) =>
+        targetHistoryId ? item.history_id !== targetHistoryId : item.video_id !== targetVideoId
+      )
+    );
 
     try {
-      await fetch(`/api/history?videoId=${videoId}`, { method: 'DELETE' });
+      const qs = targetHistoryId
+        ? `historyId=${encodeURIComponent(targetHistoryId)}`
+        : `videoId=${encodeURIComponent(targetVideoId)}`;
+      await fetch(`/api/history?${qs}`, { method: 'DELETE' });
     } catch (err) {
       console.error('Failed to delete history item:', err);
     } finally {
@@ -422,10 +448,10 @@ export default function HistoryClient({ initialHistory = [], initialUser, initia
                   <div className="flex flex-col gap-1">
                     {group.items.map((item) => (
                       <HistoryVideoItem
-                        key={item.history_id || item.video_id}
+                        key={item.history_id || `${item.video_id}-${item.updated_at}`}
                         item={item}
                         onDelete={handleDeleteItem}
-                        isDeleting={deletingId === item.video_id}
+                        isDeleting={deletingId === (item.history_id || item.video_id)}
                       />
                     ))}
                   </div>

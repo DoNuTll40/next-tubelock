@@ -20,6 +20,7 @@ import {
 import { PlaylistVisibility } from './PlaylistCard';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
+import { usePosterPreference } from '@/lib/usePosterPreference';
 import { formatVideoDuration } from '@/lib/videoEditorUtils';
 import { isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 
@@ -62,9 +63,11 @@ const panelClass = 'yt-playlist-panel overflow-hidden rounded-2xl border bg-whit
 const iconButtonClass = 'grid size-9 shrink-0 cursor-pointer place-items-center rounded-full text-[#6C655D] hover:bg-black/5 dark:text-[#AAAAAA] dark:hover:bg-white/10';
 const morphLineTransition = 'transform 380ms cubic-bezier(0.34, 1.45, 0.64, 1), stroke-dasharray 320ms cubic-bezier(0.4, 0, 0.2, 1), stroke-dashoffset 320ms cubic-bezier(0.4, 0, 0.2, 1)';
 
-function getVideoThumb(video) {
+function getVideoThumb(video, allow18Plus = false) {
   if (!video) return null;
-  if (isMatureVideo(video)) return RESTRICTED_POSTER;
+  if (isMatureVideo(video)) {
+    return allow18Plus && video.id ? `/api/videos/${video.id}/poster` : RESTRICTED_POSTER;
+  }
   return video.thumbnail_url || (video.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
 }
 
@@ -149,12 +152,14 @@ function PlaylistRow({ video, index, active, rowRef, onSelect, onColorExtracted 
 
   const videoId = video.id;
   const mature = isMatureVideo(video);
-  const thumbnail = getVideoThumb(video);
+  const allow18Plus = usePosterPreference(mature);
+  const isMasked = mature && !allow18Plus;
+  const thumbnail = getVideoThumb(video, allow18Plus);
   const duration = Number(video.duration);
-  const canSample = Boolean(!mature && thumbnail && failedCorsSrc !== thumbnail);
+  const canSample = Boolean(!isMasked && thumbnail && failedCorsSrc !== thumbnail);
 
   const sampleColor = useCallback((el, notifyParent = false) => {
-    if (mature) return;
+    if (isMasked) return;
     const target = el || imgRef.current;
     if (!target || !target.complete || !target.naturalWidth) return;
     const extracted = extractDominantColor(target);
@@ -163,7 +168,7 @@ function PlaylistRow({ video, index, active, rowRef, onSelect, onColorExtracted 
     if (notifyParent && videoId) {
       onColorExtracted?.(videoId, extracted);
     }
-  }, [mature, videoId, onColorExtracted]);
+  }, [isMasked, videoId, onColorExtracted]);
 
   // Eagerly extract color for the currently playing video (even if image is cached or sheet starts closed)
   useEffect(() => {
@@ -174,7 +179,7 @@ function PlaylistRow({ video, index, active, rowRef, onSelect, onColorExtracted 
     return () => cancelAnimationFrame(raf);
   }, [active, canSample, thumbnail, sampleColor]);
 
-  const effectiveRowColor = mature ? MATURE_PLAYLIST_COLOR : rowColor;
+  const effectiveRowColor = isMasked ? MATURE_PLAYLIST_COLOR : rowColor;
   const rowHoverStyle = !active && effectiveRowColor ? {
     '--hover-tint-dark': effectiveRowColor.darkBg,
     '--hover-tint-light': effectiveRowColor.lightBg,
@@ -223,7 +228,7 @@ function PlaylistRow({ video, index, active, rowRef, onSelect, onColorExtracted 
           ) : (
             <Film className="size-5 text-white/60" aria-hidden="true" />
           )}
-          {mature && (
+          {isMasked && (
             <span className="absolute left-1 top-1 inline-flex items-center gap-0.5 rounded bg-black/80 px-1 py-0.5 text-[9px] font-semibold">
               <LockKeyhole className="size-2.5" aria-hidden="true" />18+
             </span>

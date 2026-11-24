@@ -12,6 +12,7 @@ import {
 import { PlaylistCover, PlaylistVisibility } from '@/components/playlist/PlaylistCard';
 import PlaylistFormModal, { PlaylistDeleteModal } from '@/components/playlist/PlaylistFormModal';
 import { requestPlaylistJson } from '@/components/playlist/PlaylistPicker';
+import { usePosterPreference } from '@/lib/usePosterPreference';
 import { isMatureVideo, protectVideoPoster } from '@/lib/videoUtils';
 
 const statusLabels = {
@@ -51,8 +52,13 @@ function formatTotalDuration(duration) {
 }
 
 function VideoRowContent({ item }) {
-  const { thumbnail_url: thumbnail } = protectVideoPoster(item);
+  const { thumbnail_url: protectedThumb } = protectVideoPoster(item);
   const mature = isMatureVideo(item);
+  const allow18Plus = usePosterPreference(mature);
+  const isMasked = mature && !allow18Plus;
+  const thumbnail = mature && allow18Plus && item.id
+    ? `/api/videos/${item.id}/poster`
+    : protectedThumb;
   const playable = isPlayable(item);
 
   return (
@@ -63,7 +69,7 @@ function VideoRowContent({ item }) {
         ) : (
           <ListVideo aria-hidden="true" className="absolute inset-0 m-auto size-5 opacity-35" />
         )}
-        {mature && (
+        {isMasked && (
           <span className="absolute left-1 top-1 inline-flex items-center gap-0.5 rounded bg-black/75 px-1.5 py-0.5 text-[10px] font-semibold text-white">
             <LockKeyhole aria-hidden="true" className="size-3 text-[#FF9E40]" />
             18+
