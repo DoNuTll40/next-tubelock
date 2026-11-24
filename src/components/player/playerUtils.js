@@ -227,7 +227,7 @@ export function computeSubtitleBoxLayout({
   controlsVisible = Boolean(showControls || !isPlaying),
 } = {}) {
   const defaultSideInset = isMobile ? 12 : 16;
-  const controlsClearance = isMobile ? 68 : 84;
+  const controlsClearance = isMobile ? 54 : 84;
   const defaultRestPadding = isMobile ? 18 : 36;
 
   const w = Number(containerWidth) || 0;

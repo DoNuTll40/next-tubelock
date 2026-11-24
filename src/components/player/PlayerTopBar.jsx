@@ -150,37 +150,9 @@ export default function PlayerTopBar({
         <div className="w-8" />
       )}
 
-      {/* Top-Right: Shown ONLY on Mobile — Clean YouTube-style frameless icons (ZERO backdrop-blur = 0 frame drops!) */}
+      {/* Top-Right: Shown ONLY on Mobile — Clean YouTube-style frameless CC + Settings (zero clutter!) */}
       {isMobileView ? (
-        <div className="flex items-center gap-1 sm:gap-2 shrink-0 text-white">
-          {/* Autoplay switch */}
-          <button
-            type="button"
-            onClick={() => {
-              showToast?.('เล่นวิดีโอถัดไปอัตโนมัติ (Coming soon)');
-              resetControlsTimer?.();
-            }}
-            className="relative inline-flex h-5.5 w-10 items-center rounded-full transition-colors cursor-pointer bg-white/25 mr-1"
-            aria-label="เล่นอัตโนมัติ"
-          >
-            <span className="inline-flex items-center justify-center h-4 w-4 transform rounded-full transition-transform translate-x-1 bg-white shadow-xs">
-              <Play className="w-2 h-2 fill-current text-zinc-900 ml-0.5" />
-            </span>
-          </button>
-
-          {/* Cast */}
-          <button
-            type="button"
-            onClick={() => {
-              showToast?.('เชื่อมต่ออุปกรณ์ Cast / TV');
-              resetControlsTimer?.();
-            }}
-            className="p-2 rounded-full text-white/95 active:bg-white/15 active:scale-90 transition cursor-pointer drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]"
-            aria-label="Cast"
-          >
-            <Cast className="w-5 h-5" />
-          </button>
-
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 text-white">
           {/* CC */}
           <button
             type="button"

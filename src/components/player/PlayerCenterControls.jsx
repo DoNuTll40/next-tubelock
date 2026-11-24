@@ -121,48 +121,17 @@ export default function PlayerCenterControls({
             ) : !isEnded ? (
               <>
                 {isMobileView ? (
-                  /* Clean YouTube Mobile Trio — frameless & zero heavy blur/border for 0 frame drops */
-                  <div className="flex items-center gap-8 sm:gap-14 [&_button]:pointer-events-auto select-none [animation:fadein_0.12s_ease-out]">
-                    {/* Skip -10s */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        commitSeek(Math.max(0, (video.current?.currentTime || 0) - seekStep));
-                        showToast?.(`-${seekStep} วินาที`);
-                        resetControlsTimer?.();
-                      }}
-                      className="w-12 h-12 rounded-full bg-black/30 active:bg-white/20 active:scale-90 text-white flex flex-col items-center justify-center transition-transform duration-100 cursor-pointer"
-                    >
-                      <RotateCcw className="w-5.5 h-5.5" />
-                      <span className="text-[9px] font-mono font-bold leading-none mt-0.5 text-white/85">10s</span>
-                    </button>
-
-                    {/* Center Play/Pause */}
+                  /* Clean YouTube Mobile Center Play/Pause — frameless, airy, double-tap left/right handles ±10s */
+                  <div className="flex items-center justify-center [&_button]:pointer-events-auto select-none [animation:fadein_0.12s_ease-out]">
                     <button
                       type="button"
                       aria-label={isPlaying ? 'หยุดชั่วคราว' : 'เล่น'}
                       onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-                      className="w-15 h-15 rounded-full bg-black/35 active:bg-white/20 active:scale-90 text-white flex items-center justify-center transition-transform duration-100 cursor-pointer"
+                      className="p-3.5 rounded-full text-white active:bg-white/15 active:scale-90 transition-transform duration-100 cursor-pointer drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]"
                     >
                       {isPlaying
-                        ? <Pause className="w-8 h-8 fill-white" />
-                        : <Play className="w-8 h-8 fill-white ml-0.5" />}
-                    </button>
-
-                    {/* Skip +10s */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        commitSeek(Math.min(duration, (video.current?.currentTime || 0) + seekStep));
-                        showToast?.(`+${seekStep} วินาที`);
-                        resetControlsTimer?.();
-                      }}
-                      className="w-12 h-12 rounded-full bg-black/30 active:bg-white/20 active:scale-90 text-white flex flex-col items-center justify-center transition-transform duration-100 cursor-pointer"
-                    >
-                      <RotateCw className="w-5.5 h-5.5" />
-                      <span className="text-[9px] font-mono font-bold leading-none mt-0.5 text-white/85">10s</span>
+                        ? <Pause className="w-10 h-10 fill-white" />
+                        : <Play className="w-10 h-10 fill-white ml-0.5" />}
                     </button>
                   </div>
                 ) : (

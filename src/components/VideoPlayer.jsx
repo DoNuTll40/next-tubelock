@@ -2270,6 +2270,26 @@ export default function VideoPlayer({
     const zone = xRatio < 0.35 ? 'left' : xRatio > 0.65 ? 'right' : 'center';
     const now = e.timeStamp;
 
+    // On Mobile, center zone has NO double-tap fullscreen — toggle controls instantaneously (0ms)!
+    if (isMobileView && zone === 'center') {
+      if (singleClickTimerRef.current) {
+        clearTimeout(singleClickTimerRef.current);
+        singleClickTimerRef.current = null;
+      }
+      clickStateRef.current = { time: 0, zone: null };
+      if (showControlsRef.current) {
+        showControlsRef.current = false;
+        setShowControls(false);
+        if (controlsTimeoutRef.current) {
+          clearTimeout(controlsTimeoutRef.current);
+          controlsTimeoutRef.current = null;
+        }
+      } else {
+        resetControlsTimer(4500);
+      }
+      return;
+    }
+
     const prev = clickStateRef.current;
     const isDouble = (e.detail >= 2) || ((now - prev.time < 340) && (prev.zone === zone || (zone === 'center' && prev.zone === 'center')));
 
