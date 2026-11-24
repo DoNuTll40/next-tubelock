@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
+import { Play, Pause, Volume2, VolumeX, X, SkipBack, SkipForward } from 'lucide-react';
 import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
 import { preloadHlsModule } from '@/lib/playbackResolver';
 import { useSession } from '@/context/SessionContext';
@@ -43,6 +44,9 @@ function unlockBrowserOrientation() {
 
 export default function VideoPlayer({
   isActive = true,
+  isMiniplayer = false,
+  onToggleMiniplayer = null,
+  onCloseMiniplayer = null,
   src,
   poster,
   storyboard = null,
@@ -115,6 +119,7 @@ export default function VideoPlayer({
     }
   });
   const containerRef = useRef(null);
+  const swipeBackdropRef = useRef(null);
   const seekTrackRef = useRef(null);
   const hlsInstanceRef = useRef(null);
   const hlsRetryCountRef = useRef(0);
@@ -2564,7 +2569,7 @@ export default function VideoPlayer({
   // Keyboard Shortcuts (Supports all keyboard languages via physical e.code)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (!isActive || e.defaultPrevented) return;
+      if (!isActive || isMiniplayer || e.defaultPrevented) return;
       // Ignore if user is typing in an input, textarea, or contentEditable element
       if (['INPUT', 'TEXTAREA'].includes(e.target?.tagName) || e.target?.isContentEditable) return;
       // Do not hijack browser system combos (Ctrl+C, Ctrl+F, Ctrl+P, Alt+Left, etc.)
@@ -2627,6 +2632,11 @@ export default function VideoPlayer({
       } else if (code === 'KeyP' || key === 'p') {
         e.preventDefault();
         togglePiP();
+      } else if (code === 'KeyI' || key === 'i') {
+        if (onToggleMiniplayer) {
+          e.preventDefault();
+          onToggleMiniplayer();
+        }
       } else if (code === 'ArrowRight' || e.key === 'ArrowRight') {
         e.preventDefault();
         commitSeek((video.current?.currentTime || 0) + seekStep);
@@ -2679,7 +2689,7 @@ export default function VideoPlayer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive, playlistActive, playPlaylistNext, playPlaylistPrev]);
+  }, [isActive, isMiniplayer, onToggleMiniplayer, togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive, playlistActive, playPlaylistNext, playPlaylistPrev]);
 
   // Sync position progress & playback speed with OS media controls (Android / Lockscreen / Bluetooth)
   const syncMediaPositionState = useCallback((positionOverride = null) => {
@@ -2863,7 +2873,7 @@ export default function VideoPlayer({
         bufferBarRef.current.style.width = `${bufPct}%`;
       }
     }
-  }, [isMobileView, effectiveFullscreen, isSwitchingVideo, duration, src, targetInitialTime]);
+  }, [isMobileView, effectiveFullscreen, isMiniplayer, isSwitchingVideo, duration, src, targetInitialTime]);
 
   const controlsVisible = showControls || (!isMobileView && !isPlaying);
   const upNextVideo = playlistActive ? (playPlaylistNext ? playlistNextVideo : null) : relatedVideos?.[0] ?? null;
@@ -2886,52 +2896,213 @@ export default function VideoPlayer({
   const showInnerAmbientBackdrop = Boolean(
     ambientMode &&
     isActive &&
+    !isMiniplayer &&
     !isSwitchingVideo &&
     !(isCurrentLevelHdr && effectiveFullscreen) &&
     aspectMode === 'fit' &&
     (effectiveFullscreen || (videoRatio && videoRatio < 0.98) || (isMobileView && isCinematic))
   );
 
+  // Mobile YouTube-style Swipe-Down Gesture on /watch video -> live 60fps shrink + dim backdrop -> Floating Miniplayer!
+  useEffect(() => {
+    if (isMiniplayer || !isMobileView || effectiveFullscreen || !onToggleMiniplayer) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    let state = null;
+    let resetTimer = null;
+
+    const clearStyles = () => {
+      container.style.transition = '';
+      container.style.transform = '';
+      container.style.transformOrigin = '';
+      container.style.borderRadius = '';
+      container.style.boxShadow = '';
+      container.style.zIndex = '';
+      container.style.opacity = '';
+      document.documentElement.style.overflow = '';
+      document.body.style.overflow = '';
+      if (swipeBackdropRef.current) {
+        swipeBackdropRef.current.style.transition = '';
+        swipeBackdropRef.current.style.opacity = '0';
+      }
+    };
+
+    const onTouchStart = (e) => {
+      if (e.touches.length !== 1) return;
+      if (e.target.closest('button, [role="slider"], input, .group\\/seek')) return;
+      if (resetTimer) {
+        clearTimeout(resetTimer);
+        resetTimer = null;
+        clearStyles();
+      }
+      const t = e.touches[0];
+      state = {
+        startX: t.clientX,
+        startY: t.clientY,
+        startTime: performance.now(),
+        lastDy: 0,
+        locked: null,
+      };
+    };
+
+    const onTouchMove = (e) => {
+      if (!state || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const dx = t.clientX - state.startX;
+      const dy = t.clientY - state.startY;
+
+      if (state.locked === null) {
+        if (Math.hypot(dx, dy) < 10) return;
+        if (dy > 10 && dy > Math.abs(dx) * 1.2) {
+          state.locked = 'down';
+          document.documentElement.style.overflow = 'hidden';
+          document.body.style.overflow = 'hidden';
+        } else {
+          state.locked = 'cancel';
+          return;
+        }
+      }
+      if (state.locked !== 'down') return;
+
+      if (e.cancelable) e.preventDefault();
+      const clampedDy = Math.max(0, dy);
+      state.lastDy = clampedDy;
+
+      const p = Math.min(1, clampedDy / 260);
+      const scale = 1 - p * 0.4;
+      const radius = Math.round(p * 14);
+      const tx = Math.round(dx * 0.55);
+      const ty = Math.round(clampedDy * 0.78);
+
+      container.style.transition = 'none';
+      container.style.transformOrigin = 'center top';
+      container.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${scale.toFixed(4)})`;
+      container.style.borderRadius = `${radius}px`;
+      container.style.boxShadow = `0 ${Math.round(p * 24)}px ${Math.round(p * 56)}px rgba(0,0,0,${(p * 0.85).toFixed(2)})`;
+      container.style.zIndex = '95';
+
+      if (swipeBackdropRef.current) {
+        swipeBackdropRef.current.style.transition = 'none';
+        swipeBackdropRef.current.style.opacity = (p * 0.88).toFixed(3);
+      }
+    };
+
+    const onTouchEnd = (e) => {
+      if (!state) return;
+      const finished = state;
+      state = null;
+      if (finished.locked !== 'down') return;
+
+      // Prevent stray synthetic click from toggling play/controls after swipe-down
+      if (e?.cancelable) e.preventDefault();
+
+      const dt = Math.max(1, performance.now() - finished.startTime);
+      const vy = finished.lastDy / dt;
+      const shouldMinimize = finished.lastDy > 75 || vy > 0.45;
+
+      if (shouldMinimize) {
+        // FLIP Shared-Element Handoff: capture exact live on-screen rect BEFORE clearing styles!
+        // FloatingMiniplayerShell starts at this exact rect and glides smoothly into the corner (0 teleport!)
+        const liveRect = container.getBoundingClientRect();
+        const centerX = liveRect.left + liveRect.width / 2;
+        const preferredCorner = centerX < window.innerWidth / 2 ? 'bottom-left' : 'bottom-right';
+        clearStyles();
+        onToggleMiniplayer({
+          sourceRect: {
+            left: liveRect.left,
+            top: liveRect.top,
+            width: liveRect.width,
+            height: liveRect.height,
+          },
+          preferredCorner,
+        });
+      } else {
+        container.style.transition = 'transform 240ms cubic-bezier(0.22,1,0.36,1), border-radius 240ms ease, box-shadow 240ms ease';
+        container.style.transform = 'translate3d(0, 0, 0) scale(1)';
+        container.style.borderRadius = '';
+        container.style.boxShadow = '';
+        if (swipeBackdropRef.current) {
+          swipeBackdropRef.current.style.transition = 'opacity 220ms ease';
+          swipeBackdropRef.current.style.opacity = '0';
+        }
+        resetTimer = setTimeout(() => {
+          clearStyles();
+        }, 250);
+      }
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: true });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd, { passive: false });
+    container.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
+    return () => {
+      if (resetTimer) clearTimeout(resetTimer);
+      clearStyles();
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', onTouchEnd);
+      container.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [isMiniplayer, isMobileView, effectiveFullscreen, onToggleMiniplayer]);
+
   return (
+    <>
+      {!isMiniplayer && isMobileView && !effectiveFullscreen && (
+        <div
+          ref={swipeBackdropRef}
+          aria-hidden="true"
+          className="fixed inset-0 z-[80] bg-black pointer-events-none opacity-0"
+        />
+      )}
     <div
       ref={containerRef}
-      data-player-fullscreen={effectiveFullscreen ? 'true' : undefined}
-      onContextMenu={handleContextMenu}
+      data-player-fullscreen={!isMiniplayer && effectiveFullscreen ? 'true' : undefined}
+      onContextMenu={isMiniplayer ? undefined : handleContextMenu}
       onClick={() => { if (contextMenu) setContextMenu(null); }}
       onMouseMove={(e) => {
-        if (isMobileView) return;
+        if (isMiniplayer || isMobileView) return;
         if (e?.nativeEvent?.pointerType === 'touch') return;
         resetControlsTimer();
       }}
-      className={`bg-black select-none overflow-hidden group/player ${effectiveFullscreen
-        ? 'fixed inset-0 z-[100] h-dvh w-dvw border-0 rounded-none [--player-safe-top:env(safe-area-inset-top,0px)] [--player-safe-bottom:env(safe-area-inset-bottom,0px)]'
-        : (videoRatio && videoRatio < 0.98)
-          ? 'relative w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
-          : 'relative w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border-0 sm:border-black/10 shadow-none sm:shadow-none'
-        } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`}
-      style={{
-        aspectRatio: effectiveFullscreen
-          ? undefined
-          : (videoRatio && videoRatio < 0.98)
-            ? (isMobileView ? undefined : '16/9')
-            // Mobile + cinematic → clamp to 16/9; desktop → keep true ratio
-            : (isMobileView && isCinematic) ? '16/9' : `${videoRatio}`,
-        maxWidth: effectiveFullscreen
-          ? undefined
-          : (videoRatio && videoRatio < 0.98)
-            ? undefined
-            : (isMobileView && isCinematic)
-              ? undefined
-              : `calc((${desktopMaxHeight}) * ${videoRatio})`,
-        maxHeight: effectiveFullscreen
-          ? undefined
-          : (videoRatio && videoRatio < 0.98)
-            ? (isMobileView ? 'min(48vh, 380px)' : desktopMaxHeight)
-            : desktopMaxHeight,
-        margin: (videoRatio && videoRatio >= 0.98) ? 0 : '0 auto',
-        contain: (isCurrentLevelHdr && effectiveFullscreen) ? undefined : 'paint layout',
-        WebkitTouchCallout: 'none',
-      }}
+      className={
+        isMiniplayer
+          ? 'relative w-full h-full bg-black select-none overflow-visible group/mini'
+          : `bg-black select-none overflow-hidden group/player ${isMobileView && !effectiveFullscreen ? 'touch-none ' : ''}${effectiveFullscreen
+            ? 'fixed inset-0 z-[100] h-dvh w-dvw border-0 rounded-none [--player-safe-top:env(safe-area-inset-top,0px)] [--player-safe-bottom:env(safe-area-inset-bottom,0px)]'
+            : (videoRatio && videoRatio < 0.98)
+              ? 'relative w-full h-[min(48vh,380px)] lg:h-auto lg:aspect-video rounded-none sm:rounded-2xl border-0 sm:border sm:border-black/10 shadow-none sm:shadow-none'
+              : 'relative w-full h-auto rounded-none sm:rounded-2xl border-0 sm:border-0 sm:border-black/10 shadow-none sm:shadow-none'
+            } ${!showControls && isPlaying ? 'cursor-none' : 'cursor-default'}`
+      }
+      style={
+        isMiniplayer
+          ? { WebkitTouchCallout: 'none' }
+          : {
+              aspectRatio: effectiveFullscreen
+                ? undefined
+                : (videoRatio && videoRatio < 0.98)
+                  ? (isMobileView ? undefined : '16/9')
+                  // Mobile + cinematic → clamp to 16/9; desktop → keep true ratio
+                  : (isMobileView && isCinematic) ? '16/9' : `${videoRatio}`,
+              maxWidth: effectiveFullscreen
+                ? undefined
+                : (videoRatio && videoRatio < 0.98)
+                  ? undefined
+                  : (isMobileView && isCinematic)
+                    ? undefined
+                    : `calc((${desktopMaxHeight}) * ${videoRatio})`,
+              maxHeight: effectiveFullscreen
+                ? undefined
+                : (videoRatio && videoRatio < 0.98)
+                  ? (isMobileView ? 'min(48vh, 380px)' : desktopMaxHeight)
+                  : desktopMaxHeight,
+              margin: (videoRatio && videoRatio >= 0.98) ? 0 : '0 auto',
+              contain: (isCurrentLevelHdr && effectiveFullscreen) ? undefined : 'paint layout',
+              WebkitTouchCallout: 'none',
+            }
+      }
     >
       {/* Ambient Mode Backdrop inside Player (fills fullscreen / pillarbox / letterbox black bars) */}
       <AmbientLight
@@ -3219,14 +3390,245 @@ export default function VideoPlayer({
         className="absolute inset-0 bg-black pointer-events-none z-[4] transition-opacity duration-500 ease-out opacity-0"
       />
 
-      {/* Unified 3-Zone Click / Double-Click Overlay (Left -10s, Center Play/Pause/Fullscreen, Right +10s) */}
-      <div
-        onClick={handlePlayerOverlayClick}
-        className="absolute inset-0 z-10 touch-manipulation"
-      />
+      {/* Unified 3-Zone Click / Double-Click Overlay (Full Watch Mode) OR YouTube-Style Desktop Miniplayer Overlay */}
+      {isMiniplayer ? (
+        !isMobileView && (
+          <>
+            {/* Compact Subtitles (CC) inside Miniplayer */}
+            {(() => {
+              const displayCue = isCcActive && hasSubtitles && activeCueText ? normalizeDisplayCueText(activeCueText) : '';
+              if (!displayCue || isEnded) return null;
+              return (
+                <div className="absolute inset-x-3 bottom-6 z-[15] flex justify-center pointer-events-none">
+                  <span className="max-w-[92%] px-2 py-0.5 rounded bg-black/75 text-white text-[10.5px] leading-snug text-center whitespace-pre-line break-words">
+                    {displayCue}
+                  </span>
+                </div>
+              );
+            })()}
 
-      {/* Top Bar: Fullscreen / Mobile */}
-      <PlayerTopBar
+            {/* Hover / Paused Controls Overlay (absolute-positioned layers so compact/21:9 sizes NEVER overflow past scrubber!) */}
+            <div
+              onClick={() => togglePlay()}
+              className={`absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-black/15 to-black/65 transition-opacity duration-150 cursor-pointer ${
+                !isPlaying || isScrubbing || isHoveringSeek
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover/mini:opacity-100'
+              }`}
+            >
+              {/* Top row: YouTube-style Expand (top-left) & Close X (top-right) */}
+              <div className="absolute top-0 inset-x-0 z-20 flex items-center justify-between px-2.5 pt-2 pointer-events-none">
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleMiniplayer?.();
+                  }}
+                  className="pointer-events-auto p-1.5 rounded-lg text-white/95 hover:text-white hover:bg-white/15 drop-shadow transition cursor-pointer focus:outline-none"
+                  title="ขยายกลับหน้าดูเต็ม (i)"
+                  aria-label="ขยายกลับหน้าดูเต็ม"
+                >
+                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+                    <path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseMiniplayer?.();
+                  }}
+                  className="pointer-events-auto p-1.5 rounded-lg text-white/90 hover:text-white hover:bg-white/15 drop-shadow transition cursor-pointer focus:outline-none"
+                  title="ปิด Miniplayer"
+                  aria-label="ปิด Miniplayer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Center: Clean White YouTube Play/Pause (+ Playlist Prev/Next) — dead-center, fades out cleanly while scrubbing */}
+              <div
+                className={`absolute inset-0 z-10 flex items-center justify-center gap-4 pointer-events-none transition-opacity duration-100 ${
+                  isHoveringSeek || isScrubbing ? 'opacity-0' : 'opacity-100'
+                }`}
+              >
+                {playlistActive && playPlaylistPrev && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playPlaylistPrev();
+                    }}
+                    className={`p-1.5 text-white/90 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] transition active:scale-90 cursor-pointer focus:outline-none ${
+                      isHoveringSeek || isScrubbing ? 'pointer-events-none' : 'pointer-events-auto'
+                    }`}
+                    title="วิดีโอก่อนหน้า"
+                    aria-label="วิดีโอก่อนหน้า"
+                  >
+                    <SkipBack className="w-5.5 h-5.5 fill-current" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    togglePlay();
+                  }}
+                  className={`p-1.5 text-white hover:scale-105 drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)] transition active:scale-90 cursor-pointer focus:outline-none ${
+                    isHoveringSeek || isScrubbing ? 'pointer-events-none' : 'pointer-events-auto'
+                  }`}
+                  title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่นต่อ (k)'}
+                  aria-label={isPlaying ? 'หยุดชั่วคราว' : 'เล่นต่อ'}
+                >
+                  {isPlaying ? <Pause className="w-9 h-9 fill-current" /> : <Play className="w-9 h-9 fill-current ml-0.5" />}
+                </button>
+                {playlistActive && playPlaylistNext && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playPlaylistNext();
+                    }}
+                    className={`p-1.5 text-white/90 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] transition active:scale-90 cursor-pointer focus:outline-none ${
+                      isHoveringSeek || isScrubbing ? 'pointer-events-none' : 'pointer-events-auto'
+                    }`}
+                    title="วิดีโอถัดไป"
+                    aria-label="วิดีโอถัดไป"
+                  >
+                    <SkipForward className="w-5.5 h-5.5 fill-current" />
+                  </button>
+                )}
+              </div>
+
+              {/* Bottom Info Row: Live Time (0:43 / 4:23) + Mute — pinned cleanly above flush scrubber */}
+              <div
+                className={`absolute bottom-1.5 inset-x-0 z-20 flex items-center justify-between px-2.5 pointer-events-none transition-opacity duration-100 ${
+                  isHoveringSeek || isScrubbing ? 'opacity-0' : 'opacity-100'
+                }`}
+              >
+                <span
+                  ref={timeDisplayRef}
+                  className="text-[11px] font-medium font-mono text-white/95 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)] select-none"
+                >
+                  0:00 / 0:00
+                </span>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleMute();
+                  }}
+                  className={`p-1 rounded-md text-white/90 hover:text-white hover:bg-white/15 drop-shadow transition cursor-pointer focus:outline-none ${
+                    isHoveringSeek || isScrubbing ? 'pointer-events-none' : 'pointer-events-auto'
+                  }`}
+                  title={isMuted ? 'เปิดเสียง (m)' : 'ปิดเสียง (m)'}
+                  aria-label={isMuted ? 'เปิดเสียง' : 'ปิดเสียง'}
+                >
+                  {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Always-Visible Flush Bottom Scrubber (sits right on the video/info-bar seam; round knob z-40 floats cleanly over seam!) */}
+            <div
+              data-mini-scrubber="true"
+              ref={seekTrackRef}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                handlePointerDown(e);
+              }}
+              onPointerMove={handleSeekMouseMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              onMouseEnter={() => setIsHoveringSeek(true)}
+              onMouseLeave={() => {
+                setIsHoveringSeek(false);
+                if (hoverBarRef.current) hoverBarRef.current.style.width = '0%';
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute bottom-0 left-0 right-0 z-40 h-4 flex items-end cursor-pointer group/miniscrub"
+            >
+              {/* Floating Storyboard Preview + Timestamp (YouTube Miniplayer Hover Preview!) */}
+              <div
+                ref={scrubPreviewRef}
+                className={`absolute bottom-4 -translate-x-1/2 pointer-events-none transition-opacity duration-100 flex flex-col items-center gap-1 ${
+                  isHoveringSeek || isScrubbing ? 'opacity-100' : 'opacity-0'
+                }`}
+                style={{ left: '50%' }}
+              >
+                <div
+                  className={`relative ${
+                    videoRatio && videoRatio < 1.3 ? 'h-[96px] w-auto' : 'w-[144px] h-auto'
+                  } rounded-lg overflow-hidden bg-black border border-white/20 shadow-[0_6px_20px_rgba(0,0,0,0.85)] shrink-0`}
+                  style={{ aspectRatio: videoRatio || 16 / 9 }}
+                >
+                  {poster && !keepScrubPreviewOnLoad && (
+                    <img
+                      src={poster}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover opacity-70"
+                    />
+                  )}
+                  <div
+                    ref={scrubThumbSdRef}
+                    className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0"
+                  />
+                  <div
+                    ref={scrubThumbHdRef}
+                    className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-150"
+                  />
+                </div>
+                <span
+                  ref={scrubBadgeRef}
+                  className="px-2 py-0.5 rounded-full bg-black/85 border border-white/15 text-[11px] font-mono font-bold text-white shadow"
+                >
+                  0:00
+                </span>
+              </div>
+
+              {/* Flush Track Bar */}
+              <div className="relative w-full h-[3px] group-hover/miniscrub:h-[5px] bg-white/25 transition-[height] duration-100">
+                <div
+                  ref={bufferBarRef}
+                  className="absolute inset-y-0 left-0 bg-white/40 pointer-events-none"
+                  style={{ width: '0%' }}
+                />
+                <div
+                  ref={hoverBarRef}
+                  className="absolute inset-y-0 left-0 bg-white/50 pointer-events-none"
+                  style={{ width: '0%' }}
+                />
+                <div
+                  ref={progressBarRef}
+                  className="absolute inset-y-0 left-0 bg-[#FF7A00] pointer-events-none"
+                  style={{ width: '0%' }}
+                />
+                <div
+                  ref={scrubberKnobRef}
+                  className={`absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-50 w-3.5 h-3.5 rounded-full bg-[#FF7A00] shadow-[0_0_10px_rgba(255,122,0,0.9)] pointer-events-none transition-transform duration-100 ${
+                    isHoveringSeek || isScrubbing ? 'scale-100' : 'scale-0'
+                  }`}
+                  style={{ left: '0%' }}
+                />
+              </div>
+            </div>
+          </>
+        )
+      ) : (
+        <>
+          <div
+            onClick={handlePlayerOverlayClick}
+            className={`absolute inset-0 z-10 ${isMobileView && !effectiveFullscreen ? 'touch-none' : 'touch-manipulation'}`}
+          />
+
+          {/* Top Bar: Fullscreen / Mobile */}
+          <PlayerTopBar
         showControls={controlsVisible && !isMobileEndPromptOpen}
         isFullscreen={effectiveFullscreen}
         isMobileView={isMobileView}
@@ -3452,6 +3854,7 @@ export default function VideoPlayer({
         setSettingsPlacement={setSettingsPlacement}
         setActiveMenuTab={setActiveMenuTab}
         activeLevelLabel={activeLevelLabel}
+        toggleMiniplayer={onToggleMiniplayer}
         togglePiP={togglePiP}
         aspectMode={aspectMode}
         cycleAspectMode={cycleAspectMode}
@@ -3482,6 +3885,9 @@ export default function VideoPlayer({
         setIsScrubbing={setIsScrubbing}
         isScrubbingRef={isScrubbingRef}
       />
+        </>
+      )}
     </div>
+    </>
   );
 }

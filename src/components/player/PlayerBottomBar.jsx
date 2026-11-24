@@ -43,6 +43,7 @@ export default function PlayerBottomBar({
   setSettingsPlacement,
   setActiveMenuTab,
   activeLevelLabel,
+  toggleMiniplayer = null,
   togglePiP,
   aspectMode,
   cycleAspectMode,
@@ -333,9 +334,26 @@ export default function PlayerBottomBar({
               </button>
             </PlayerTooltip>
 
-            {/* Miniplayer (PiP) */}
+            {/* YouTube-Style In-App Miniplayer (i) */}
+            {!isFullscreen && toggleMiniplayer && (
+              <PlayerTooltip text="เครื่องเล่นขนาดเล็ก (Miniplayer)" hotkey="i" align="center">
+                <button
+                  type="button"
+                  onClick={toggleMiniplayer}
+                  className="p-2 rounded-xl text-zinc-200 hover:text-white hover:bg-white/15 transition cursor-pointer"
+                  aria-label="เครื่องเล่นขนาดเล็ก"
+                >
+                  <svg viewBox="0 0 24 24" className="w-5.5 h-5.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2.5" />
+                    <rect x="12" y="12" width="7.5" height="5.5" rx="1" fill="currentColor" stroke="none" />
+                  </svg>
+                </button>
+              </PlayerTooltip>
+            )}
+
+            {/* Browser Picture-in-Picture (p) */}
             {!isFullscreen && (
-              <PlayerTooltip text="เล่นแบบหน้าต่างลอย" hotkey="p" align="center">
+              <PlayerTooltip text="เล่นแบบหน้าต่างลอย (PiP)" hotkey="p" align="center">
                 <button
                   type="button"
                   onClick={togglePiP}
@@ -520,6 +538,21 @@ export default function PlayerBottomBar({
                 title="หมุนหน้าจอ"
               >
                 <RotateCw size={20} />
+              </button>
+            )}
+
+            {toggleMiniplayer && (
+              <button
+                type="button"
+                onClick={toggleMiniplayer}
+                className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+                title="เครื่องเล่นขนาดเล็ก (Miniplayer)"
+                aria-label="เครื่องเล่นขนาดเล็ก"
+              >
+                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2.5" />
+                  <rect x="12" y="12" width="7.5" height="5.5" rx="1" fill="currentColor" stroke="none" />
+                </svg>
               </button>
             )}
 

@@ -80,6 +80,7 @@ export default function WatchClient({
     videoRatio: globalVideoRatio,
     relatedVideos: globalRelated,
     isDockedInWatch,
+    isMiniplayer,
     handleSeek,
     dockPlayerSlot,
     undockPlayerSlot,
@@ -292,10 +293,10 @@ export default function WatchClient({
           <div
             ref={playerWrapperRef}
             id="player-primary-container"
-            className={`sticky top-0 z-30 w-full ${!isDockedInWatch ? 'bg-black' : 'bg-transparent'} md:bg-transparent md:relative md:z-0 has-[[data-player-fullscreen="true"]]:!z-[100] ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] md:h-auto flex justify-center items-center md:block' : ''
+            className={`sticky top-0 z-30 w-full ${(!isDockedInWatch || isMiniplayer) ? 'bg-black' : 'bg-transparent'} md:bg-transparent md:relative md:z-0 has-[[data-player-fullscreen="true"]]:!z-[100] ${videoRatio < 0.98 ? 'h-[min(48vh,380px)] md:h-auto flex justify-center items-center md:block' : ''
               }`}
             style={
-              !isDockedInWatch
+              !isDockedInWatch || isMiniplayer
                 ? {
                     aspectRatio: videoRatio < 0.98 ? '16 / 9' : `${videoRatio}`,
                     maxHeight: DESKTOP_PLAYER_MAX_HEIGHT,

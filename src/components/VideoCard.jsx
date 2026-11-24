@@ -26,7 +26,7 @@ import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { useVideoWatchProgress } from '@/lib/useVideoWatchProgress';
 import { useSession } from '@/context/SessionContext';
-import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
+import { isGlobalMiniplayerActive, primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
 
 const SaveToPlaylistModal = dynamic(() => import('@/components/playlist/SaveToPlaylistModal'), { ssr: false });
@@ -134,6 +134,9 @@ function VideoCard({
             { ...video, id: safeId },
             { startTime: resumeTime, inPlace: true, replace }
           );
+        } else if (isGlobalMiniplayerActive()) {
+          e.preventDefault();
+          primeGlobalWatchVideo({ ...video, id: safeId }, { startTime: resumeTime, inMiniplayer: true });
         } else {
           primeGlobalWatchVideo({ ...video, id: safeId }, { startTime: resumeTime });
         }
@@ -145,6 +148,7 @@ function VideoCard({
     <Link
       href={watchUrl}
       replace={replace}
+      data-mini-handled="true"
       onClick={handlePrimeCardClick}
       aria-label={video.title}
       className="absolute inset-0 z-10 rounded-[inherit] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF7A00]"

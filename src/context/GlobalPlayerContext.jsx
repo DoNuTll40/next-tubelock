@@ -15,6 +15,7 @@ import { createPortal } from 'react-dom';
 import { usePathname, useRouter } from 'next/navigation';
 import VideoPlayer from '@/components/VideoPlayer';
 import AmbientLight from '@/components/player/AmbientLight';
+import FloatingMiniplayerShell from '@/components/player/FloatingMiniplayerShell';
 import { usePosterReveal } from '@/lib/usePosterReveal';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import {
@@ -50,7 +51,7 @@ function getSingletonPlayerHost() {
     } else {
       const el = document.createElement('div');
       el.id = 'movie_player';
-      el.className = 'relative w-full';
+      el.className = 'relative w-full h-full';
       singletonPlayerHostEl = el;
     }
   }
@@ -58,16 +59,28 @@ function getSingletonPlayerHost() {
 }
 
 const primeListeners = new Set();
+let globalMiniplayerActive = false;
 
-function reparentPlayerHost(targetParent, hostEl) {
+export function isGlobalMiniplayerActive() {
+  return globalMiniplayerActive;
+}
+
+function reparentPlayerHost(targetParent, hostEl, videoEl = null) {
   if (!targetParent || !hostEl || hostEl.parentNode === targetParent) return;
+  const wasPlaying = Boolean(videoEl && !videoEl.paused && !videoEl.ended);
   if (typeof targetParent.moveBefore === 'function' && hostEl.isConnected && targetParent.isConnected) {
     try {
       targetParent.moveBefore(hostEl, null);
+      if (wasPlaying && videoEl?.paused) {
+        videoEl.play().catch(() => { });
+      }
       return;
     } catch (_) { }
   }
   targetParent.appendChild(hostEl);
+  if (wasPlaying && videoEl?.paused) {
+    videoEl.play().catch(() => { });
+  }
 }
 
 /**
@@ -76,11 +89,11 @@ function reparentPlayerHost(targetParent, hostEl) {
  */
 export function primeGlobalWatchVideo(
   videoData,
-  { startTime = 0, versionKey = null, inPlace = false, replace = false } = {}
+  { startTime = 0, versionKey = null, inPlace = false, replace = false, inMiniplayer = false } = {}
 ) {
   if (!videoData) return;
   for (const listener of primeListeners) {
-    listener(videoData, { startTime, versionKey, inPlace, replace });
+    listener(videoData, { startTime, versionKey, inPlace, replace, inMiniplayer });
   }
 }
 
@@ -226,6 +239,11 @@ export function GlobalPlayerProvider({ children }) {
   const playlistRequestRef = useRef(null);
 
   const [isDockedInWatch, setIsDockedInWatch] = useState(false);
+  const [isMiniplayer, setIsMiniplayer] = useState(false);
+  const isMiniplayerRef = useRef(false);
+  const isExpandingFromMiniRef = useRef(false);
+  const miniLaunchRectRef = useRef(null);
+  const lastNonWatchUrlRef = useRef('/');
   const [selection, setSelection] = useState({ id: null, startTime: 0 });
   const [video, setVideo] = useState(null);
   const [activeVersionKey, setActiveVersionKey] = useState(null);
@@ -401,11 +419,26 @@ export function GlobalPlayerProvider({ children }) {
     };
   }, []);
 
-  // Guard: leaving /watch clears click-primed intent and parks + pauses #movie_player
+  // Remember the last non-/watch URL so pressing `i` on /watch returns cleanly to where the user came from
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (pathname && !pathname.startsWith('/watch')) {
+      lastNonWatchUrlRef.current = `${window.location.pathname}${window.location.search}`;
+    }
+  }, [pathname]);
+
+  // Guard: leaving /watch clears click-primed intent and parks + pauses #movie_player (UNLESS Miniplayer is active!)
   useEffect(() => {
     if (pathname?.startsWith('/watch')) return;
     primedInfoRef.current = null;
     activeSlotRef.current = null;
+
+    if (isMiniplayerRef.current) {
+      const tMini = Promise.resolve().then(() => {
+        setIsDockedInWatch(false);
+      });
+      return () => { void tMini; };
+    }
 
     const t = Promise.resolve().then(() => {
       if (!window.location.pathname.startsWith('/watch/')) clearPlaylist({ updateUrl: false });
@@ -431,8 +464,15 @@ export function GlobalPlayerProvider({ children }) {
     (slotEl) => {
       if (!slotEl) return;
       activeSlotRef.current = slotEl;
+      isExpandingFromMiniRef.current = false;
+      // Move #movie_player into /watch slot FIRST while Miniplayer is still mounted so DOM never detaches <video>!
+      reparentPlayerHost(slotEl, hostEl, videoRef.current);
       setIsDockedInWatch(true);
-      reparentPlayerHost(slotEl, hostEl);
+      if (isMiniplayerRef.current) {
+        isMiniplayerRef.current = false;
+        globalMiniplayerActive = false;
+        setIsMiniplayer(false);
+      }
     },
     [hostEl]
   );
@@ -449,10 +489,128 @@ export function GlobalPlayerProvider({ children }) {
     } catch (_) { }
   }, []);
 
+  // Prefetch last non-/watch route while watching so swipe-down / `i` Miniplayer return is instant!
+  useEffect(() => {
+    if (!pathname?.startsWith('/watch')) return;
+    const target = lastNonWatchUrlRef.current && !lastNonWatchUrlRef.current.startsWith('/watch')
+      ? lastNonWatchUrlRef.current
+      : '/';
+    try {
+      router.prefetch?.(target);
+    } catch (_) { }
+  }, [pathname, router]);
+
+  const enterMiniplayer = useCallback((options = null) => {
+    if (!selectionIdRef.current || !streamUrlRef.current) return;
+    if (typeof document !== 'undefined' && document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => { });
+    }
+    if (options && typeof options === 'object' && options.sourceRect) {
+      miniLaunchRectRef.current = {
+        rect: options.sourceRect,
+        corner: options.preferredCorner || null,
+      };
+    } else {
+      miniLaunchRectRef.current = null;
+    }
+    isExpandingFromMiniRef.current = false;
+    isMiniplayerRef.current = true;
+    globalMiniplayerActive = true;
+    setIsMiniplayer(true);
+
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/watch')) {
+      const target = lastNonWatchUrlRef.current && !lastNonWatchUrlRef.current.startsWith('/watch')
+        ? lastNonWatchUrlRef.current
+        : '/';
+      // Wait 1 frame so FloatingMiniplayerShell commits and reparents #movie_player BEFORE /watch unmounts!
+      requestAnimationFrame(() => {
+        if (isMiniplayerRef.current) {
+          router.push(target);
+        }
+      });
+    }
+  }, [router]);
+
+  const expandMiniplayer = useCallback(() => {
+    const curVideo = currentVideoRef.current;
+    const curId = selectionIdRef.current || curVideo?.id;
+    if (!curId) {
+      isMiniplayerRef.current = false;
+      globalMiniplayerActive = false;
+      setIsMiniplayer(false);
+      return;
+    }
+
+    const slug = encodeVideoSlug(curId, curVideo?.category) || String(curId);
+    const url = new URL(`/watch/${slug}`, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    if (activeVersionKeyRef.current) {
+      url.searchParams.set('v', activeVersionKeyRef.current);
+    }
+    if (playlistStateRef.current) {
+      writePlaylistParams(url, playlistStateRef.current);
+    }
+
+    // Keep isMiniplayer = true during route transition so FloatingMiniplayerShell stays mounted & <video> stays active!
+    // dockPlayerSlot() will atomically reparent #movie_player into /watch and then close Miniplayer.
+    isExpandingFromMiniRef.current = true;
+    primedInfoRef.current = {
+      id: String(curId),
+      versionKey: activeVersionKeyRef.current || null,
+      at: Date.now(),
+    };
+    router.push(`${url.pathname}${url.search}`);
+  }, [router]);
+
+  const closeMiniplayer = useCallback(() => {
+    isMiniplayerRef.current = false;
+    globalMiniplayerActive = false;
+    isExpandingFromMiniRef.current = false;
+    setIsMiniplayer(false);
+    setIsDockedInWatch(false);
+    clearPlaylist({ updateUrl: false });
+    silenceAndPauseCurrentVideo();
+    if (hostEl && parkingRef.current && hostEl.parentNode !== parkingRef.current) {
+      reparentPlayerHost(parkingRef.current, hostEl);
+    }
+  }, [clearPlaylist, hostEl, silenceAndPauseCurrentVideo]);
+
+  // Global keyboard shortcuts when Miniplayer is open on non-/watch pages (`i` = expand, `k` = play/pause, `m` = mute)
+  useEffect(() => {
+    if (!isMiniplayer) return;
+    const handleMiniKeyDown = (e) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName) || e.target?.isContentEditable) return;
+      const code = e.code;
+      const key = e.key?.toLowerCase();
+      if (code === 'KeyI' || key === 'i') {
+        e.preventDefault();
+        expandMiniplayer();
+      } else if (code === 'KeyK' || key === 'k') {
+        e.preventDefault();
+        const v = videoRef.current;
+        if (!v) return;
+        if (v.paused || v.ended) v.play().catch(() => { });
+        else v.pause();
+      } else if (code === 'KeyM' || key === 'm') {
+        e.preventDefault();
+        const v = videoRef.current;
+        if (!v) return;
+        v.muted = !v.muted;
+      }
+    };
+    window.addEventListener('keydown', handleMiniKeyDown);
+    return () => window.removeEventListener('keydown', handleMiniKeyDown);
+  }, [isMiniplayer, expandMiniplayer]);
+
   const undockPlayerSlot = useCallback(
     (slotEl) => {
       if (!slotEl || activeSlotRef.current !== slotEl) return;
       activeSlotRef.current = null;
+
+      if (isMiniplayerRef.current || isExpandingFromMiniRef.current) {
+        setIsDockedInWatch(false);
+        return;
+      }
 
       const isPrimedWatchTransition =
         Boolean(primedInfoRef.current) &&
@@ -489,12 +647,13 @@ export function GlobalPlayerProvider({ children }) {
     (newVideo, resumeTime = 0, {
       replace = false, preservePlaylist = false, nextPlaylistIndex, nextShuffleOrder, updateHistory = true,
     } = {}) => {
-      if (
-        !newVideo ||
-        !newVideo.id ||
-        newVideo.id === 'undefined' ||
-        String(newVideo.id) === String(selectionIdRef.current)
-      ) {
+      if (!newVideo || !newVideo.id || newVideo.id === 'undefined') {
+        return;
+      }
+      if (String(newVideo.id) === String(selectionIdRef.current)) {
+        if (isMiniplayerRef.current && videoRef.current?.paused) {
+          videoRef.current.play().catch(() => { });
+        }
         return;
       }
 
@@ -514,13 +673,12 @@ export function GlobalPlayerProvider({ children }) {
         clearPlaylist({ updateUrl: false });
       }
 
-      if (typeof window !== 'undefined') {
-        if (updateHistory) {
-          const url = new URL(videoSlug ? `/watch/${videoSlug}` : '/', window.location.origin);
-          if (nextPlaylist) writePlaylistParams(url, nextPlaylist);
-          if (replace && (!currentPlaylist || preservePlaylist)) window.history.replaceState(null, '', url);
-          else window.history.pushState(null, '', url);
-        }
+      const shouldUpdateWatchPage = updateHistory && !isMiniplayerRef.current;
+      if (typeof window !== 'undefined' && shouldUpdateWatchPage) {
+        const url = new URL(videoSlug ? `/watch/${videoSlug}` : '/', window.location.origin);
+        if (nextPlaylist) writePlaylistParams(url, nextPlaylist);
+        if (replace && (!currentPlaylist || preservePlaylist)) window.history.replaceState(null, '', url);
+        else window.history.pushState(null, '', url);
         document.title = newVideo.title ? `${newVideo.title} - TubeLock` : 'TubeLock';
         if (window.scrollY > 120) {
           window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -641,12 +799,7 @@ export function GlobalPlayerProvider({ children }) {
   }, [handleSelectVideo, loadPlaylist]);
 
   const handlePrimeVideo = useCallback(
-    (newVideo, { startTime = 0, versionKey = null, inPlace = false, replace = false } = {}) => {
-      if (inPlace) {
-        handleSelectVideo(newVideo, startTime, { replace });
-        return;
-      }
-
+    (newVideo, { startTime = 0, versionKey = null, inPlace = false, replace = false, inMiniplayer = false } = {}) => {
       const nextId =
         newVideo?.id && newVideo.id !== 'undefined'
           ? newVideo.id
@@ -654,6 +807,18 @@ export function GlobalPlayerProvider({ children }) {
             ? newVideo.video_id
             : null;
       if (!nextId) return;
+
+      // YouTube-style: while Miniplayer is open, clicking another video plays it right inside Miniplayer
+      // without expanding back to /watch unless the user explicitly expands!
+      if (inMiniplayer || isMiniplayerRef.current) {
+        handleSelectVideo({ ...newVideo, id: nextId }, startTime, { updateHistory: false });
+        return;
+      }
+
+      if (inPlace) {
+        handleSelectVideo(newVideo, startTime, { replace });
+        return;
+      }
 
       const normalizedVersion = versionKey ? String(versionKey) : null;
       const nextStart = Number(startTime) || 0;
@@ -716,6 +881,42 @@ export function GlobalPlayerProvider({ children }) {
       primeListeners.delete(handlePrimeVideo);
     };
   }, [handlePrimeVideo]);
+
+  // Global capture-phase interceptor while Miniplayer is active:
+  // clicking ANY <a href="/watch/..."> link (History, Search Results, Playlists, Videos, etc.)
+  // switches the video directly inside Miniplayer instead of navigating away to full /watch!
+  useEffect(() => {
+    if (!isMiniplayer || typeof document === 'undefined') return;
+    const handleMiniWatchLinkClick = (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const link = e.target?.closest?.('a[href]');
+      if (!link || link.target === '_blank' || link.closest('#movie_player_mini_dock')) return;
+      // VideoCard handles its own click with full video metadata for 0ms title/channel swap
+      if (link.hasAttribute('data-mini-handled')) return;
+
+      let url;
+      try {
+        url = new URL(link.href, window.location.origin);
+      } catch {
+        return;
+      }
+      if (url.origin !== window.location.origin || !url.pathname.startsWith('/watch/')) return;
+
+      const slug = url.pathname.slice('/watch/'.length).split('/')[0];
+      const decodedId = decodeVideoSlug(slug);
+      if (!decodedId) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const resumeSec = Number(url.searchParams.get('t')) || 0;
+      const cached = candidatePoolRef.current.get(String(decodedId));
+      handleSelectVideo(cached || { id: decodedId }, resumeSec, { updateHistory: false });
+    };
+
+    document.addEventListener('click', handleMiniWatchLinkClick, true);
+    return () => document.removeEventListener('click', handleMiniWatchLinkClick, true);
+  }, [isMiniplayer, handleSelectVideo]);
 
   const hydrateWatchPage = useCallback(
     ({
@@ -1271,6 +1472,10 @@ export function GlobalPlayerProvider({ children }) {
       error,
       videoRatio,
       isDockedInWatch,
+      isMiniplayer,
+      enterMiniplayer,
+      expandMiniplayer,
+      closeMiniplayer,
       ambientMode,
       setAmbientMode: handleSetAmbientMode,
       videoRef,
@@ -1307,6 +1512,10 @@ export function GlobalPlayerProvider({ children }) {
       error,
       videoRatio,
       isDockedInWatch,
+      isMiniplayer,
+      enterMiniplayer,
+      expandMiniplayer,
+      closeMiniplayer,
       ambientMode,
       handleSetAmbientMode,
       handleSeek,
@@ -1330,6 +1539,16 @@ export function GlobalPlayerProvider({ children }) {
     ]
   );
 
+  const reparentToMiniSlot = useCallback((slotEl, el) => {
+    reparentPlayerHost(slotEl, el, videoRef.current);
+  }, []);
+
+  const consumeMiniLaunchRect = useCallback(() => {
+    const val = miniLaunchRectRef.current;
+    miniLaunchRectRef.current = null;
+    return val;
+  }, []);
+
   return (
     <GlobalPlayerContext.Provider value={contextValue}>
       {children}
@@ -1342,6 +1561,20 @@ export function GlobalPlayerProvider({ children }) {
         aria-hidden="true"
       />
 
+      {/* Floating Miniplayer Dock (Desktop 4-Corner Draggable + Mobile Floating PiP Card) */}
+      <FloatingMiniplayerShell
+        isOpen={isMiniplayer}
+        hostEl={hostEl}
+        reparentHost={reparentToMiniSlot}
+        videoRef={videoRef}
+        aspectRatio={videoRatio}
+        consumeLaunchRect={consumeMiniLaunchRect}
+        title={video?.title || ''}
+        channelName={video?.author_name || 'DONUŤ'}
+        onExpand={expandMiniplayer}
+        onClose={closeMiniplayer}
+      />
+
       {/* Persistent Singleton #movie_player Portal (AmbientLight + VideoPlayer always mounted once) */}
       {hostEl
         ? createPortal(
@@ -1350,15 +1583,18 @@ export function GlobalPlayerProvider({ children }) {
               videoRef={videoRef}
               storyboard={matureVideo && !showAdultPoster ? null : storyboard}
               poster={watchPoster}
-              enabled={ambientMode && isDockedInWatch}
+              enabled={ambientMode && isDockedInWatch && !isMiniplayer}
               preferStoryboardOnly={isPlayingHdr}
               aspectRatio={videoRatio}
               className="max-md:mix-blend-multiply dark:max-md:mix-blend-screen"
             />
 
-            <div className="relative z-10 w-full">
+            <div className="relative z-10 w-full h-full">
               <VideoPlayer
-                isActive={isDockedInWatch}
+                isActive={isDockedInWatch || isMiniplayer}
+                isMiniplayer={isMiniplayer}
+                onToggleMiniplayer={isMiniplayer ? expandMiniplayer : enterMiniplayer}
+                onCloseMiniplayer={closeMiniplayer}
                 src={streamUrl}
                 partialSegmentMapRef={partialSegmentMapRef}
                 poster={watchPoster}
