@@ -156,7 +156,7 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
               {isOwner ? (
                 <>
                   <Link
-                    href="/settings?account"
+                    href="/settings?channel"
                     className="px-4 py-2 rounded-full bg-[#EFECE6] dark:bg-white/10 hover:bg-[#E5E0D8] dark:hover:bg-white/15 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 transition"
                   >
                     <SlidersHorizontal className="w-4 h-4" />

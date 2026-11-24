@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SettingCard from '@/components/ui/SettingCard';
 import SettingRow from '@/components/ui/SettingRow';
-import ChannelHandleCard from '@/components/settings/ChannelHandleCard';
 import {
   User, LogOut, ShieldCheck, Link2,
   Monitor, Smartphone, Tablet, MapPin, Clock,
@@ -204,9 +203,9 @@ export default function AccountSection({ session }) {
     <div className="flex flex-col gap-6 animate-fadeIn px-4">
       {/* ── Header ────────────────────────────────────────────────── */}
       <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
-        <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">บัญชีและโปรไฟล์</h2>
+        <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">บัญชีและความปลอดภัย</h2>
         <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
-          เลือกลักษณะการแสดงตัวและสิ่งที่คุณเห็นใน TubeLock
+          จัดการบัญชีที่เข้าสู่ระบบ OAuth และตรวจสอบอุปกรณ์ที่กำลังใช้งานอยู่
         </p>
         {session?.email && (
           <span className="inline-block mt-1 text-xs font-medium text-[#FF7A00]">
@@ -235,8 +234,6 @@ export default function AccountSection({ session }) {
       )}
 
       {/* ── Social Login Card ─────────────────────────────────────── */}
-      {session && <ChannelHandleCard session={session} />}
-
       {session && (
         <SettingCard title="บัญชีที่เข้าสู่ระบบ" subtitle="ข้อมูลจาก Social Login ที่คุณใช้เข้าระบบ">
           <div className="p-4 sm:p-5 flex flex-col gap-4">

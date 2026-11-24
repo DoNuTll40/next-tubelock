@@ -1,13 +1,10 @@
 'use client';
 
-import { savePosterPreference } from '@/lib/posterPreference';
 import React from 'react';
-import { useSession } from '@/context/SessionContext';
 import { useTheme } from '@/context/ThemeContext';
 import SettingCard from '@/components/ui/SettingCard';
 import SettingRow from '@/components/ui/SettingRow';
-import Switch from '@/components/ui/Switch';
-import { Sun, Moon, Monitor, CheckCircle2, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Sun, Moon, Monitor, CheckCircle2 } from 'lucide-react';
 
 const THEME_OPTIONS = [
   {
@@ -48,51 +45,18 @@ const THEME_OPTIONS = [
   },
 ];
 
-export default function GeneralSection({
-  allow18Plus,
-  setAllow18Plus,
-  onToggle18Plus,
-}) {
-  const isLoggedIn = Boolean(useSession());
+export default function GeneralSection() {
   const { theme, resolvedTheme, setTheme } = useTheme();
-
-  const [local18Plus, setLocal18Plus] = React.useState(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      return localStorage.getItem('tubelock_allow_18plus') === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  const current18Plus = allow18Plus !== undefined ? allow18Plus : local18Plus;
-
-  const handle18PlusChange = (checked) => {
-    if (!isLoggedIn) return;
-    if (onToggle18Plus) {
-      onToggle18Plus(checked);
-    } else if (setAllow18Plus) {
-      setAllow18Plus(checked);
-    } else {
-      setLocal18Plus(checked);
-    }
-    try {
-      savePosterPreference(checked);
-    } catch (_) { }
-  };
 
   return (
     <div className="flex flex-col gap-6 animate-fadeIn px-4">
       {/* Header */}
       <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
         <div className="flex items-center gap-2.5">
-          <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">การตั้งค่าทั่วไป</h2>
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#FF7A00]/10 text-[#FF7A00] border border-[#FF7A00]/20">
-            ระบบ
-          </span>
+          <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">การแสดงผลและธีม</h2>
         </div>
         <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
-          ปรับแต่งธีมการแสดงผล รูปลักษณ์ และการควบคุมระบบพื้นฐานของ TubeLock
+          ปรับแต่งธีมสี รูปลักษณ์ และภาษาของอินเทอร์เฟซ TubeLock
         </p>
       </div>
 
@@ -188,45 +152,8 @@ export default function GeneralSection({
         </div>
       </SettingCard>
 
-      {/* 🔞 Content Safety & 18+ Filter Card */}
-      <SettingCard
-        title="ความปลอดภัยและการควบคุมเนื้อหา (Content Safety & Age Verification)"
-        subtitle="จัดการการแสดงผลวิดีโอที่มีเรตติ้ง 18+ หรือเนื้อหาเฉพาะผู้ใหญ่ (Restricted / Mature)"
-      >
-        <SettingRow
-          title="แสดงภาพปกเนื้อหา 18+ และหมวดผู้ใหญ่ (Adult Content Display)"
-          description={isLoggedIn
-            ? 'เปิดเพื่อแสดงภาพปกจริงของคลิป 18+ โดยอัตโนมัติ การตั้งค่านี้บันทึกในเบราว์เซอร์นี้และปิดไว้โดยค่าเริ่มต้น'
-            : 'เข้าสู่ระบบก่อนจึงจะสามารถเปิดแสดงภาพปกเนื้อหา 18+ หรือกดดูภาพปกบนการ์ดวิดีโอได้'}
-        >
-          <Switch
-            checked={isLoggedIn && current18Plus}
-            onChange={handle18PlusChange}
-            disabled={!isLoggedIn}
-          />
-        </SettingRow>
-
-        <div className="p-3.5 bg-[#FFF8F2] dark:bg-[#FF7A00]/10 border-t border-[#EFECE6] dark:border-white/10 flex items-start gap-2.5 text-xs">
-          <ShieldAlert className="w-4 h-4 text-[#FF7A00] shrink-0 mt-0.5" />
-          <span className="text-[#8C857B] dark:text-[#CCCCCC] leading-relaxed">
-            {isLoggedIn
-              ? 'เมื่อปิด ระบบจะแสดงภาพแทนของคลิป 18+ คุณยังเลือกแสดงภาพปกจริงเป็นรายคลิปได้จากการ์ดที่มีปุ่มแสดงภาพปก'
-              : 'ผู้ชมที่ยังไม่ได้เข้าสู่ระบบจะเห็นเฉพาะหน้ากากจำกัดอายุ 18+ และไม่สามารถกดแสดงภาพปกจริงได้'}
-          </span>
-        </div>
-      </SettingCard>
-
-      {/* System Preferences Card */}
-      <SettingCard title="พารามิเตอร์และการนำทาง">
-        <SettingRow
-          title="ทางลัดหน้าตั้งค่า (Direct URL Tab)"
-          description="สามารถเข้าถึงแท็บนี้โดยตรงผ่าน URL: /settings?general ได้ตลอดเวลา"
-        >
-          <code className="px-2.5 py-1 rounded-lg bg-[#F5F2EB] dark:bg-white/5 text-[#FF7A00] font-mono text-[11px] font-bold border border-[#EFECE6] dark:border-white/10">
-            /settings?general
-          </code>
-        </SettingRow>
-
+      {/* Language & Region Card */}
+      <SettingCard title="ภาษาและภูมิภาค">
         <SettingRow
           title="ภาษาของระบบ (Interface Language)"
           description="ภาษาที่แสดงผลในเมนูและคำแนะนำการใช้งาน"

@@ -5,13 +5,14 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, ChevronRight, PlayCircle, Folder,
-  Database, Save, CheckCircle, Loader2,
-  Sliders, LifeBuoy
+  ShieldCheck, Save, CheckCircle, Loader2,
+  Sliders, LifeBuoy, AtSign, User
 } from 'lucide-react';
 import { useViewMode } from '@/context/ViewModeContext';
 import SettingsSidebar from '@/components/settings/SettingsSidebar';
 import GeneralSection from '@/components/settings/GeneralSection';
 import AccountSection from '@/components/settings/AccountSection';
+import ChannelSection from '@/components/settings/ChannelSection';
 import PlayerSection from '@/components/settings/PlayerSection';
 import StorageSection from '@/components/settings/StorageSection';
 import SystemSection from '@/components/settings/SystemSection';
@@ -25,7 +26,7 @@ async function sha256(message) {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-const VALID_TABS = ['general', 'account', 'player', 'onedrive', 'system', 'support'];
+const VALID_TABS = ['account', 'channel', 'general', 'player', 'system', 'onedrive', 'support'];
 
 function parseTabFromParams(searchParams) {
   if (!searchParams) return null;
@@ -298,24 +299,11 @@ function SettingsContent() {
   const renderCurrentSection = (tabKey) => {
     switch (tabKey) {
       case 'general':
-        return (
-          <GeneralSection
-            allow18Plus={allow18Plus}
-            setAllow18Plus={setAllow18Plus}
-          />
-        );
+        return <GeneralSection />;
       case 'account':
-        return (
-          <AccountSection
-            session={session}
-            gravatarEmail={gravatarEmail}
-            setGravatarEmail={handleEmailChange}
-            gravatarHash={gravatarHash}
-            fallbackAvatar={fallbackAvatar}
-            setFallbackAvatar={setFallbackAvatar}
-            openActionSheet={setSheet}
-          />
-        );
+        return <AccountSection session={session} />;
+      case 'channel':
+        return <ChannelSection session={session} />;
       case 'player':
         return (
           <PlayerSection
@@ -339,6 +327,8 @@ function SettingsContent() {
       case 'system':
         return (
           <SystemSection
+            allow18Plus={allow18Plus}
+            setAllow18Plus={setAllow18Plus}
             handleClearHistory={handleClearHistory}
             handleFactoryReset={handleFactoryReset}
           />
@@ -346,12 +336,7 @@ function SettingsContent() {
       case 'support':
         return <SupportSection />;
       default:
-        return (
-          <GeneralSection
-            allow18Plus={allow18Plus}
-            setAllow18Plus={setAllow18Plus}
-          />
-        );
+        return <GeneralSection />;
     }
   };
 
@@ -384,14 +369,16 @@ function SettingsContent() {
           {/* Left Sidebar + Save */}
           <div className="sticky top-22 w-64 shrink-0 flex flex-col gap-3">
             <SettingsSidebar activeTab={desktopTab} onSelectTab={handleDesktopTabChange} />
-            <div className="px-3 mt-1">
-              <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
-              {isDirty && saveStatus === 'idle' && (
-                <p className="text-[10px] text-[#8C857B] dark:text-[#AAAAAA] mt-2 px-1 leading-relaxed">
-                  มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก กด <strong>&ldquo;บันทึก&rdquo;</strong> เพื่อบันทึกไปยัง Neon DB
-                </p>
-              )}
-            </div>
+            {(isDirty || desktopTab === 'player') && (
+              <div className="px-3 mt-1">
+                <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
+                {isDirty && saveStatus === 'idle' && (
+                  <p className="text-[10px] text-[#8C857B] dark:text-[#AAAAAA] mt-2 px-1 leading-relaxed">
+                    มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก กด <strong>&ldquo;บันทึก&rdquo;</strong> เพื่อบันทึกไปยัง Neon DB
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Content */}
@@ -424,9 +411,55 @@ function SettingsContent() {
               </div>
 
               <div className='flex flex-col gap-4 px-4 pb-20'>
-                {/* ทั่วไปและธีม */}
+                {/* 1. บัญชีและช่อง */}
                 <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">รูปลักษณ์และระบบ</span>
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">บัญชีและช่อง</span>
+                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('account')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 shrink-0 flex items-center justify-center">
+                          {session?.picture ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={session.picture} alt={session.name || 'User'} className="w-full h-full object-cover" />
+                          ) : (
+                            <User className="w-4 h-4 text-[#8C857B]" />
+                          )}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">บัญชีและความปลอดภัย</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888] truncate max-w-[200px]">
+                            {session?.email || session?.name || 'เข้าสู่ระบบและจัดการอุปกรณ์'}
+                          </span>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
+                    </div>
+                    <div
+                      onClick={() => handleMobileSelectSubPage('channel')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-[#FF7A00]/10 text-[#FF7A00] flex items-center justify-center shrink-0">
+                          <AtSign className="w-4 h-4" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ช่องของฉัน (@handle)</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
+                            ตั้งชื่อ @handle, คำอธิบายช่อง และแบนเนอร์
+                          </span>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. การรับชมและตัวเล่น */}
+                <div className="flex flex-col">
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">การรับชมและตัวเล่น</span>
                   <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
                     <div
                       onClick={() => handleMobileSelectSubPage('general')}
@@ -437,60 +470,24 @@ function SettingsContent() {
                           <Sliders className="w-4 h-4" />
                         </div>
                         <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ทั่วไปและธีม</span>
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">การแสดงผลและธีม</span>
                           <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
-                            ธีมมืด, สว่าง หรือตามระบบ และพารามิเตอร์ URL
+                            ธีมมืด, สว่าง หรือตามระบบ และภาษา
                           </span>
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
                     </div>
-                  </div>
-                </div>
-
-                {/* บัญชีและโปรไฟล์ */}
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">บัญชีและโปรไฟล์</span>
-                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
-                    <div
-                      onClick={() => handleMobileSelectSubPage('account')}
-                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 shrink-0">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={gravatarHash
-                              ? `https://www.gravatar.com/avatar/${gravatarHash}?d=${fallbackAvatar}&s=80`
-                              : `https://www.gravatar.com/avatar/?d=${fallbackAvatar}&s=80`}
-                            alt="User"
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">โปรไฟล์และ Gravatar</span>
-                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888] truncate max-w-[200px]">
-                            {gravatarEmail || 'ยังไม่ได้ตั้งค่าอีเมล'}
-                          </span>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* การเล่น */}
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">การเล่น</span>
-                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
                     <div
                       onClick={() => handleMobileSelectSubPage('player')}
                       className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
                     >
                       <div className="flex items-center gap-3">
-                        <PlayCircle className="w-5 h-5 text-[#FF7A00]" />
+                        <div className="w-8 h-8 rounded-full bg-[#FF7A00]/10 text-[#FF7A00] flex items-center justify-center shrink-0">
+                          <PlayCircle className="w-4 h-4" />
+                        </div>
                         <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ทั่วไปและพฤติกรรมตัวเล่น</span>
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">การเล่นและตัวเล่น</span>
                           <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">ความเร็ว, สัดส่วนภาพ, ข้ามเวลา และระดับเสียง</span>
                         </div>
                       </div>
@@ -499,18 +496,35 @@ function SettingsContent() {
                   </div>
                 </div>
 
-                {/* พื้นที่จัดเก็บ */}
+                {/* 3. ความเป็นส่วนตัวและคลัง */}
                 <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">พื้นที่จัดเก็บและคลาวด์</span>
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">ความเป็นส่วนตัวและคลัง</span>
                   <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
+                    <div
+                      onClick={() => handleMobileSelectSubPage('system')}
+                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+                          <ShieldCheck className="w-4 h-4" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ความเป็นส่วนตัวและความปลอดภัย</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">เนื้อหา 18+, ล้างประวัติ และแคชระบบ</span>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
+                    </div>
                     <div
                       onClick={() => handleMobileSelectSubPage('onedrive')}
                       className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
                     >
                       <div className="flex items-center gap-3">
-                        <Folder className="w-5 h-5 text-blue-500" />
+                        <div className="w-8 h-8 rounded-full bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
+                          <Folder className="w-4 h-4" />
+                        </div>
                         <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">OneDrive และโฟลเดอร์สื่อ</span>
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">พื้นที่จัดเก็บ OneDrive</span>
                           <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">
                             {videoCount} คลิป · {totalSizeGB} GB
                           </span>
@@ -521,29 +535,9 @@ function SettingsContent() {
                   </div>
                 </div>
 
-                {/* ข้อมูลและความเป็นส่วนตัว */}
+                {/* 4. เกี่ยวกับระบบ */}
                 <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">ข้อมูลและความเป็นส่วนตัว</span>
-                  <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
-                    <div
-                      onClick={() => handleMobileSelectSubPage('system')}
-                      className="flex items-center justify-between p-4 hover:bg-zinc-50 dark:hover:bg-white/5 active:bg-zinc-100 dark:active:bg-white/10 transition cursor-pointer"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Database className="w-5 h-5 text-emerald-500" />
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">จัดการประวัติและแคชของระบบ</span>
-                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">ล้างประวัติการดู และการรีเซ็ตข้อมูล</span>
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* ช่วยเหลือและติดต่อ */}
-                <div className="flex flex-col">
-                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">ช่วยเหลือ</span>
+                  <span className="text-[11px] font-bold text-[#8C857B] dark:text-[#AAAAAA] px-3 py-1.5 uppercase tracking-wider">เกี่ยวกับระบบ</span>
                   <div className="bg-white dark:bg-[#181818] rounded-2xl border border-[#EFECE6] dark:border-white/10 shadow-xs divide-y divide-[#F5F2EB] dark:divide-white/10 overflow-hidden">
                     <div
                       onClick={() => handleMobileSelectSubPage('support')}
@@ -554,8 +548,8 @@ function SettingsContent() {
                           <LifeBuoy className="w-4 h-4" />
                         </div>
                         <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">ช่วยเหลือและติดต่อ</span>
-                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">FAQ, รายงานปัญหา และข้อมูลแอป</span>
+                          <span className="text-xs font-semibold text-[#212529] dark:text-[#F1F1F1]">เกี่ยวกับและช่วยเหลือ</span>
+                          <span className="text-[11px] text-[#8C857B] dark:text-[#888888]">FAQ, Patch Notes และข้อมูลระบบ</span>
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-[#8C857B] dark:text-[#888888]" />
@@ -577,15 +571,16 @@ function SettingsContent() {
                     <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
                   </button>
                   <h2 className="text-base font-bold text-[#212529] dark:text-[#F1F1F1]">
-                    {subPage === 'general' && 'ทั่วไปและธีม'}
-                    {subPage === 'player' && 'ตัวเล่นวิดีโอ'}
-                    {subPage === 'onedrive' && 'OneDrive และโฟลเดอร์'}
-                    {subPage === 'account' && 'โปรไฟล์และ Gravatar'}
-                    {subPage === 'system' && 'จัดการประวัติและแคช'}
-                    {subPage === 'support' && 'ช่วยเหลือและติดต่อ'}
+                    {subPage === 'account' && 'บัญชีและความปลอดภัย'}
+                    {subPage === 'channel' && 'ช่องของฉัน (@handle)'}
+                    {subPage === 'general' && 'การแสดงผลและธีม'}
+                    {subPage === 'player' && 'การเล่นและตัวเล่น'}
+                    {subPage === 'system' && 'ความเป็นส่วนตัวและความปลอดภัย'}
+                    {subPage === 'onedrive' && 'พื้นที่จัดเก็บ OneDrive'}
+                    {subPage === 'support' && 'เกี่ยวกับและช่วยเหลือ'}
                   </h2>
                 </div>
-                {subPage !== 'system' && subPage !== 'general' && subPage !== 'support' && (
+                {(subPage === 'player' || isDirty) && (
                   <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
                 )}
               </div>
