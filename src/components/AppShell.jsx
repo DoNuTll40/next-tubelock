@@ -38,10 +38,20 @@ export default function AppShell({ session, children }) {
 
       {/* Main Body */}
       <div className="flex-1 flex w-full">
-        {/* Desktop Sidebar (automatically hides on /settings and /watch) */}
-        {showDesktopLayout && <Sidebar />}
+        {/* Desktop Sidebar (hidden on mobile via CSS before hydration to prevent SSR desktop flash!) */}
+        {showDesktopLayout && (
+          <div className={!mounted ? 'hidden md:contents' : 'contents'}>
+            <Sidebar />
+          </div>
+        )}
 
-        <main className={`flex-1 w-full min-w-0 transition-all duration-0 ${showMobileLayout && !isExcludedPage ? 'pb-20' : 'pb-0'}`}>
+        <main
+          className={`flex-1 w-full min-w-0 transition-all duration-0 ${
+            !mounted
+              ? (!isExcludedPage ? 'pb-20 md:pb-0' : 'pb-0')
+              : (showMobileLayout && !isExcludedPage ? 'pb-20' : 'pb-0')
+          }`}
+        >
           {children}
         </main>
       </div>
@@ -49,8 +59,12 @@ export default function AppShell({ session, children }) {
       {/* Slide-over Overlay Drawer (YouTube-style drawer for /settings, /watch, or when toggled) */}
       <SidebarDrawer />
 
-      {/* Mobile Bottom Nav */}
-      {showMobileLayout && <BottomNav />}
+      {/* Mobile Bottom Nav (visible on mobile via CSS from frame 0 before hydration!) */}
+      {(!mounted || showMobileLayout) && (
+        <div className={!mounted ? 'md:hidden' : 'contents'}>
+          <BottomNav />
+        </div>
+      )}
     </div>
   );
 

@@ -188,9 +188,9 @@ export default function Navbar({ session }) {
           </Link>
         </div>
 
-        {/* Center: Search Bar (Flex-responsive on md–lg to prevent overlap; true viewport center on xl+) */}
+        {/* Center: Search Bar (hidden on mobile via CSS before hydration to prevent SSR desktop flash!) */}
         {isDesktop && (
-          <div className="flex-1 min-w-0 max-w-[440px] lg:max-w-[520px] mx-auto xl:mx-0 xl:absolute xl:left-1/2 xl:-translate-x-1/2 xl:w-full xl:max-w-[560px] 2xl:max-w-[640px] xl:px-4 flex items-center justify-center z-20 xl:pointer-events-none">
+          <div className={`${!mounted ? 'hidden md:flex' : 'flex'} flex-1 min-w-0 max-w-[440px] lg:max-w-[520px] mx-auto xl:mx-0 xl:absolute xl:left-1/2 xl:-translate-x-1/2 xl:w-full xl:max-w-[560px] 2xl:max-w-[640px] xl:px-4 items-center justify-center z-20 xl:pointer-events-none`}>
             <div ref={searchContainerRef} className="relative flex items-center justify-center w-full xl:pointer-events-auto">
               <div className="relative flex-1 min-w-0">
                 <form onSubmit={handleSearch} className="flex items-center w-full h-9 lg:h-10">
@@ -270,11 +270,11 @@ export default function Navbar({ session }) {
 
         {/* Right: Actions & Gravatar Avatar */}
         <div className="flex items-center gap-1.5 lg:gap-2 ml-auto xl:ml-auto shrink-0 z-10">
-          {/* Mobile Search Icon */}
-          {!isDesktop && (
+          {/* Mobile Search Icon (visible on mobile via CSS before hydration!) */}
+          {(!mounted || !isDesktop) && (
             <button
               type="button"
-              className="p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1]"
+              className={`${!mounted ? 'md:hidden ' : ''}p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1]`}
             >
               <Search className="w-5 h-5" />
             </button>
@@ -284,7 +284,7 @@ export default function Navbar({ session }) {
           {isDesktop && (
             <Link
               href="/upload"
-              className="flex items-center justify-center gap-1.5 h-9 px-2.5 lg:px-3.5 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] transition active:scale-95 shrink-0"
+              className={`${!mounted ? 'hidden md:flex' : 'flex'} items-center justify-center gap-1.5 h-9 px-2.5 lg:px-3.5 rounded-full bg-[#F5F2EB] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2a2a2a] text-xs font-semibold text-[#212529] dark:text-[#F1F1F1] transition active:scale-95 shrink-0`}
               title="อัปโหลดวิดีโอ"
             >
               <Plus className="w-4 h-4 text-[#FF7A00] shrink-0" />
@@ -296,7 +296,7 @@ export default function Navbar({ session }) {
           {isDesktop && (
             <button
               type="button"
-              className="flex p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1] transition shrink-0"
+              className={`${!mounted ? 'hidden md:flex' : 'flex'} p-2 rounded-full hover:bg-[#EFECE6] dark:hover:bg-[#222222] text-[#212529] dark:text-[#F1F1F1] transition shrink-0`}
               title="การแจ้งเตือน"
             >
               <Bell className="w-5 h-5" />
