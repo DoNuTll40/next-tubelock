@@ -93,24 +93,19 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
 
   return (
     <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#0F0F0F] dark:text-[#F1F1F1] pb-24">
-      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
-        {/* Channel Banner */}
-        <div className="relative w-full h-32 sm:h-48 lg:h-56 rounded-2xl sm:rounded-3xl overflow-hidden bg-gradient-to-r from-[#1A1614] via-[#2B1F17] to-[#FF7A00]/40 border border-[#EFECE6] dark:border-white/10">
-          {channel?.bannerUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 lg:px-8 pt-5 sm:pt-7 space-y-6">
+        {/* Channel Banner (only shown when channel has a custom banner, like YouTube) */}
+        {channel?.bannerUrl && (
+          <div className="relative w-full h-32 sm:h-48 lg:h-56 rounded-2xl sm:rounded-3xl overflow-hidden bg-[#1A1614] border border-[#EFECE6] dark:border-white/10">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={channel.bannerUrl}
               alt={`${channel.name} banner`}
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
             />
-          ) : (
-            <div className="w-full h-full relative overflow-hidden">
-              <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-[#FF7A00]/25 blur-3xl" />
-              <div className="absolute left-10 bottom-0 w-72 h-40 rounded-full bg-[#FF9E40]/15 blur-3xl" />
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Channel Header Info */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6 px-1">
@@ -272,7 +267,7 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-y-4 -mx-2 sm:-mx-2.5">
                 {sortedVideos.map((video) => (
                   <VideoCard key={video.id} video={video} />
                 ))}

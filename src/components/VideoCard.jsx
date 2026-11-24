@@ -767,19 +767,19 @@ function VideoCard({
                   {video.author_name || 'DONUŤ'}
                 </span>
               )}
-              <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
+              <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
                 {isMature && (
                   <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
                     18+
                   </span>
                 )}
-                <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px]">
+                <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px] shrink-0">
                   {video.codec ? video.codec.toUpperCase() : 'H264'}
                 </span>
                 <span>•</span>
-                <span className="font-mono">{fileSizeMB} MB</span>
+                <span className="font-mono whitespace-nowrap">{fileSizeMB} MB</span>
                 <span>•</span>
-                <span>{video.source_type === 'hls' ? 'HLS Stream' : 'Direct'}</span>
+                <span className="whitespace-nowrap">{video.source_type === 'hls' ? 'HLS Stream' : 'Direct'}</span>
               </div>
             </div>
           )}
