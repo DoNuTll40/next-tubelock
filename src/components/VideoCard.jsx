@@ -175,9 +175,8 @@ function VideoCard({
         .filter(Boolean)
     : [];
   const hasMultiVersion = versionCount > 1 || versionBadges.length > 1;
-  const multiVersionLabel = versionBadges.length > 0
-    ? (versionCount > 1 && !String(versionBadges[0]).includes('เวอร์ชัน') ? `${versionBadges[0]} · ${versionCount}v` : versionBadges[0])
-    : `${versionCount} เวอร์ชัน`;
+  const resolvedVersionCount = Math.max(versionCount, versionBadges.length);
+  const multiVersionLabel = `${resolvedVersionCount} เวอร์ชัน`;
 
   // Lazy-extract YouTube-style hover tint only when user actually hovers or focuses a card (0 startup Canvas readbacks!)
   const ensureDominantColor = () => {
@@ -852,6 +851,8 @@ function VideoMenu({
   onNotInterested,
   isSaving,
 }) {
+  const triggerRef = useRef(null);
+  const [openUpward, setOpenUpward] = useState(false);
   const isHalf = variant === 'half';
   const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
   const slug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
@@ -888,9 +889,16 @@ function VideoMenu({
     <div className="relative shrink-0">
       {/* ซ่อนปุ่มไว้เป็นค่าเริ่มต้น และแสดงเมื่อนำเมาส์มาวางบน Card (group-hover:opacity-100) */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
+          if (!showMenu && triggerRef.current && typeof window !== 'undefined') {
+            const rect = triggerRef.current.getBoundingClientRect();
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const spaceAbove = rect.top;
+            setOpenUpward(spaceBelow < 310 && spaceAbove > spaceBelow);
+          }
           setShowMenu(!showMenu);
         }}
         aria-expanded={showMenu}
@@ -999,7 +1007,7 @@ function VideoMenu({
             /* 2. เมนู COMPACT / GRID (เมนูกะทัดรัดแบบเดิม)                     */
             /* ------------------------------------------------------------- */
             <div
-              className="absolute right-0 top-full mt-1 z-50 w-48 bg-white text-[#212529] dark:bg-[#1c1c1c] dark:text-[#F1F1F1] rounded-xl border border-[#EFECE6] dark:border-white/10 shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-100 cursor-default select-none"
+              className={`absolute right-0 ${openUpward ? 'bottom-full mb-1.5' : 'top-full mt-1'} z-50 w-48 bg-white text-[#212529] dark:bg-[#1c1c1c] dark:text-[#F1F1F1] rounded-xl border border-[#EFECE6] dark:border-white/10 shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs animate-in fade-in zoom-in-95 duration-100 cursor-default select-none`}
               onClick={(e) => e.stopPropagation()}
             >
               <Link
