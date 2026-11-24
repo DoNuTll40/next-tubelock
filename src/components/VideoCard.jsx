@@ -134,7 +134,11 @@ function VideoCard({
             { ...video, id: safeId },
             { startTime: resumeTime, inPlace: true, replace }
           );
-        } else if (isGlobalMiniplayerActive()) {
+        } else if (
+          isGlobalMiniplayerActive() &&
+          typeof window !== 'undefined' &&
+          window.innerWidth >= 768
+        ) {
           e.preventDefault();
           primeGlobalWatchVideo({ ...video, id: safeId }, { startTime: resumeTime, inMiniplayer: true });
         } else {

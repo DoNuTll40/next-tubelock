@@ -821,9 +821,10 @@ export function GlobalPlayerProvider({ children }) {
             : null;
       if (!nextId) return;
 
-      // YouTube-style: while Miniplayer is open, clicking another video plays it right inside Miniplayer
-      // without expanding back to /watch unless the user explicitly expands!
-      if (inMiniplayer || isMiniplayerRef.current) {
+      // YouTube Desktop: while Miniplayer is open on Desktop (>= 768px), clicking another video swaps inside Miniplayer.
+      // YouTube Mobile (< 768px): tapping another video navigates normally to full /watch/[slug]!
+      const isDesktopMini = typeof window !== 'undefined' && window.innerWidth >= 768;
+      if ((inMiniplayer || isMiniplayerRef.current) && isDesktopMini) {
         handleSelectVideo({ ...newVideo, id: nextId }, startTime, { updateHistory: false });
         return;
       }
@@ -895,12 +896,13 @@ export function GlobalPlayerProvider({ children }) {
     };
   }, [handlePrimeVideo]);
 
-  // Global capture-phase interceptor while Miniplayer is active:
-  // clicking ANY <a href="/watch/..."> link (History, Search Results, Playlists, Videos, etc.)
-  // switches the video directly inside Miniplayer instead of navigating away to full /watch!
+  // Global capture-phase interceptor while Miniplayer is active on DESKTOP (>= 768px):
+  // clicking ANY <a href="/watch/..."> link switches the video directly inside Miniplayer instead of navigating to /watch!
+  // On Mobile (< 768px), tapping another video navigates straight to /watch/[slug] normally (YouTube Mobile behavior).
   useEffect(() => {
     if (!isMiniplayer || typeof document === 'undefined') return;
     const handleMiniWatchLinkClick = (e) => {
+      if (window.innerWidth < 768) return;
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       const link = e.target?.closest?.('a[href]');
       if (!link || link.target === '_blank' || link.closest('#movie_player_mini_dock')) return;
