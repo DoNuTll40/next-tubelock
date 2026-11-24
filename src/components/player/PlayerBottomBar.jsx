@@ -541,6 +541,18 @@ export default function PlayerBottomBar({
               </button>
             )}
 
+            {togglePiP && (
+              <button
+                type="button"
+                onClick={togglePiP}
+                className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+                title="หน้าต่างลอยทับแอปอื่น (PiP)"
+                aria-label="หน้าต่างลอยทับแอปอื่น"
+              >
+                <PictureInPicture2 size={20} />
+              </button>
+            )}
+
             {toggleMiniplayer && (
               <button
                 type="button"

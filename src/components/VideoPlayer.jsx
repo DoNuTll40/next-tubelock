@@ -2436,21 +2436,84 @@ export default function VideoPlayer({
   };
 
   const togglePiP = async () => {
-    if (!video.current) return;
+    const v = video.current;
+    if (!v) return;
     try {
+      // Standard Picture-in-Picture API (Android Chrome/Edge/Samsung PWA & Desktop)
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
         showToast('ออกจากโหมดหน้าต่างลอย (PiP)');
-      } else if (document.pictureInPictureEnabled) {
-        await video.current.requestPictureInPicture();
-        showToast('เล่นแบบหน้าต่างลอย (PiP)');
-      } else {
-        showToast('เบราว์เซอร์ไม่รองรับ PiP');
+        return;
       }
+      if (document.pictureInPictureEnabled && typeof v.requestPictureInPicture === 'function') {
+        await v.requestPictureInPicture();
+        showToast('เล่นแบบหน้าต่างลอย (PiP)');
+        return;
+      }
+      // iOS Safari / iPadOS PWA WebKit Presentation Mode PiP
+      if (
+        typeof v.webkitSetPresentationMode === 'function' &&
+        v.webkitSupportsPresentationMode?.('picture-in-picture')
+      ) {
+        const nextMode = v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture';
+        v.webkitSetPresentationMode(nextMode);
+        showToast(nextMode === 'picture-in-picture' ? 'เล่นแบบหน้าต่างลอย (PiP)' : 'ออกจากโหมดหน้าต่างลอย (PiP)');
+        return;
+      }
+      showToast('เบราว์เซอร์ไม่รองรับ PiP');
     } catch (err) {
       console.warn('PiP error:', err);
     }
   };
+
+  // Mobile-Only PWA Auto Picture-in-Picture when leaving the app to use other apps
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+
+    // Enable Chrome Auto-PiP property on Mobile only
+    try {
+      if ('autoPictureInPicture' in v) {
+        v.autoPictureInPicture = Boolean(isMobileView && isActive);
+      }
+    } catch (_) { }
+
+    if (!isMobileView || !isActive) return;
+
+    // Register MediaSession `enterpictureinpicture` handler (Chrome 120+ / Android PWA Auto-PiP)
+    const ms = typeof navigator !== 'undefined' ? navigator.mediaSession : null;
+    if (ms?.setActionHandler) {
+      try {
+        ms.setActionHandler('enterpictureinpicture', () => {
+          const el = video.current;
+          if (!el || el.paused || el.ended || document.pictureInPictureElement) return;
+          if (document.pictureInPictureEnabled && typeof el.requestPictureInPicture === 'function') {
+            el.requestPictureInPicture().catch(() => { });
+          }
+        });
+      } catch (_) { }
+    }
+
+    // Best-effort auto-enter OS PiP when switching away from Mobile PWA while playing
+    const handleVisibilityAutoPiP = () => {
+      if (!document.hidden) return;
+      const el = video.current;
+      if (!el || el.paused || el.ended || el.readyState < 2 || document.pictureInPictureElement) return;
+      if (document.pictureInPictureEnabled && typeof el.requestPictureInPicture === 'function') {
+        el.requestPictureInPicture().catch(() => { });
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityAutoPiP);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityAutoPiP);
+      if (ms?.setActionHandler) {
+        try {
+          ms.setActionHandler('enterpictureinpicture', null);
+        } catch (_) { }
+      }
+    };
+  }, [isMobileView, isActive]);
 
   // 📱 Manual Screen Orientation Toggle (สั่งหมุน แนวนอน <-> แนวตั้ง ได้เองตามต้องการ)
   const toggleOrientation = useCallback(async () => {

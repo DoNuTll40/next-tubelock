@@ -156,7 +156,17 @@ function VideoCard({
   );
 
   const versionCount = Number(video.version_count || 0);
-  const versionBadges = Array.isArray(video.version_badges) ? video.version_badges.filter(Boolean) : [];
+  const versionBadges = Array.isArray(video.version_badges)
+    ? video.version_badges
+        .map((item) => {
+          if (typeof item === 'string') return item.trim();
+          if (item && typeof item === 'object') {
+            return String(item.badge || item.label || item.version_key || '').trim();
+          }
+          return '';
+        })
+        .filter(Boolean)
+    : [];
   const hasMultiVersion = versionCount > 1 || versionBadges.length > 1;
   const multiVersionLabel = versionBadges.length > 0
     ? (versionCount > 1 && !String(versionBadges[0]).includes('เวอร์ชัน') ? `${versionBadges[0]} · ${versionCount}v` : versionBadges[0])

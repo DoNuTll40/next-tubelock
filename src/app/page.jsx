@@ -146,7 +146,7 @@ export default function FeedPage() {
     if (pullY >= PULL_THRESHOLD && !isRefreshing) {
       setIsRefreshing(true);
       setPullY(0);
-      loadData(true);
+      loadData(false);
     } else {
       setPullY(0);
     }
@@ -214,18 +214,34 @@ export default function FeedPage() {
         onSelectCategory={setActiveCategory}
       />
 
-      {/* Pull down indicator (Mobile) */}
+      {/* Pull-to-Refresh Spinner emerging cleanly from underneath Sticky Header (z-35 < Navbar z-40) */}
       <AnimatePresence>
-        {pullY > 10 && (
-          <div className="fixed top-14 left-0 right-0 z-30 flex justify-center pointer-events-none">
+        {(pullY > 6 || isRefreshing) && (
+          <div className="fixed top-14 left-0 right-0 z-[35] flex justify-center pointer-events-none">
             <motion.div
-              style={{ y: pullY - 10, scale: Math.min(pullY / PULL_THRESHOLD, 1) }}
-              className="w-10 h-10 rounded-full bg-white dark:bg-[#1c1c1c] border border-[#EFECE6] dark:border-white/10 shadow-lg flex items-center justify-center"
+              initial={{ y: -44, opacity: 0, scale: 0.7 }}
+              animate={{
+                y: isRefreshing ? 14 : Math.min(pullY * 0.78, 62) - 24,
+                opacity: isRefreshing ? 1 : Math.min(1, pullY / 36),
+                scale: isRefreshing ? 1 : Math.max(0.75, Math.min(1, pullY / PULL_THRESHOLD)),
+              }}
+              exit={{ y: -44, opacity: 0, scale: 0.7 }}
+              transition={
+                isRefreshing
+                  ? { type: 'spring', stiffness: 360, damping: 28 }
+                  : { duration: 0.06, ease: 'linear' }
+              }
+              className="w-10 h-10 rounded-full bg-white dark:bg-[#212121] border border-[#EFECE6] dark:border-white/15 shadow-[0_6px_20px_rgba(0,0,0,0.45)] flex items-center justify-center"
             >
               <Loader2
-                className={`w-5 h-5 text-[#FF7A00] transition-transform ${pullY >= PULL_THRESHOLD ? 'animate-spin' : ''
-                  }`}
-                style={{ transform: `rotate(${pullY * 4}deg)` }}
+                className={`w-5 h-5 text-[#FF7A00] ${
+                  isRefreshing || pullY >= PULL_THRESHOLD ? 'animate-spin' : ''
+                }`}
+                style={
+                  isRefreshing || pullY >= PULL_THRESHOLD
+                    ? undefined
+                    : { transform: `rotate(${pullY * 4.5}deg)` }
+                }
               />
             </motion.div>
           </div>
