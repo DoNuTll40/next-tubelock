@@ -12,7 +12,7 @@ import {
   Film,
 } from 'lucide-react';
 import { usePosterPreference } from '@/lib/usePosterPreference';
-import { RESTRICTED_POSTER } from '@/lib/videoUtils';
+import { formatThaiRelativeTime } from '@/lib/formatThaiMeta';
 
 export default function StorageSection() {
   const allow18Plus = usePosterPreference(true);
@@ -140,19 +140,10 @@ export default function StorageSection() {
             </div>
           ) : (
             folders.items.map((folder) => {
-              const formattedDate = new Date(folder.lastModified).toLocaleDateString('th-TH', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-              const isRestrictedThumb =
-                folder.imageUrl === RESTRICTED_POSTER ||
-                String(folder.imageUrl || '').includes('restricted-poster');
+              const formattedDate = formatThaiRelativeTime(folder.lastModified) || '-';
               const matchedVidId = String(folder.name || '').match(/^stream_vid_(\d+)/)?.[1];
               const resolvedThumb =
-                isRestrictedThumb && allow18Plus && matchedVidId
+                allow18Plus && matchedVidId
                   ? `/api/videos/${matchedVidId}/poster`
                   : folder.imageUrl;
 
