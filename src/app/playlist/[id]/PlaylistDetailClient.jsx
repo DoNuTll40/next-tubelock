@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, GripVertical, ListVideo, LockKeyhole, Pencil, Play,
+  ArrowDown, ArrowUp, GripVertical, ListVideo, LockKeyhole, MoreVertical, Pencil, Play,
   Share2, Shuffle, Trash2, UserRound,
 } from 'lucide-react';
 import { PlaylistCover, PlaylistVisibility } from '@/components/playlist/PlaylistCard';
@@ -57,9 +57,9 @@ function VideoRowContent({ item }) {
 
   return (
     <>
-      <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-lg bg-[#F4F0E8] dark:bg-[#222222] sm:w-36">
+      <div className="relative aspect-video w-36 shrink-0 overflow-hidden rounded-lg bg-[#F4F0E8] dark:bg-[#222222] sm:w-40">
         {thumbnail ? (
-          <Image src={thumbnail} alt="" fill sizes="(min-width: 640px) 144px, 96px" unoptimized className="object-cover" />
+          <Image src={thumbnail} alt="" fill sizes="(min-width: 640px) 160px, 144px" unoptimized className="object-cover" />
         ) : (
           <ListVideo aria-hidden="true" className="absolute inset-0 m-auto size-5 opacity-35" />
         )}
@@ -327,9 +327,9 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
   }
 
   return (
-    <section className="mx-auto grid w-full max-w-[1380px] gap-5 px-3 py-4 sm:px-6 sm:py-6 lg:h-[calc(100dvh_-_3.5rem)] lg:grid-cols-[minmax(260px,1fr)_minmax(0,2fr)] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)] xl:gap-8">
+    <section className="mx-auto grid w-full max-w-[1380px] gap-3 px-3 py-4 sm:gap-5 sm:px-6 sm:py-6 lg:h-[calc(100dvh_-_3.5rem)] lg:grid-cols-[minmax(260px,1fr)_minmax(0,2fr)] lg:grid-rows-[minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)] xl:gap-8">
       <div
-        className="relative isolate min-w-0 overflow-hidden rounded-2xl bg-transparent p-4 sm:p-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain"
+        className="relative isolate -mx-3 -mt-4 min-w-0 overflow-hidden rounded-none bg-transparent px-4 pt-4 pb-5 sm:mx-0 sm:mt-0 sm:rounded-2xl sm:p-5 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain"
         style={tint ? { '--playlist-cover-color': tint } : undefined}
       >
         <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 overflow-hidden [mask-image:linear-gradient(to_bottom,black_0%,rgba(0,0,0,0.45)_55%,transparent_88%)]">
@@ -344,36 +344,76 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
         </div>
         <PlaylistCover
           playlist={coverInfo}
-          className="rounded-xl"
+          className="rounded-xl shadow-lg"
           onLoad={tintSource ? ({ currentTarget }) => {
             const color = extractDominantColor(currentTarget);
             if (color) setCoverColor({ src: tintSource, rgb: color.rgb });
           } : undefined}
         />
-        <h1 className="mt-4 break-words text-2xl font-semibold leading-tight sm:text-3xl">{playlist.title}</h1>
-        <div className="mt-3 flex min-h-7 flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-          {playlist.owner_name && (
-            <div className="flex min-w-0 items-center gap-2 font-medium">
-              <span className="relative flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#F4F0E8] dark:bg-[#222222]">
-                {playlist.owner_picture
-                  ? <Image src={playlist.owner_picture} alt="" fill sizes="28px" unoptimized className="object-cover" />
-                  : <UserRound aria-hidden="true" className="size-4 opacity-55" />}
-              </span>
-              <span className="truncate">{playlist.owner_name}</span>
+        <h1 className="mt-4 break-words text-2xl font-bold leading-tight sm:text-3xl">{playlist.title}</h1>
+        <div className="mt-2.5 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm">
+              {playlist.owner_name && (
+                <div className="flex min-w-0 items-center gap-2 font-medium">
+                  <span className="relative flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#F4F0E8] dark:bg-[#222222]">
+                    {playlist.owner_picture
+                      ? <Image src={playlist.owner_picture} alt="" fill sizes="24px" unoptimized className="object-cover" />
+                      : <UserRound aria-hidden="true" className="size-3.5 opacity-55" />}
+                  </span>
+                  <span className="truncate">{playlist.owner_name}</span>
+                </div>
+              )}
+              <PlaylistVisibility visibility={playlist.visibility} />
             </div>
-          )}
-          <PlaylistVisibility visibility={playlist.visibility} />
+            <p className="mt-1 text-xs text-black/60 dark:text-white/60 sm:text-sm">
+              วิดีโอ {items.length.toLocaleString('th-TH')} รายการ
+              {items.length > 0 && ` · ${formatTotalDuration(totalDuration)}`}
+            </p>
+          </div>
+
+          {/* Compact YouTube-style circular utility actions beside metadata */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={sharePlaylist}
+              title="แชร์เพลย์ลิสต์"
+              aria-label="แชร์เพลย์ลิสต์"
+              className="inline-flex size-9 items-center justify-center rounded-full bg-black/[0.06] hover:bg-black/[0.12] dark:bg-white/10 dark:hover:bg-white/15 transition cursor-pointer"
+            >
+              <Share2 aria-hidden="true" className="size-4" />
+            </button>
+            {canEdit && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setDialog('edit')}
+                  title="แก้ไขเพลย์ลิสต์"
+                  aria-label="แก้ไขเพลย์ลิสต์"
+                  className="inline-flex size-9 items-center justify-center rounded-full bg-black/[0.06] hover:bg-black/[0.12] dark:bg-white/10 dark:hover:bg-white/15 transition cursor-pointer"
+                >
+                  <Pencil aria-hidden="true" className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  disabled={controlsDisabled}
+                  onClick={() => setDialog('delete')}
+                  title="ลบเพลย์ลิสต์"
+                  aria-label="ลบเพลย์ลิสต์"
+                  className="inline-flex size-9 items-center justify-center rounded-full bg-black/[0.06] text-rose-600 hover:bg-rose-50 disabled:opacity-40 dark:bg-white/10 dark:text-rose-400 dark:hover:bg-rose-500/20 transition cursor-pointer"
+                >
+                  <Trash2 aria-hidden="true" className="size-4" />
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        <p className="mt-2 text-sm text-black/60 dark:text-white/60">
-          วิดีโอ {items.length.toLocaleString('th-TH')} รายการ
-          {items.length > 0 && ` · ${formatTotalDuration(totalDuration)}`}
-        </p>
         {playlist.description && (
-          <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-relaxed text-black/75 dark:text-white/75">
+          <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-black/75 dark:text-white/75">
             {playlist.description}
           </p>
         )}
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="mt-4 flex items-center gap-2.5">
           {firstPlayable ? (
             <Link href={watchUrl(firstPlayable, firstPlayableIndex, routeKey)} prefetch={false} className={primaryAction}>
               <Play aria-hidden="true" className="size-4 fill-current" />
@@ -389,34 +429,11 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
             type="button"
             onClick={playShuffled}
             disabled={!firstPlayable}
-            className={`${secondaryAction} ${disabledAction}`}
+            className={`${secondaryAction} flex-1 ${disabledAction}`}
           >
             <Shuffle aria-hidden="true" className="size-4" />
             สุ่มเล่น
           </button>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" onClick={sharePlaylist} className={secondaryAction}>
-            <Share2 aria-hidden="true" className="size-4" />
-            แชร์
-          </button>
-          {canEdit && (
-            <>
-              <button type="button" onClick={() => setDialog('edit')} className={secondaryAction}>
-                <Pencil aria-hidden="true" className="size-4" />
-                แก้ไข
-              </button>
-              <button
-                type="button"
-                disabled={controlsDisabled}
-                onClick={() => setDialog('delete')}
-                className="inline-flex min-h-10 items-center gap-2 rounded-full px-4 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40 dark:text-rose-400 dark:hover:bg-rose-500/15"
-              >
-                <Trash2 aria-hidden="true" className="size-4" />
-                ลบ
-              </button>
-            </>
-          )}
         </div>
       </div>
 
@@ -432,15 +449,16 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
           </div>
         )}
         {items.length ? (
-          <ol aria-label="วิดีโอในเพลย์ลิสต์" className="space-y-1.5">
+          <ol aria-label="วิดีโอในเพลย์ลิสต์" className="space-y-1">
             {items.map((item, index) => {
               const indicator = dropTarget?.id === item.id;
+              const isMenuOpen = openMenuId === item.id;
               return (
                 <li
                   key={item.id}
                   onDragOver={playlist.can_manage ? (event) => dragOver(event, item.id) : undefined}
                   onDrop={playlist.can_manage ? (event) => dropOn(event, item.id) : undefined}
-                  className="relative flex items-center gap-2 rounded-xl border border-[#EFECE6] bg-white p-2 dark:border-white/10 dark:bg-[#181818] sm:gap-3 sm:p-2.5"
+                  className="relative flex items-center gap-2 rounded-xl px-1 py-1.5 transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06] sm:gap-3 sm:px-2.5 sm:py-2"
                 >
                   {indicator && (
                     <span aria-hidden="true" className={`pointer-events-none absolute inset-x-0 z-10 border-t-2 border-[#FF7A00] ${dropTarget.after ? '-bottom-1' : '-top-1'}`} />
@@ -456,55 +474,120 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
                       <GripVertical aria-hidden="true" className="size-5" />
                     </span>
                   )}
-                  <span aria-hidden="true" className="hidden w-7 shrink-0 text-center text-xs tabular-nums text-black/55 dark:text-white/55 sm:block">
+                  <span aria-hidden="true" className="w-5 shrink-0 text-center text-xs tabular-nums text-black/50 dark:text-white/50 sm:w-7">
                     {index + 1}
                   </span>
                   {isPlayable(item) ? (
                     <Link
                       href={watchUrl(item, index, routeKey)}
                       prefetch={false}
-                      className="flex min-w-0 flex-1 items-center gap-2 rounded-lg focus-visible:outline-[#FF7A00] sm:gap-3"
+                      className="flex min-w-0 flex-1 items-start gap-2.5 rounded-lg focus-visible:outline-[#FF7A00] sm:items-center sm:gap-3"
                     >
                       <VideoRowContent item={item} />
                     </Link>
                   ) : (
-                    <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                    <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:items-center sm:gap-3">
                       <VideoRowContent item={item} />
                     </div>
                   )}
                   {playlist.can_manage && (
-                    <div className="flex shrink-0 items-center">
-                      <button
-                        type="button"
-                        title="เลื่อนขึ้น"
-                        aria-label={`เลื่อน ${item.title} ขึ้น`}
-                        className={rowAction}
-                        disabled={controlsDisabled || index === 0}
-                        onClick={() => moveBy(item.id, -1)}
-                      >
-                        <ArrowUp aria-hidden="true" className="size-4" />
-                      </button>
-                      <button
-                        type="button"
-                        title="เลื่อนลง"
-                        aria-label={`เลื่อน ${item.title} ลง`}
-                        className={rowAction}
-                        disabled={controlsDisabled || index === items.length - 1}
-                        onClick={() => moveBy(item.id, 1)}
-                      >
-                        <ArrowDown aria-hidden="true" className="size-4" />
-                      </button>
-                      <button
-                        type="button"
-                        title="นำออกจากเพลย์ลิสต์"
-                        aria-label={`นำ ${item.title} ออกจากเพลย์ลิสต์`}
-                        className={`${rowAction} text-rose-600 dark:text-rose-400`}
-                        disabled={controlsDisabled}
-                        onClick={() => void removeItem(item)}
-                      >
-                        <Trash2 aria-hidden="true" className="size-4" />
-                      </button>
-                    </div>
+                    <>
+                      {/* Desktop inline reorder & remove buttons */}
+                      <div className="hidden shrink-0 items-center sm:flex">
+                        <button
+                          type="button"
+                          title="เลื่อนขึ้น"
+                          aria-label={`เลื่อน ${item.title} ขึ้น`}
+                          className={rowAction}
+                          disabled={controlsDisabled || index === 0}
+                          onClick={() => moveBy(item.id, -1)}
+                        >
+                          <ArrowUp aria-hidden="true" className="size-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="เลื่อนลง"
+                          aria-label={`เลื่อน ${item.title} ลง`}
+                          className={rowAction}
+                          disabled={controlsDisabled || index === items.length - 1}
+                          onClick={() => moveBy(item.id, 1)}
+                        >
+                          <ArrowDown aria-hidden="true" className="size-4" />
+                        </button>
+                        <button
+                          type="button"
+                          title="นำออกจากเพลย์ลิสต์"
+                          aria-label={`นำ ${item.title} ออกจากเพลย์ลิสต์`}
+                          className={`${rowAction} text-rose-600 dark:text-rose-400`}
+                          disabled={controlsDisabled}
+                          onClick={() => void removeItem(item)}
+                        >
+                          <Trash2 aria-hidden="true" className="size-4" />
+                        </button>
+                      </div>
+
+                      {/* Mobile clean ⋮ menu (YouTube style — keeps title wide & readable!) */}
+                      <div className="relative shrink-0 sm:hidden">
+                        <button
+                          type="button"
+                          aria-label={`ตัวเลือกสำหรับ ${item.title}`}
+                          aria-expanded={isMenuOpen}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenMenuId(isMenuOpen ? null : item.id);
+                          }}
+                          className="inline-flex size-8 items-center justify-center rounded-full text-black/65 hover:bg-black/[0.06] dark:text-white/70 dark:hover:bg-white/10 cursor-pointer"
+                        >
+                          <MoreVertical aria-hidden="true" className="size-4" />
+                        </button>
+                        {isMenuOpen && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-30"
+                              onClick={() => setOpenMenuId(null)}
+                            />
+                            <div className="absolute right-0 top-full z-40 mt-1 w-44 rounded-xl border border-[#EFECE6] bg-white p-1.5 text-xs shadow-2xl dark:border-white/10 dark:bg-[#242424]">
+                              <button
+                                type="button"
+                                disabled={controlsDisabled || index === 0}
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  moveBy(item.id, -1);
+                                }}
+                                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-black/[0.05] disabled:opacity-35 dark:hover:bg-white/10"
+                              >
+                                <ArrowUp className="size-3.5" />
+                                เลื่อนขึ้น
+                              </button>
+                              <button
+                                type="button"
+                                disabled={controlsDisabled || index === items.length - 1}
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  moveBy(item.id, 1);
+                                }}
+                                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-black/[0.05] disabled:opacity-35 dark:hover:bg-white/10"
+                              >
+                                <ArrowDown className="size-3.5" />
+                                เลื่อนลง
+                              </button>
+                              <button
+                                type="button"
+                                disabled={controlsDisabled}
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  void removeItem(item);
+                                }}
+                                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-rose-600 hover:bg-rose-50 disabled:opacity-35 dark:text-rose-400 dark:hover:bg-rose-500/15"
+                              >
+                                <Trash2 className="size-3.5" />
+                                นำออกจากเพลย์ลิสต์
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </>
                   )}
                 </li>
               );
