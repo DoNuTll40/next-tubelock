@@ -140,19 +140,19 @@ export default function PlayerTopBar({
             if (onToggleMiniplayer) onToggleMiniplayer();
             else onBack?.();
           }}
-          className="p-2 -ml-1 rounded-full bg-black/40 active:bg-black/70 text-white backdrop-blur-sm transition-[background-color] duration-100 active:scale-90 cursor-pointer border border-white/15 shadow-sm"
+          className="p-2 -ml-1 rounded-full text-white active:bg-white/15 active:scale-90 transition cursor-pointer drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]"
           title={onToggleMiniplayer ? 'ย่อเป็น Miniplayer' : 'ย้อนกลับ'}
           aria-label={onToggleMiniplayer ? 'ย่อเป็น Miniplayer' : 'ย้อนกลับ'}
         >
-          {onToggleMiniplayer ? <ChevronDown className="w-5 h-5" /> : <ArrowLeft className="w-5 h-5" />}
+          {onToggleMiniplayer ? <ChevronDown className="w-6 h-6" /> : <ArrowLeft className="w-5 h-5" />}
         </button>
       ) : (
         <div className="w-8" />
       )}
 
-      {/* Top-Right: Shown ONLY on Mobile */}
+      {/* Top-Right: Shown ONLY on Mobile — Clean YouTube-style frameless icons (ZERO backdrop-blur = 0 frame drops!) */}
       {isMobileView ? (
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 text-white">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0 text-white">
           {/* Autoplay switch */}
           <button
             type="button"
@@ -160,9 +160,10 @@ export default function PlayerTopBar({
               showToast?.('เล่นวิดีโอถัดไปอัตโนมัติ (Coming soon)');
               resetControlsTimer?.();
             }}
-            className="relative inline-flex h-6 w-10.5 items-center rounded-full transition-colors cursor-pointer bg-black/25 hover:bg-black/70 border border-white/15 backdrop-blur-md mr-0.5"
+            className="relative inline-flex h-5.5 w-10 items-center rounded-full transition-colors cursor-pointer bg-white/25 mr-1"
+            aria-label="เล่นอัตโนมัติ"
           >
-            <span className="inline-flex items-center justify-center h-4 w-4 transform rounded-full transition-transform translate-x-1 bg-white/90 shadow-xs">
+            <span className="inline-flex items-center justify-center h-4 w-4 transform rounded-full transition-transform translate-x-1 bg-white shadow-xs">
               <Play className="w-2 h-2 fill-current text-zinc-900 ml-0.5" />
             </span>
           </button>
@@ -174,9 +175,10 @@ export default function PlayerTopBar({
               showToast?.('เชื่อมต่ออุปกรณ์ Cast / TV');
               resetControlsTimer?.();
             }}
-            className="p-2 rounded-xl bg-black/40 hover:bg-white/15 border border-white/15 backdrop-blur-sm text-zinc-300 hover:text-white active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs"
+            className="p-2 rounded-full text-white/95 active:bg-white/15 active:scale-90 transition cursor-pointer drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]"
+            aria-label="Cast"
           >
-            <Cast className="w-4.5 h-4.5" />
+            <Cast className="w-5 h-5" />
           </button>
 
           {/* CC */}
@@ -193,15 +195,12 @@ export default function PlayerTopBar({
               showToast?.(next ? 'เปิดคำบรรยาย: ไทย (สร้างอัตโนมัติ)' : 'ปิดคำบรรยาย');
               resetControlsTimer?.();
             }}
-            className={`relative p-2 rounded-xl border backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer shadow-xs ${
-              isCcActive && hasSubtitles
-                ? 'text-white bg-white/25 border-white/40'
-                : 'bg-black/40 hover:bg-white/15 border-white/15 text-zinc-200 hover:text-white'
-            }`}
+            className="relative p-2 rounded-full text-white/95 active:bg-white/15 active:scale-90 transition cursor-pointer drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]"
+            aria-label="คำบรรยาย (CC)"
           >
-            <CcSubtitleIcon active={Boolean(isCcActive && hasSubtitles)} className="w-4.5 h-4.5" />
+            <CcSubtitleIcon active={Boolean(isCcActive && hasSubtitles)} className="w-5 h-5" />
             {isCcActive && hasSubtitles && (
-              <span className="absolute bottom-1 left-2.5 right-2.5 h-0.5 bg-[#FF7A00] rounded-full shadow-xs" />
+              <span className="absolute bottom-1 left-2.5 right-2.5 h-0.5 bg-[#FF7A00] rounded-full" />
             )}
           </button>
 
@@ -216,11 +215,11 @@ export default function PlayerTopBar({
               setActiveMenuTab?.('main');
               resetControlsTimer?.();
             }}
-            className="p-2 rounded-xl bg-black/40 hover:bg-white/15 border border-white/15 backdrop-blur-sm active:scale-90 transition-[background-color] duration-100 cursor-pointer text-zinc-300 hover:text-white relative shadow-xs"
+            className="relative p-2 rounded-full text-white/95 active:bg-white/15 active:scale-90 transition cursor-pointer drop-shadow-[0_1px_4px_rgba(0,0,0,0.85)]"
           >
-            <Settings className="w-4.5 h-4.5" />
+            <Settings className="w-5 h-5" />
             {gearBadge && (
-              <span className="absolute -top-1 -right-1 bg-red-600 text-white font-extrabold text-[8px] leading-tight px-1.5 py-0.5 rounded shadow pointer-events-none tracking-tight border border-white/30">
+              <span className="absolute top-0.5 right-0.5 bg-red-600 text-white font-extrabold text-[8px] leading-tight px-1 py-0.2 rounded pointer-events-none tracking-tight">
                 {gearBadge}
               </span>
             )}

@@ -47,6 +47,7 @@ export default function VideoPlayer({
   isMiniplayer = false,
   onToggleMiniplayer = null,
   onCloseMiniplayer = null,
+  onRefreshStream = null,
   togglePlayRef = null,
   src,
   poster,
@@ -1443,7 +1444,18 @@ export default function VideoPlayer({
               switch (data.type) {
                 case Hls.ErrorTypes.NETWORK_ERROR:
                   hlsRetryCountRef.current += 1;
-                  if (hlsRetryCountRef.current > 4) {
+                  if (hlsRetryCountRef.current >= 2 && onRefreshStream) {
+                    const resumeAt = v?.currentTime || 0;
+                    hlsRetryCountRef.current = 0;
+                    setIsBuffering(true);
+                    Promise.resolve(onRefreshStream(resumeAt)).then((refreshed) => {
+                      if (!refreshed) {
+                        setHlsError(`เชื่อมต่อสตรีมไม่สำเร็จ: ${data.details}`);
+                        setIsBuffering(false);
+                        try { hls.destroy(); } catch (_) { }
+                      }
+                    });
+                  } else if (hlsRetryCountRef.current > 4) {
                     setHlsError(`เชื่อมต่อสตรีมไม่สำเร็จ: ${data.details}`);
                     setIsBuffering(false);
                     hls.destroy();

@@ -503,13 +503,13 @@ export default function PlayerBottomBar({
         </div>
       ) : (
         /* ============================================================ */
-        /* MOBILE PORTRAIT BOTTOM BAR                                   */
+        /* MOBILE PORTRAIT BOTTOM BAR (Clean YouTube-style, zero blur!) */
         /* ============================================================ */
         <div className="flex items-center justify-between text-white text-xs pt-1">
           <div className="flex items-center gap-1.5">
             <span
               ref={timeDisplayRef}
-              className="px-2.5 py-1 rounded-full bg-black/25 border border-white/15 backdrop-blur-md text-[11.5px] sm:text-xs font-mono font-semibold text-white/95 shadow-sm select-none"
+              className="px-2 py-0.5 rounded-md bg-black/45 text-[11.5px] font-mono font-medium text-white/95 select-none"
             >
               0:00 / 0:00
             </span>
@@ -519,62 +519,37 @@ export default function PlayerBottomBar({
               onClick={toggleMute}
               aria-label={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
               title={isMuted || volume === 0 ? 'เปิดเสียง' : 'ปิดเสียง'}
-              className={`p-1.5 rounded-full border backdrop-blur-md transition active:scale-90 cursor-pointer shadow-xs shrink-0 flex items-center justify-center ${
+              className={`p-1.5 rounded-full transition active:scale-90 cursor-pointer shrink-0 flex items-center justify-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)] ${
                 isMuted || volume === 0
-                  ? 'bg-[#FF7A00]/90 border-[#FF7A00] text-white'
-                  : 'bg-black/25 hover:bg-white/15 border-white/15 text-white/95'
+                  ? 'bg-[#FF7A00] text-white'
+                  : 'text-white/95 active:bg-white/15'
               }`}
             >
-              {isMuted || volume === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              {isMuted || volume === 0 ? <VolumeX size={17} /> : <Volume2 size={17} />}
             </button>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {toggleOrientation && (
-              <button
-                type="button"
-                onClick={toggleOrientation}
-                className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
-                title="หมุนหน้าจอ"
-              >
-                <RotateCw size={20} />
-              </button>
-            )}
-
+          <div className="flex items-center gap-1">
             {togglePiP && (
               <button
                 type="button"
                 onClick={togglePiP}
-                className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+                className="p-1.5 rounded-full text-white/95 active:bg-white/15 transition active:scale-90 cursor-pointer drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]"
                 title="หน้าต่างลอยทับแอปอื่น (PiP)"
                 aria-label="หน้าต่างลอยทับแอปอื่น"
               >
-                <PictureInPicture2 size={20} />
-              </button>
-            )}
-
-            {toggleMiniplayer && (
-              <button
-                type="button"
-                onClick={toggleMiniplayer}
-                className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
-                title="เครื่องเล่นขนาดเล็ก (Miniplayer)"
-                aria-label="เครื่องเล่นขนาดเล็ก"
-              >
-                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="4" width="20" height="16" rx="2.5" />
-                  <rect x="12" y="12" width="7.5" height="5.5" rx="1" fill="currentColor" stroke="none" />
-                </svg>
+                <PictureInPicture2 size={19} />
               </button>
             )}
 
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="p-1.5 rounded-xl bg-black/25 hover:bg-white/15 border border-white/15 backdrop-blur-md text-white transition active:scale-90 cursor-pointer shadow-xs"
+              className="p-1.5 rounded-full text-white/95 active:bg-white/15 transition active:scale-90 cursor-pointer drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]"
               title="เต็มจอ"
+              aria-label="เต็มจอ"
             >
-              <Maximize size={20} />
+              <Maximize size={19} />
             </button>
           </div>
         </div>

@@ -229,6 +229,8 @@ export function GlobalPlayerProvider({ children }) {
   const initialVersionKeyRef = useRef(null);
   const activeBlobUrlsRef = useRef([]);
   const partialSegmentMapRef = useRef({});
+  const streamRefreshTimestampsRef = useRef([]);
+  const streamRefreshInFlightRef = useRef(false);
   const loadedDetailIdRef = useRef(null);
   const primedInfoRef = useRef(null);
   const lastHydratedInitialVideoRef = useRef(null);
@@ -1560,6 +1562,104 @@ export function GlobalPlayerProvider({ children }) {
     return val;
   }, []);
 
+  // Seamless OneDrive Signed-URL Auto-Recovery for 2–3 hour videos (replaces expired tokens & resumes at exact second!)
+  const refreshActiveStream = useCallback(async (resumeSec = 0) => {
+    const activeId = selectionIdRef.current;
+    if (!activeId || activeId === 'undefined' || streamRefreshInFlightRef.current) return false;
+
+    // Rate-limit: max 3 auto-refreshes per 5 minutes (prevents infinite loops if user Wi-Fi is truly offline)
+    const now = Date.now();
+    streamRefreshTimestampsRef.current = streamRefreshTimestampsRef.current.filter((t) => now - t < 5 * 60_000);
+    if (streamRefreshTimestampsRef.current.length >= 3) {
+      return false;
+    }
+    streamRefreshTimestampsRef.current.push(now);
+    streamRefreshInFlightRef.current = true;
+
+    try {
+      const version = activeVersionKeyRef.current || null;
+      const freshSource = await fetchVideoSourceClient(activeId, {
+        forceFresh: true,
+        showAdultPreviews: showAdultPoster,
+        version,
+      });
+      if (String(selectionIdRef.current) !== String(activeId)) return false;
+
+      const resolved = await resolveClientPlaybackSource(freshSource);
+      if (String(selectionIdRef.current) !== String(activeId)) {
+        for (const u of resolved.blobUrls ?? []) {
+          try { URL.revokeObjectURL(u); } catch (_) { }
+        }
+        return false;
+      }
+
+      const prevBlobUrls = activeBlobUrlsRef.current;
+      activeBlobUrlsRef.current = resolved.blobUrls ?? [];
+      partialSegmentMapRef.current = resolved.segmentUrlMap ? { ...resolved.segmentUrlMap } : {};
+
+      const resumeTime = Number.isFinite(resumeSec) && resumeSec > 0
+        ? Math.floor(resumeSec)
+        : Math.floor(videoRef.current?.currentTime || 0);
+
+      streamUrlRef.current = resolved.url;
+      setError(null);
+      setSelection((prev) => ({ ...prev, id: activeId, startTime: resumeTime }));
+      setStreamUrl(resolved.url);
+
+      setTimeout(() => {
+        for (const u of prevBlobUrls) {
+          try { URL.revokeObjectURL(u); } catch (_) { }
+        }
+      }, 1500);
+      return true;
+    } catch (err) {
+      console.warn('[GlobalPlayer] Auto stream token refresh failed:', err);
+      return false;
+    } finally {
+      streamRefreshInFlightRef.current = false;
+    }
+  }, [showAdultPoster]);
+
+  // Proactive 22-minute background OneDrive segment token refresh so 2–3h videos NEVER expire mid-stream
+  useEffect(() => {
+    if (!id || id === 'undefined' || (!isDockedInWatch && !isMiniplayer)) return;
+    const timer = setInterval(() => {
+      const activeId = selectionIdRef.current;
+      if (!activeId || String(activeId) !== String(id)) return;
+      fetchVideoSourceClient(activeId, {
+        forceFresh: true,
+        preferFull: true,
+        lowPriority: true,
+        showAdultPreviews: showAdultPoster,
+        version: activeVersionKeyRef.current || null,
+      })
+        .then((fullSource) => {
+          if (String(selectionIdRef.current) !== String(activeId) || !Array.isArray(fullSource?.items)) return;
+          const map = partialSegmentMapRef.current || {};
+          for (const item of fullSource.items) {
+            const lowerName = item?.name ? item.name.toLowerCase() : '';
+            if (
+              item?.name &&
+              item.downloadUrl &&
+              (lowerName.endsWith('.ts') || lowerName.endsWith('.m4s') || lowerName.endsWith('.mp4'))
+            ) {
+              const cleanName = item.name.replace(/^\.?\//, '');
+              const baseName = cleanName.includes('/')
+                ? cleanName.slice(cleanName.lastIndexOf('/') + 1)
+                : cleanName;
+              map[item.name] = item.downloadUrl;
+              map[cleanName] = item.downloadUrl;
+              map[baseName] = item.downloadUrl;
+              map[baseName.toLowerCase()] = item.downloadUrl;
+            }
+          }
+          partialSegmentMapRef.current = map;
+        })
+        .catch(() => { });
+    }, 22 * 60_000);
+    return () => clearInterval(timer);
+  }, [id, isDockedInWatch, isMiniplayer, showAdultPoster]);
+
   const handleTogglePlayFromMini = useCallback(() => {
     if (togglePlayRef.current) {
       togglePlayRef.current();
@@ -1618,6 +1718,7 @@ export function GlobalPlayerProvider({ children }) {
                 isMiniplayer={isMiniplayer}
                 onToggleMiniplayer={isMiniplayer ? expandMiniplayer : enterMiniplayer}
                 onCloseMiniplayer={closeMiniplayer}
+                onRefreshStream={refreshActiveStream}
                 togglePlayRef={togglePlayRef}
                 src={streamUrl}
                 partialSegmentMapRef={partialSegmentMapRef}

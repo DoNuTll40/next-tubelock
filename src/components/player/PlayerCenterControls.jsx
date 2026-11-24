@@ -121,8 +121,8 @@ export default function PlayerCenterControls({
             ) : !isEnded ? (
               <>
                 {isMobileView ? (
-                  /* Mobile Trio — CSS fade-in, active:scale CSS (ไม่ใช้ whileTap Framer บน mobile) */
-                  <div className="flex items-center gap-6 sm:gap-14 [&_button]:pointer-events-auto select-none [animation:fadein_0.15s_ease-out]">
+                  /* Clean YouTube Mobile Trio — frameless & zero heavy blur/border for 0 frame drops */
+                  <div className="flex items-center gap-8 sm:gap-14 [&_button]:pointer-events-auto select-none [animation:fadein_0.12s_ease-out]">
                     {/* Skip -10s */}
                     <button
                       type="button"
@@ -132,10 +132,10 @@ export default function PlayerCenterControls({
                         showToast?.(`-${seekStep} วินาที`);
                         resetControlsTimer?.();
                       }}
-                      className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/50 active:bg-black/70 active:scale-90 border border-white/15 text-white flex flex-col items-center justify-center transition-[transform,background-color] duration-100 shadow-2xl cursor-pointer"
+                      className="w-12 h-12 rounded-full bg-black/30 active:bg-white/20 active:scale-90 text-white flex flex-col items-center justify-center transition-transform duration-100 cursor-pointer"
                     >
                       <RotateCcw className="w-5.5 h-5.5" />
-                      <span className="text-[9px] font-mono font-black leading-none mt-0.5 text-zinc-300">10s</span>
+                      <span className="text-[9px] font-mono font-bold leading-none mt-0.5 text-white/85">10s</span>
                     </button>
 
                     {/* Center Play/Pause */}
@@ -143,11 +143,11 @@ export default function PlayerCenterControls({
                       type="button"
                       aria-label={isPlaying ? 'หยุดชั่วคราว' : 'เล่น'}
                       onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-                      className="w-16 h-16 sm:w-18 sm:h-18 rounded-full bg-black/50 active:bg-[#FF7A00] active:scale-90 border border-white/20 text-white flex items-center justify-center transition-[transform,background-color] duration-100 shadow-[0_8px_32px_rgba(0,0,0,0.7)] cursor-pointer"
+                      className="w-15 h-15 rounded-full bg-black/35 active:bg-white/20 active:scale-90 text-white flex items-center justify-center transition-transform duration-100 cursor-pointer"
                     >
                       {isPlaying
-                        ? <Pause className="w-7 h-7 sm:w-8 sm:h-8 fill-white" />
-                        : <Play className="w-7 h-7 sm:w-8 sm:h-8 fill-white ml-0.5" />}
+                        ? <Pause className="w-8 h-8 fill-white" />
+                        : <Play className="w-8 h-8 fill-white ml-0.5" />}
                     </button>
 
                     {/* Skip +10s */}
@@ -159,10 +159,10 @@ export default function PlayerCenterControls({
                         showToast?.(`+${seekStep} วินาที`);
                         resetControlsTimer?.();
                       }}
-                      className="w-13 h-13 sm:w-14 sm:h-14 rounded-full bg-black/50 active:bg-black/70 active:scale-90 border border-white/15 text-white flex flex-col items-center justify-center transition-[transform,background-color] duration-100 shadow-2xl cursor-pointer"
+                      className="w-12 h-12 rounded-full bg-black/30 active:bg-white/20 active:scale-90 text-white flex flex-col items-center justify-center transition-transform duration-100 cursor-pointer"
                     >
                       <RotateCw className="w-5.5 h-5.5" />
-                      <span className="text-[9px] font-mono font-black leading-none mt-0.5 text-zinc-300">10s</span>
+                      <span className="text-[9px] font-mono font-bold leading-none mt-0.5 text-white/85">10s</span>
                     </button>
                   </div>
                 ) : (
