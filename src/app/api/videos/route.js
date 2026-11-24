@@ -285,7 +285,7 @@ export async function GET(request) {
             SELECT pi.video_id
             FROM playlist_items pi
             JOIN playlists p ON p.id = pi.playlist_id
-            WHERE p.user_id = ${userId} AND p.system_key = 'LL';
+            WHERE p.user_id = ${userId} AND p.kind = 'liked';
           `.catch(() => []),
           sql`SELECT video_id FROM user_video_feedback WHERE user_id = ${userId};`.catch(() => []),
         ]);

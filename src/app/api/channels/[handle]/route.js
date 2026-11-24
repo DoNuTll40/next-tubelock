@@ -72,20 +72,23 @@ export async function GET(request, context) {
         SELECT
           p.id, p.title, p.description, p.visibility, p.created_at, p.updated_at,
           COUNT(pi.video_id)::int AS video_count,
-          (
-            SELECT v2.thumbnail_url
-            FROM playlist_items pi2
-            JOIN videos v2 ON v2.id = pi2.video_id
-            WHERE pi2.playlist_id = p.id
-              AND COALESCE(v2.visibility, 'public') = 'public'
-            ORDER BY pi2.position ASC, pi2.added_at ASC
-            LIMIT 1
+          COALESCE(
+            NULLIF(p.custom_thumbnail_url, ''),
+            (
+              SELECT v2.thumbnail_url
+              FROM playlist_items pi2
+              JOIN videos v2 ON v2.id = pi2.video_id
+              WHERE pi2.playlist_id = p.id
+                AND (${isOwner} OR COALESCE(v2.visibility, 'public') = 'public')
+              ORDER BY pi2.position ASC, pi2.added_at ASC
+              LIMIT 1
+            )
           ) AS cover_thumbnail
         FROM playlists p
         LEFT JOIN playlist_items pi ON pi.playlist_id = p.id
         WHERE p.user_id = ${channel.id}
-          AND p.system_key IS NULL
-          AND p.visibility = 'public'
+          AND p.kind = 'normal'
+          AND (${isOwner} OR p.visibility = 'public')
         GROUP BY p.id
         ORDER BY p.updated_at DESC
         LIMIT 40;
@@ -134,6 +137,7 @@ export async function GET(request, context) {
         id: p.id,
         title: p.title,
         description: p.description || '',
+        visibility: p.visibility || 'private',
         videoCount: Number(p.video_count || 0),
         coverThumbnail: p.cover_thumbnail || '',
         updatedAt: p.updated_at ? new Date(p.updated_at).toISOString() : null,

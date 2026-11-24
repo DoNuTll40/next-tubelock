@@ -312,6 +312,11 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
                         <Play className="w-3 h-3 fill-current" />
                         <span>{pl.videoCount} วิดีโอ</span>
                       </div>
+                      {pl.visibility && pl.visibility !== 'public' && (
+                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/75 text-white/90 text-[10px] font-semibold border border-white/15">
+                          {pl.visibility === 'private' ? 'ส่วนตัว' : 'ไม่แสดงในรายการ'}
+                        </div>
+                      )}
                     </div>
                     <div className="px-0.5">
                       <h3 className="text-sm font-bold line-clamp-1 group-hover:text-[#FF7A00] transition">
