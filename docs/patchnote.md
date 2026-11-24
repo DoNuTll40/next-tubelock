@@ -2,12 +2,44 @@
 title: บันทึกการอัปเดต (Patch Notes)
 group: ข้อมูลระบบและการอัปเดต
 order: 4
-updated: 23 พฤศจิกายน 2026
+updated: 24 พฤศจิกายน 2026
 ---
 
 # บันทึกการอัปเดตระบบ (Patch Notes & Changelog)
 
 > **สาระสำคัญ:** รายละเอียดการพัฒนา การปรับปรุงความเสถียร และการแก้ไขข้อผิดพลาดของระบบ TubeLock อย่างเป็นทางการ
+
+---
+
+## เวอร์ชัน 1.2.8 Patch v2 (Build 1.2.8.20261124 — 24 พฤศจิกายน 2026) — Floating Miniplayer, YouTube-Clean Mobile Player, Video Visibility, `/hashtag/[tag]`, `/@handle` Channels, Recommendation Engine v2 & Per-Day Watch History
+
+### 1. เครื่องเล่นมินิเพลเยอร์ลอย (Floating Miniplayer) & ปรับโฉม Mobile Player สไตล์ YouTube
+- **Floating Miniplayer แบบ YouTube (`GlobalPlayerContext.jsx`, `VideoPlayer.jsx`, `AppShell.jsx`):**
+  - **Desktop:** ย่อคลิปลงมุมจอได้ ลากสลับได้ทั้ง 4 มุม, ย่อ-ขยายขนาดลื่น 60fps ตามสัดส่วนวิดีโอจริง, และกดเปลี่ยนคลิปอื่นเล่นต่อในจอเล็กได้ทันที
+  - **Mobile & PWA:** เพิ่มโหมด PiP ลอยพร้อมแถบควบคุมด้านล่าง, กดดูคลิปอื่นจากมินิเพลเยอร์จะเด้งเข้าหน้า `/watch` ปกติ, คืนตำแหน่งสโครลหน้าแรกทันที (`0ms`) ด้วย feed cache, ปิด native pull-to-refresh ซ้ำซ้อน, และรองรับ OS Picture-in-Picture บนมือถือ
+- **Mobile Player สไตล์ YouTube-Clean (`VideoPlayer.jsx`, `PlayerSettingsModal.jsx`):**
+  - ถอด `backdrop-blur` ที่ทำให้เฟรมตกออก, ปรับแถบกรอชิดขอบล่างแบบ edge-to-edge พร้อมปุ่มกรอ `z-50` ไม่โดนตัดขอบ, แสดงภาพพรีวิวตอนลากกรอเต็มเฟรมวิดีโอบนมือถือ, ย้ายปุ่มปิดเสียง/PiP เข้าเมนูตั้งค่า, ตัดการแตะสองครั้งตรงกลางเพื่อเต็มจอออก, และแก้หน้าต่างตั้งค่า (Bottom Sheet) กระตุก/ดีดขึ้นด้านบน
+- **แก้ปัญหา HLS หลุดหลังดูครบ ~30 นาที (`GlobalPlayerContext.jsx`, `VideoPlayer.jsx`):**
+  - เพิ่มระบบรีเฟรชโทเค็น OneDrive อัตโนมัติเบื้องหลังทุก 22 นาที และ auto-recovery เมื่อเกิด `fragLoadError` โดยไม่ต้องรีเฟรชหน้า
+
+### 2. ระบบสถานะการแสดงผลวิดีโอ (`public` / `unlisted` / `private`)
+- **ครบทุกจุดตั้งแต่ Upload → Studio → Watch (`videoVisibility.js`, `StepPublish.jsx`, `StudioDetailsTab.jsx`, `videos/page.jsx`, `watch/[id]/page.jsx`):**
+  - เพิ่มคอลัมน์ `visibility` (ค่าเริ่มต้น `'public'` สำหรับคลิปเดิมทั้งหมด)
+  - หน้าแรก/ค้นหา/คลิปแนะนำกรองแสดงเฉพาะ `public`, วิดีโอ `unlisted` เข้าดูได้เฉพาะผู้มีลิงก์ (พร้อม `robots: noindex`), และวิดีโอ `private` ล็อกทั้งหน้า `/watch/[id]` และ `/api/videos/[id]/source` ให้ดูได้เฉพาะเจ้าของและผู้ดูแลระบบ
+
+### 3. หน้าแฮชแท็ก (`/hashtag/[tag]`) & หน้าช่อง (`/@handle`) พร้อมระบบติดตามจริง
+- **หน้าแฮชแท็ก (`/hashtag/[tag]`):** แสดงจำนวนวิดีโอและจำนวนช่อง, แท็บ `ทั้งหมด` | `Shorts`, และทำให้ `#tag` ทั้งในช่องแท็กและคำอธิบายคลิปบนหน้า Watch กดข้ามไปดูรวมคลิปได้ทันที (`DescriptionBox.jsx`)
+- **หน้าช่อง `/@handle` + ระบบตั้งชื่อเช็คซ้ำเรียลไทม์ (`next.config.mjs`, `ChannelClient.jsx`, `ChannelHandleCard.jsx`, `api/user/handle`, `api/channels/[handle]`):**
+  - รองรับ URL รูปแบบ `/@handle` (ผ่าน Next.js rewrite), มีหน้าช่องพร้อมแบนเนอร์/อวาตาร์/Bio, แท็บ `วิดีโอ [ล่าสุด/ยอดนิยม]` | `เพลย์ลิสต์` (ใช้ `PlaylistCard` ตัวเดียวกัน) | `เกี่ยวกับ`, ปุ่ม **ติดตาม** ที่บันทึกลงตาราง `subscriptions` จริงทั้งบนหน้าช่องและหน้า Watch, และระบบตั้งชื่อ `@handle` ใน **การตั้งค่า → บัญชีและโปรไฟล์** ที่ตรวจชื่อซ้ำแบบ case-insensitive ทันทีขณะพิมพ์
+
+### 4. YouTube-Grade Recommendation Engine v2 & ประวัติการรับชมแยกตามวัน
+- **Recommendation Engine v2 (`recommendationEngine.js`, `api/videos/route.js`, `api/videos/[id]/feedback`):**
+  - ยกระดับการจัดอันดับฟีดหน้าแรกและคลิปแนะนำตาม 4 เสาหลักของ YouTube: **Personalization** (คำนวณสัดส่วนการดูจบ + recency decay + คลิปที่กดถูกใจ + ช่องที่ติดตาม), **Satisfaction & Fatigue** (ดันคลิปที่ดูค้าง 5–80% และลดการแสดงซ้ำคลิปที่เพิ่งดูจบ), **Diversity & 80/20 Explore** (กระจายช่องไม่ให้ติดกันเกิน 2 คลิป + แทรกคลิปใหม่ ~20%), และ **Safety Gate** (กรองเฉพาะ `public` และเคารพสิทธิ์ 18+)
+  - เพิ่มปุ่ม **"ไม่สนใจ"** พร้อมปุ่ม **"เลิกทำ"** ในเมนู 3 จุดของ `VideoCard`
+- **ประวัติการรับชมแยกตามวัน (`watch_history_log`, `api/history/route.js`, `HistoryClient.jsx`):**
+  - เพิ่มตาราง `watch_history_log` แยกบันทึกตามวัน (เวลาไทย `Asia/Bangkok`) ทำให้เมื่อกลับมาดูคลิปเดิมในวันใหม่ **ประวัติของเมื่อวานจะไม่หายไป** และสามารถลบเฉพาะรายการของวันนั้นได้
+- **ปรับโฉม `VideoCard` & เชื่อมภาพปก 18+ ครบทุกหน้า (`VideoCard.jsx`, `formatThaiMeta.js`, `PlaylistCard.jsx`, `WatchPlaylistPanel.jsx`, `PlaylistDetailClient.jsx`, `HistoryClient.jsx`):**
+  - แสดงยอดดูย่อภาษาไทยและเวลาที่ผ่านมาด้วย `moment.js` สไตล์ YouTube, เปลี่ยนป้ายหลายเวอร์ชันเป็น `มี X แบบให้เลือก`, แก้ความสูงการ์ดยืดตามกัน (`self-start` / `items-start`), ให้เมนู 3 จุดพลิกขึ้นอัตโนมัติไม่หลุดขอบจอล่าง, และเชื่อม `usePosterPreference` ให้การเปิดภาพปก 18+ ทำงานตรงกันทั้งหน้าแรก, ช่อง, เพลย์ลิสต์, แผงเพลย์ลิสต์หน้า Watch และหน้าประวัติการรับชม
 
 ---
 
