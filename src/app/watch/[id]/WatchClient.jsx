@@ -116,7 +116,9 @@ export default function WatchClient({
   const videoRatio = isDockedInWatch ? globalVideoRatio : initialRatio;
 
   const videoId = video?.id;
-  const [isSubscribed, setIsSubscribed] = useState(false);
+  const [isSubscribed, setIsSubscribed] = useState(Boolean(initialVideo?.is_subscribed));
+  const [subscriberCount, setSubscriberCount] = useState(Number(initialVideo?.subscribers_count || 0));
+  const [isTogglingSub, setIsTogglingSub] = useState(false);
   const [activeFilter, setActiveFilter] = useState('all');
   const [avatarError, setAvatarError] = useState(false);
   const [prevVideoId, setPrevVideoId] = useState(initialVideo?.id ?? null);
@@ -124,7 +126,52 @@ export default function WatchClient({
   if ((video?.id ?? null) !== prevVideoId) {
     setPrevVideoId(video?.id ?? null);
     setAvatarError(false);
+    setIsSubscribed(Boolean(video?.is_subscribed));
+    setSubscriberCount(Number(video?.subscribers_count || 0));
   }
+
+  const isChannelOwner =
+    session?.id != null &&
+    video?.user_id != null &&
+    Number(session.id) === Number(video.user_id);
+
+  const channelHref = video?.author_handle
+    ? `/@${encodeURIComponent(video.author_handle)}`
+    : null;
+
+  const handleToggleSubscribe = async () => {
+    if (!session?.id) {
+      const { pathname: p, search: s } = window.location;
+      router.push(`/login?from=${encodeURIComponent(p + s)}`);
+      return;
+    }
+    const target = video?.author_handle || (video?.user_id != null ? String(video.user_id) : '');
+    if (!target || isChannelOwner || isTogglingSub) return;
+
+    const prevSub = isSubscribed;
+    const prevCount = subscriberCount;
+    setIsSubscribed(!prevSub);
+    setSubscriberCount(Math.max(0, prevCount + (prevSub ? -1 : 1)));
+    setIsTogglingSub(true);
+    try {
+      const res = await fetch(`/api/channels/${encodeURIComponent(target)}/subscribe`, {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setIsSubscribed(prevSub);
+        setSubscriberCount(prevCount);
+      } else {
+        setIsSubscribed(Boolean(data.subscribed));
+        setSubscriberCount(Number(data.subscriberCount ?? prevCount));
+      }
+    } catch {
+      setIsSubscribed(prevSub);
+      setSubscriberCount(prevCount);
+    } finally {
+      setIsTogglingSub(false);
+    }
+  };
 
   const playerWrapperRef = useRef(null);
   const [playerHeight, setPlayerHeight] = useState(0);
@@ -343,7 +390,25 @@ export default function WatchClient({
             <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 py-1">
               <div className="flex justify-between items-center min-w-0">
                 <div className="flex gap-3 items-center min-w-0">
-                  {video?.author_picture && !avatarError ? (
+                  {channelHref ? (
+                    <Link href={channelHref} className="shrink-0">
+                      {video?.author_picture && !avatarError ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={video.author_picture}
+                          alt={video?.author_name || 'Channel'}
+                          onError={() => setAvatarError(true)}
+                          className="w-10 h-10 rounded-full object-cover shadow-xs ring-1 ring-black/10 dark:ring-white/10"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#FF7A00] to-[#FF9E40] flex items-center justify-center text-white font-bold shadow-xs text-sm">
+                          {(video?.author_name || 'D').charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </Link>
+                  ) : video?.author_picture && !avatarError ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={video.author_picture}
                       alt={video?.author_name || 'Channel'}
@@ -357,24 +422,43 @@ export default function WatchClient({
                     </div>
                   )}
                   <div className="flex flex-col min-w-0 pr-1 sm:pr-2">
-                    <span className="font-bold text-[14px] sm:text-[15px] text-[#0F0F0F] dark:text-[#F1F1F1] truncate leading-tight">
-                      {video?.author_name || 'DONUŤ'}
-                    </span>
+                    {channelHref ? (
+                      <Link
+                        href={channelHref}
+                        className="font-bold text-[14px] sm:text-[15px] text-[#0F0F0F] dark:text-[#F1F1F1] hover:text-[#FF7A00] transition truncate leading-tight"
+                      >
+                        {video?.author_name || 'DONUŤ'}
+                      </Link>
+                    ) : (
+                      <span className="font-bold text-[14px] sm:text-[15px] text-[#0F0F0F] dark:text-[#F1F1F1] truncate leading-tight">
+                        {video?.author_name || 'DONUŤ'}
+                      </span>
+                    )}
                     <span className="text-[12px] text-[#606060] dark:text-[#AAAAAA] truncate mt-0.5">
-                      {video?.subscribers_count ? `ผู้ติดตาม ${video.subscribers_count} คน` : 'ไม่มีผู้ติดตาม'}
+                      {subscriberCount > 0 ? `ผู้ติดตาม ${subscriberCount.toLocaleString('th-TH')} คน` : 'ไม่มีผู้ติดตาม'}
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsSubscribed(!isSubscribed)}
-                  className={`px-4 py-2 rounded-full text-xs font-bold transition active:scale-95 shrink-0 cursor-pointer shadow-xs ml-3 ${isSubscribed
-                    ? 'bg-[#EFECE6] dark:bg-[#272727] hover:bg-[#E5E0D8] dark:hover:bg-[#333333] text-[#0F0F0F] dark:text-[#F1F1F1]'
-                    : 'bg-[#0F0F0F] dark:bg-[#F1F1F1] hover:bg-[#272727] dark:hover:bg-[#E0E0E0] text-white dark:text-[#0F0F0F]'
-                    }`}
-                >
-                  {isSubscribed ? 'ติดตามแล้ว' : 'ติดตาม'}
-                </button>
+                {isChannelOwner ? (
+                  <Link
+                    href={`/videos/${video.id}/edit`}
+                    className="px-4 py-2 rounded-full text-xs font-bold transition active:scale-95 shrink-0 shadow-xs ml-3 bg-[#EFECE6] dark:bg-[#272727] hover:bg-[#E5E0D8] dark:hover:bg-[#333333] text-[#0F0F0F] dark:text-[#F1F1F1]"
+                  >
+                    แก้ไขวิดีโอ
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isTogglingSub}
+                    onClick={handleToggleSubscribe}
+                    className={`px-4 py-2 rounded-full text-xs font-bold transition active:scale-95 shrink-0 cursor-pointer shadow-xs ml-3 disabled:opacity-60 ${isSubscribed
+                      ? 'bg-[#EFECE6] dark:bg-[#272727] hover:bg-[#E5E0D8] dark:hover:bg-[#333333] text-[#0F0F0F] dark:text-[#F1F1F1]'
+                      : 'bg-[#0F0F0F] dark:bg-[#F1F1F1] hover:bg-[#272727] dark:hover:bg-[#E0E0E0] text-white dark:text-[#0F0F0F]'
+                      }`}
+                  >
+                    {isSubscribed ? 'ติดตามแล้ว' : 'ติดตาม'}
+                  </button>
+                )}
               </div>
 
               {videoId && <WatchActions key={`${videoId}:${session?.id ?? ''}`} videoId={videoId} userId={session?.id} />}

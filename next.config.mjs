@@ -4,6 +4,14 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
+  async rewrites() {
+    return [
+      {
+        source: '/@:handle',
+        destination: '/channel/:handle',
+      },
+    ];
+  },
 };
 
 export default nextConfig;

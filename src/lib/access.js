@@ -27,7 +27,7 @@ export const getCachedServerSession = cache(async () => {
 
     const sql = getDb();
     const [row] = await sql`
-      SELECT u.id, u.provider, u.name, u.email, u.picture
+      SELECT u.id, u.provider, u.name, u.email, u.picture, u.handle
       FROM user_sessions s
       JOIN users u ON u.id = s.user_id
       WHERE s.session_token = ${token}

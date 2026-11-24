@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import SettingCard from '@/components/ui/SettingCard';
 import SettingRow from '@/components/ui/SettingRow';
 import Select from '@/components/ui/Select';
+import ChannelHandleCard from '@/components/settings/ChannelHandleCard';
 import {
   User, ChevronRight, LogOut, ShieldCheck, Link2,
   Monitor, Smartphone, Tablet, MapPin, Clock,
@@ -248,6 +249,8 @@ export default function AccountSection({
       )}
 
       {/* ── Social Login Card ─────────────────────────────────────── */}
+      {session && <ChannelHandleCard session={session} />}
+
       {session && (
         <SettingCard title="บัญชีที่เข้าสู่ระบบ" subtitle="ข้อมูลจาก Social Login ที่คุณใช้เข้าระบบ">
           <div className="p-4 sm:p-5 flex flex-col gap-4">

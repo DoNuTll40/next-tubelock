@@ -699,9 +699,19 @@ function VideoCard({
             renderMeta()
           ) : (
             <div className="flex flex-col text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-normal">
-              <span className="relative z-20 truncate font-medium cursor-default">
-                {video.author_name || 'DONUŤ'}
-              </span>
+              {video.author_handle ? (
+                <Link
+                  href={`/@${encodeURIComponent(video.author_handle)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="relative z-20 truncate font-medium hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-colors w-fit max-w-full"
+                >
+                  {video.author_name || 'DONUŤ'}
+                </Link>
+              ) : (
+                <span className="relative z-20 truncate font-medium cursor-default">
+                  {video.author_name || 'DONUŤ'}
+                </span>
+              )}
               <div className="flex items-center gap-1.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
                 {isMature && (
                   <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">

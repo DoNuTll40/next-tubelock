@@ -204,7 +204,7 @@ export default async function WatchPage({ params, searchParams }) {
             v.status, v.source_type, v.user_id,
             h.last_position_seconds,
             (h.id IS NOT NULL) AS has_watched,
-            u.name AS author_name, u.picture AS author_picture
+            u.name AS author_name, u.picture AS author_picture, u.handle AS author_handle
           FROM videos v
           LEFT JOIN users u ON v.user_id = u.id
           LEFT JOIN watch_history h ON h.video_id = v.id AND h.user_id = ${userId}
@@ -248,6 +248,21 @@ export default async function WatchPage({ params, searchParams }) {
       isPrivateBlocked = true;
     } else {
     let lastWatchedVersionId = null;
+    let subscriberCount = 0;
+    let isSubscribed = false;
+    try {
+      const [subCountRows, viewerSubRows] = await Promise.all([
+        rawVideo.user_id != null
+          ? sql`SELECT COUNT(*)::int AS cnt FROM subscriptions WHERE channel_id = ${rawVideo.user_id};`
+          : Promise.resolve([]),
+        userId != null && rawVideo.user_id != null && Number(userId) !== Number(rawVideo.user_id)
+          ? sql`SELECT 1 FROM subscriptions WHERE subscriber_id = ${userId} AND channel_id = ${rawVideo.user_id} LIMIT 1;`
+          : Promise.resolve([]),
+      ]);
+      subscriberCount = Number(subCountRows?.[0]?.cnt || 0);
+      isSubscribed = viewerSubRows.length > 0;
+    } catch (_) {}
+
     if (userId && !requestedVersion && readyVersions.length > 1) {
       try {
         const histRows = await sql`
@@ -310,6 +325,8 @@ export default async function WatchPage({ params, searchParams }) {
       slug: canonicalSlug,
       created_at: videoRows[0].created_at ? new Date(videoRows[0].created_at).toISOString() : null,
       views_count: Number(videoRows[0].views_count || 0),
+      subscribers_count: subscriberCount,
+      is_subscribed: isSubscribed,
     };
 
     // Canonical URL redirection: if accessed with numeric ID or dirty slug (e.g. /watch/851 or /watch/...undefined)
