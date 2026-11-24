@@ -16,7 +16,9 @@ import {
   Bookmark,
   ListPlus
 } from 'lucide-react';
-import { formatResolutionBadge, encodeVideoSlug, isMusicVideo, getVideoResumeTime } from '@/lib/videoUtils';
+import { formatResolutionBadge, encodeVideoSlug, isMusicVideo, isMatureVideo, getVideoResumeTime, RESTRICTED_POSTER } from '@/lib/videoUtils';
+import { formatThaiRelativeTime, formatThaiViews } from '@/lib/formatThaiMeta';
+import { usePosterPreference } from '@/lib/usePosterPreference';
 import { prewarmVideoSourceClient, preloadHlsModule } from '@/lib/playbackResolver';
 import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
 
@@ -477,7 +479,6 @@ export default function ResultsClient({ initialQuery = '' }) {
 function HorizontalVideoCard({ video }) {
   const [imgError, setImgError] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [renderNow] = useState(() => Date.now());
   const menuRef = useRef(null);
 
   const formatDuration = (sec) => {
@@ -492,26 +493,11 @@ function HorizontalVideoCard({ video }) {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const formatViews = (views) => {
-    const num = Number(views || 0);
-    if (num >= 1000000) return `${(num / 1000000).toFixed(1)} ล้าน`;
-    if (num >= 1000) return `${(num / 1000).toFixed(1)} พัน`;
-    return `${num}`;
-  };
-
-  const formatTimeAgo = (dateStr) => {
-    if (!dateStr) return 'ไม่นานมานี้';
-    const diff = (renderNow - new Date(dateStr).getTime()) / 1000;
-    if (diff < 3600) return `${Math.max(1, Math.floor(diff / 60))} นาทีที่ผ่านมา`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)} ชั่วโมงที่ผ่านมา`;
-    if (diff < 2592000) return `${Math.floor(diff / 86400)} วันที่ผ่านมา`;
-    if (diff < 31536000) return `${Math.floor(diff / 2592000)} เดือนที่แล้ว`;
-    return `${Math.floor(diff / 31536000)} ปีที่แล้ว`;
-  };
-
   const safeId = video?.id && video?.id !== 'undefined' ? video.id : (video?.video_id && video?.video_id !== 'undefined' ? video.video_id : '');
   const videoSlug = encodeVideoSlug(safeId, video?.category) || (safeId ? String(safeId) : '');
   const isMusic = isMusicVideo(video);
+  const isMature = isMatureVideo(video);
+  const allow18Plus = usePosterPreference(isMature);
   const pos = Number(video?.last_position_seconds || 0);
   const dur = Number(video?.duration || 0);
   const resumeTime = isMusic ? 0 : getVideoResumeTime(pos, dur);
@@ -544,8 +530,9 @@ function HorizontalVideoCard({ video }) {
   };
 
   const resBadge = formatResolutionBadge(video.resolution);
-  const effectiveThumbnail =
-    video.thumbnail_url || (video.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null);
+  const effectiveThumbnail = isMature
+    ? (allow18Plus && safeId ? `/api/videos/${safeId}/poster` : RESTRICTED_POSTER)
+    : (video.thumbnail_url || (video.id ? `/streams/stream_vid_${video.id}/poster.jpg` : null));
   const is4K = resBadge === '4K' || (video.title && video.title.toLowerCase().includes('4k'));
   const is60Fps = (video.fps && Number(video.fps) >= 59) || (video.title && video.title.toLowerCase().includes('60'));
 
@@ -615,9 +602,14 @@ function HorizontalVideoCard({ video }) {
 
         {/* Metadata: Views & Date */}
         <div className="flex items-center gap-1.5 text-[12px] text-[#606060] dark:text-[#AAAAAA] mt-1 truncate">
-          <span>{`การรับชม ${formatViews(video.views_count)} ครั้ง`}</span>
+          <span>{`การรับชม ${formatThaiViews(video.views_count)} ครั้ง`}</span>
           <span>•</span>
-          <span>{formatTimeAgo(video.created_at)}</span>
+          <span>{formatThaiRelativeTime(video.created_at) || 'ไม่นานมานี้'}</span>
+          {isMature && (
+            <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
+              18+
+            </span>
+          )}
         </div>
 
         {/* Channel Row (Avatar + Name + Verified Badge) */}
