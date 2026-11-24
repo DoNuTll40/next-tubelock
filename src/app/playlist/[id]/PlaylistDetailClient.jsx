@@ -314,13 +314,18 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
   const firstPlayableIndex = items.findIndex(isPlayable);
   const firstPlayable = items[firstPlayableIndex];
   const cover = items.find((item) => !isMatureVideo(item)) || items[0];
+  const coverIsMature = isMatureVideo(cover);
+  const allow18PlusCover = usePosterPreference(coverIsMature);
   const coverInfo = {
+    cover_video_id: cover?.id || null,
     preview_thumbnail: cover
       ? protectVideoPoster(cover).thumbnail_url || `/streams/stream_vid_${cover.id}/poster.jpg`
       : '',
-    preview_is_mature: isMatureVideo(cover),
+    preview_is_mature: coverIsMature,
   };
-  const tintSource = coverInfo.preview_is_mature ? null : coverInfo.preview_thumbnail;
+  const tintSource = coverIsMature
+    ? (allow18PlusCover && cover?.id ? `/api/videos/${cover.id}/poster` : null)
+    : coverInfo.preview_thumbnail;
   const tint = coverColor?.src === tintSource ? coverColor?.rgb : null;
   const totalDuration = items.reduce((total, item) => total + Number(item.duration || 0), 0);
   const canEdit = playlist.can_manage && playlist.kind === 'normal';
