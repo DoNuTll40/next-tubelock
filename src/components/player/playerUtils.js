@@ -228,7 +228,7 @@ export function computeSubtitleBoxLayout({
 } = {}) {
   const defaultSideInset = isMobile ? 12 : 16;
   const controlsClearance = isMobile ? 68 : 84;
-  const defaultRestPadding = isMobile ? 12 : 16;
+  const defaultRestPadding = isMobile ? 18 : 36;
 
   const w = Number(containerWidth) || 0;
   const h = Number(containerHeight) || 0;
@@ -256,7 +256,7 @@ export function computeSubtitleBoxLayout({
     pillarboxX = Math.max(0, (w - renderedWidth) / 2);
   }
 
-  const pictureInset = Math.min(defaultRestPadding, Math.max(8, Math.round(renderedHeight * 0.05)));
+  const pictureInset = Math.min(defaultRestPadding, Math.max(isMobile ? 12 : 20, Math.round(renderedHeight * 0.06)));
   const pictureBottomPx = letterboxY + pictureInset;
   const rawBottomPx = controlsVisible
     ? Math.max(controlsClearance, pictureBottomPx)
