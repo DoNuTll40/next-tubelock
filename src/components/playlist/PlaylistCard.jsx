@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Globe, Link2, ListVideo, Lock, LockKeyhole, MoreVertical, Pencil, Play, Trash2 } from 'lucide-react';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { prewarmVideoSourceClient } from '@/lib/playbackResolver';
+import { usePosterPreference } from '@/lib/usePosterPreference';
 import { RESTRICTED_POSTER } from '@/lib/videoUtils';
 
 const visibilityOptions = {
@@ -35,10 +36,15 @@ export function PlaylistVisibility({ visibility }) {
 }
 
 export function PlaylistCover({ playlist, className = '', onLoad, children }) {
-  const mature = playlist.preview_is_mature;
-  const thumbnail = mature ? RESTRICTED_POSTER : playlist.preview_thumbnail;
+  const mature = Boolean(playlist.preview_is_mature);
+  const allow18Plus = usePosterPreference(mature);
+  const coverVideoId = playlist.cover_video_id || playlist.first_video_id || null;
+  const isMasked = mature && !allow18Plus;
+  const thumbnail = mature
+    ? (allow18Plus && coverVideoId ? `/api/videos/${coverVideoId}/poster` : RESTRICTED_POSTER)
+    : playlist.preview_thumbnail;
   const [failedCorsSource, setFailedCorsSource] = useState(null);
-  const sampleColors = Boolean(onLoad && !mature && failedCorsSource !== thumbnail);
+  const sampleColors = Boolean(onLoad && !isMasked && failedCorsSource !== thumbnail);
   const imgRef = useRef(null);
   const onLoadRef = useRef(onLoad);
 
@@ -75,7 +81,7 @@ export function PlaylistCover({ playlist, className = '', onLoad, children }) {
       ) : (
         <ListVideo className="size-12 text-[#8C857B] dark:text-[#AAAAAA]" aria-hidden="true" />
       )}
-      {mature && (
+      {isMasked && (
         <span className="absolute left-2 top-2 z-10 inline-flex items-center gap-1.5 rounded-md bg-black/80 px-2 py-1 text-xs font-semibold text-white">
           <LockKeyhole className="size-3.5" aria-hidden="true" />
           เนื้อหาจำกัดอายุ 18+
@@ -98,7 +104,13 @@ export default function PlaylistCard({ playlist, onCopyLink, onEdit, onDelete })
   const watchHref = playable ? `/watch/${playlist.first_video_slug}?list=${listKey}&index=1` : null;
   const coverAction = watchHref ? 'เล่นทั้งหมดใน' : 'ดูเพลย์ลิสต์';
   const updatedAt = Date.parse(playlist.updated_at);
-  const tintSource = playlist.preview_is_mature ? null : (playlist.preview_thumbnail || null);
+  const mature = Boolean(playlist.preview_is_mature);
+  const allow18Plus = usePosterPreference(mature);
+  const coverVideoId = playlist.cover_video_id || playlist.first_video_id || null;
+  const isMasked = mature && !allow18Plus;
+  const tintSource = mature
+    ? (allow18Plus && coverVideoId ? `/api/videos/${coverVideoId}/poster` : null)
+    : (playlist.preview_thumbnail || null);
   const activeColor = tintSource && coverColor?.src === tintSource ? coverColor.color : null;
 
   useEffect(() => {
@@ -131,7 +143,7 @@ export default function PlaylistCard({ playlist, onCopyLink, onEdit, onDelete })
         '--hover-tint-light': activeColor.lightBg,
         '--hover-tint-dark': activeColor.darkBg,
       }
-    : playlist.preview_is_mature
+    : isMasked
       ? TUBELOCK_ORANGE_CARD_THEME
       : undefined;
 

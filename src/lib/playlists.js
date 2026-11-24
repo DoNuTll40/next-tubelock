@@ -193,6 +193,7 @@ function serializePlaylistSummary(row, includeMembership = false) {
     first_video_id,
     first_video_category,
     first_video_slug: first_video_id ? encodeVideoSlug(first_video_id, first_video_category) : null,
+    cover_video_id: cover_video_id || first_video_id || null,
     ...resolveSafePlaylistPreview(cover),
     ...(includeMembership && { contains_video: Boolean(contains_video) }),
   };

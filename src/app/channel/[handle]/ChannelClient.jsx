@@ -13,10 +13,10 @@ import {
   Calendar,
   Eye,
   UploadCloud,
-  Play,
   Loader2,
 } from 'lucide-react';
 import VideoCard from '@/components/VideoCard';
+import PlaylistCard from '@/components/playlist/PlaylistCard';
 import { useSession } from '@/context/SessionContext';
 
 function formatThaiJoinDate(iso) {
@@ -288,47 +288,19 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 items-start gap-6">
                 {initialPlaylists.map((pl) => (
-                  <Link
+                  <PlaylistCard
                     key={pl.id}
-                    href={`/playlist?list=${encodeURIComponent(pl.id)}`}
-                    className="group flex flex-col gap-2"
-                  >
-                    <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-[#222222] border border-[#EFECE6] dark:border-white/10">
-                      {pl.coverThumbnail ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={pl.coverThumbnail}
-                          alt={pl.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-white/30">
-                          <ListVideo className="w-10 h-10" />
-                        </div>
-                      )}
-                      <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-md bg-black/80 text-white text-[11px] font-bold inline-flex items-center gap-1">
-                        <Play className="w-3 h-3 fill-current" />
-                        <span>{pl.videoCount} วิดีโอ</span>
-                      </div>
-                      {pl.visibility && pl.visibility !== 'public' && (
-                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/75 text-white/90 text-[10px] font-semibold border border-white/15">
-                          {pl.visibility === 'private' ? 'ส่วนตัว' : 'ไม่แสดงในรายการ'}
-                        </div>
-                      )}
-                    </div>
-                    <div className="px-0.5">
-                      <h3 className="text-sm font-bold line-clamp-1 group-hover:text-[#FF7A00] transition">
-                        {pl.title}
-                      </h3>
-                      {pl.description && (
-                        <p className="text-xs text-[#606060] dark:text-[#AAAAAA] line-clamp-1 mt-0.5">
-                          {pl.description}
-                        </p>
-                      )}
-                    </div>
-                  </Link>
+                    playlist={pl}
+                    onCopyLink={(playlist) => {
+                      if (typeof window !== 'undefined') {
+                        navigator.clipboard?.writeText(
+                          `${window.location.origin}/playlist/${encodeURIComponent(playlist.route_key)}`
+                        );
+                      }
+                    }}
+                  />
                 ))}
               </div>
             )}
