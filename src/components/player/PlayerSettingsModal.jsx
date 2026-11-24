@@ -170,24 +170,21 @@ export default function PlayerSettingsModal({
     };
   }, [isFullscreen]);
 
-  // Hide & lock main page scrollbar while Settings menu is open (zero layout shift via scrollbar-width compensation)
+  // Hide & lock main page scrollbar while Settings menu is open (body-only so <html class="h-full"> NEVER jumps scrollTop to 0!)
   useEffect(() => {
     if (!showSettingsMenu || typeof window === 'undefined' || typeof document === 'undefined') return;
     const html = document.documentElement;
     const body = document.body;
-    const prevHtmlOverflow = html.style.overflow;
     const prevBodyOverflow = body.style.overflow;
     const prevBodyPaddingRight = body.style.paddingRight;
     const scrollbarWidth = window.innerWidth - html.clientWidth;
 
-    html.style.overflow = 'hidden';
     body.style.overflow = 'hidden';
     if (scrollbarWidth > 0) {
       body.style.paddingRight = `${scrollbarWidth}px`;
     }
 
     return () => {
-      html.style.overflow = prevHtmlOverflow;
       body.style.overflow = prevBodyOverflow;
       body.style.paddingRight = prevBodyPaddingRight;
     };
@@ -367,13 +364,13 @@ export default function PlayerSettingsModal({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: reduceMotion ? 0 : 0.2 }}
+              transition={{ duration: reduceMotion ? 0 : 0.16, ease: 'easeOut' }}
               className="absolute inset-0 touch-none"
               aria-hidden="true"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={closeSheet}
             >
-              <motion.div className="absolute inset-0 bg-black/65" style={{ opacity: dragScrimOpacity }} />
+              <motion.div className="absolute inset-0 bg-black/60" style={{ opacity: dragScrimOpacity }} />
             </motion.div>
 
             <motion.div
@@ -384,8 +381,8 @@ export default function PlayerSettingsModal({
               style={{ y: sheetY }}
               initial={{ y: reduceMotion ? 0 : '100%' }}
               animate={{ y: 0 }}
-              exit={{ y: '100%', transition: { duration: reduceMotion ? 0 : 0.22, ease: [0.32, 0.72, 0, 1] } }}
-              transition={reduceMotion ? { duration: 0 } : SHEET_SPRING}
+              exit={{ y: '100%', transition: { duration: reduceMotion ? 0 : 0.18, ease: [0.32, 0.72, 0, 1] } }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
               drag="y"
               dragControls={mobileDragControls}
               dragListener={false}
@@ -393,7 +390,7 @@ export default function PlayerSettingsModal({
               dragConstraints={{ top: 0 }}
               dragElastic={0}
               onDragEnd={finishSheetDrag}
-              className="relative z-10 mx-auto flex max-h-[calc(100%_-_max(0.5rem,env(safe-area-inset-top)))] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border-t border-white/15 bg-[#181818]/95 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-[#F1F1F1] shadow-2xl select-none"
+              className="relative z-10 mx-auto flex max-h-[calc(100%_-_max(0.5rem,env(safe-area-inset-top)))] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border-t border-white/15 bg-[#181818] pb-[max(0.5rem,env(safe-area-inset-bottom))] text-[#F1F1F1] shadow-xl select-none will-change-transform"
               onClick={(e) => e.stopPropagation()}
             >
               <div
