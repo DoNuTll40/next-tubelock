@@ -269,7 +269,7 @@ export default function FeedPage() {
           </div>
         ) : (
           /* YOUTUBE PC & MOBILE RESPONSIVE VIDEO GRID */
-          <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-y-4 "}>
+          <div className={isMobile ? "grid grid-cols-1 gap-y-5 max-w-xl mx-auto" : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 items-start gap-y-4 "}>
             {filteredVideos.map((vid) => (
               <div key={vid.id}>
                 <VideoCard

@@ -267,7 +267,7 @@ export default function ChannelClient({ channel, initialVideos = [], initialPlay
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-y-4 -mx-2 sm:-mx-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 items-start gap-y-4 -mx-2 sm:-mx-2.5">
                 {sortedVideos.map((video) => (
                   <VideoCard key={video.id} video={video} />
                 ))}

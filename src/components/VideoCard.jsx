@@ -22,6 +22,7 @@ import {
 import { memo, useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { formatResolutionBadge, encodeVideoSlug, isMatureVideo, getVideoResumeTime } from '@/lib/videoUtils';
+import { formatThaiRelativeTime, formatThaiViews } from '@/lib/formatThaiMeta';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import { prewarmVideoSourceClient, invalidateClientVideoCache, preloadHlsModule } from '@/lib/playbackResolver';
 import { usePosterReveal } from '@/lib/usePosterReveal';
@@ -247,7 +248,8 @@ function VideoCard({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  const fileSizeMB = (Number(video.file_size_bytes || 0) / (1024 * 1024)).toFixed(1);
+  const viewsShort = formatThaiViews(video.views_count);
+  const relativeTime = formatThaiRelativeTime(video.created_at);
   const resBadge = formatResolutionBadge(video.resolution);
   const effectiveThumbnail = isMature
     ? (allow18Plus ? `/api/videos/${videoId}/poster` : posterReady ? currentPoster.url : null)
@@ -489,16 +491,20 @@ function VideoCard({
             </span>
           </div>
 
-          {/* 3. ยอดวิว / สตรีม (อยู่ติดด้านล่างต่อลงมาทันที) */}
-          <div className="flex items-center gap-1.5 text-[#606060] dark:text-[#888888] text-[12px] mt-1 truncate">
+          {/* 3. ยอดวิว / เวลา (สไตล์ YouTube) */}
+          <div className="flex items-center gap-1.5 text-[#606060] dark:text-[#AAAAAA] text-[12px] mt-1 truncate">
             {isMature && (
               <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
                 18+
               </span>
             )}
-            <span>{`${Number(video.views_count || 0).toLocaleString()} ครั้ง`}</span>
-            <span>•</span>
-            <span>HLS</span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <Play className="w-3 h-3 stroke-[2] opacity-80" />
+              <span>{viewsShort}</span>
+            </span>
+            {relativeTime && (
+              <span className="whitespace-nowrap">{relativeTime}</span>
+            )}
             {hasMultiVersion && (
               <>
                 <span>•</span>
@@ -603,10 +609,14 @@ function VideoCard({
               {video.author_name || 'DONUŤ'}
             </span>
           </div>
-          <div className="flex items-center gap-1 text-[#606060] dark:text-[#888888] text-[12px] mt-0.5 truncate">
-            <span>{`${Number(video.views_count || 0).toLocaleString()} ครั้ง`}</span>
-            <span>•</span>
-            <span>HLS Direct</span>
+          <div className="flex items-center gap-1.5 text-[#606060] dark:text-[#AAAAAA] text-[12px] mt-0.5 truncate">
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <Play className="w-3 h-3 stroke-[2] opacity-80" />
+              <span>{viewsShort}</span>
+            </span>
+            {relativeTime && (
+              <span className="whitespace-nowrap">{relativeTime}</span>
+            )}
             {hasMultiVersion && (
               <>
                 <span>•</span>
@@ -641,7 +651,7 @@ function VideoCard({
   // ==========================================
   return (
     <div
-      className={`flex flex-col group relative select-none rounded-2xl p-2 yt-card-hover cursor-pointer ${isMenuOpen ? 'z-30' : ''}`}
+      className={`flex flex-col self-start group relative select-none rounded-2xl p-2 yt-card-hover cursor-pointer ${isMenuOpen ? 'z-30' : ''}`}
       onMouseEnter={handlePreWarm}
       onMouseLeave={handlePreWarmCancel}
       onMouseDown={handlePreWarmImmediate}
@@ -726,8 +736,27 @@ function VideoCard({
       </div>
 
       <div className="flex items-start gap-3 pt-3 px-0.5">
-        <div className="relative z-20 shrink-0 mt-0.5 cursor-default">
-          {video.author_picture ? (
+        <div className="relative z-20 shrink-0 mt-0.5">
+          {video.author_handle ? (
+            <Link href={`/@${encodeURIComponent(video.author_handle)}`} onClick={(e) => e.stopPropagation()}>
+              {video.author_picture ? (
+                <img
+                  src={video.author_picture}
+                  alt={video.author_name || 'Channel'}
+                  className="w-9 h-9 rounded-full object-cover shadow-xs ring-1 ring-black/10 dark:ring-white/10"
+                  referrerPolicy="no-referrer"
+                  loading="lazy"
+                  decoding="async"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-[#FFF4EB] dark:bg-[#FF7A00]/15 border border-[#FF7A00]/20 flex items-center justify-center shadow-xs">
+                  <span className="font-bold text-xs text-[#FF7A00]">
+                    {(video.author_name || 'D').charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              )}
+            </Link>
+          ) : video.author_picture ? (
             <img
               src={video.author_picture}
               alt={video.author_name || 'Channel'}
@@ -753,34 +782,32 @@ function VideoCard({
           {renderMeta ? (
             renderMeta()
           ) : (
-            <div className="flex flex-col text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-normal">
+            <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[12px] text-[#8C857B] dark:text-[#AAAAAA] mt-1 leading-snug">
               {video.author_handle ? (
                 <Link
                   href={`/@${encodeURIComponent(video.author_handle)}`}
                   onClick={(e) => e.stopPropagation()}
-                  className="relative z-20 truncate font-medium hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-colors w-fit max-w-full"
+                  className="relative z-20 truncate font-medium hover:text-[#212529] dark:hover:text-[#F1F1F1] transition-colors max-w-[140px]"
                 >
                   {video.author_name || 'DONUŤ'}
                 </Link>
               ) : (
-                <span className="relative z-20 truncate font-medium cursor-default">
+                <span className="relative z-20 truncate font-medium cursor-default max-w-[140px]">
                   {video.author_name || 'DONUŤ'}
                 </span>
               )}
-              <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-[11px] text-[#8C857B] dark:text-[#888888]">
-                {isMature && (
-                  <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
-                    18+
-                  </span>
-                )}
-                <span className="font-semibold text-[#FF7A00] uppercase bg-[#FFF4EB] dark:bg-[#FF7A00]/15 px-1.5 py-0.2 rounded text-[10px] shrink-0">
-                  {video.codec ? video.codec.toUpperCase() : 'H264'}
+              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                <Play className="w-3 h-3 stroke-[2] opacity-80" />
+                <span>{viewsShort}</span>
+              </span>
+              {relativeTime && (
+                <span className="whitespace-nowrap">{relativeTime}</span>
+              )}
+              {isMature && (
+                <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
+                  18+
                 </span>
-                <span>•</span>
-                <span className="font-mono whitespace-nowrap">{fileSizeMB} MB</span>
-                <span>•</span>
-                <span className="whitespace-nowrap">{video.source_type === 'hls' ? 'HLS Stream' : 'Direct'}</span>
-              </div>
+              )}
             </div>
           )}
         </div>
