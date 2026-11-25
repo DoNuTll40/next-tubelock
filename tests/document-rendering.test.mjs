@@ -20,6 +20,8 @@ test('Markdown retains GFM content and generates unique heading anchors', () => 
   assert.doesNotMatch(html, /internal metadata/);
   assert.match(html, /href="\/docs\/faq"/);
   assert.match(html, /<table>/);
+  assert.match(html, /<tr>/);
+  assert.match(html, /<td[^>]*>Mode<\/td>/);
   assert.match(html, /disabled/);
 });
 

@@ -5,7 +5,7 @@ const markdownHtmlPolicy = {
   allowedTags: [
     'a', 'blockquote', 'br', 'code', 'del', 'details', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'hr', 'img', 'input', 'li', 'ol', 'p', 'pre', 's', 'strong', 'summary', 'table', 'tbody', 'td',
-    'th', 'thead', 'ul',
+    'tfoot', 'th', 'thead', 'tr', 'ul',
   ],
   allowedAttributes: {
     a: ['href', 'title'],
