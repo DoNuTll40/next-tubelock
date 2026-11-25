@@ -472,7 +472,8 @@ export function GlobalPlayerProvider({ children }) {
     if (!v) return;
     try {
       if (parked) {
-        if (!savedAudioBeforeSilenceRef.current) {
+        // Snapshot audio only on the first park; never overwrite with the already-silenced (0) values
+        if (!silencedByParkRef.current || !savedAudioBeforeSilenceRef.current) {
           savedAudioBeforeSilenceRef.current = {
             muted: Boolean(v.muted),
             volume: typeof v.volume === 'number' && v.volume > 0 ? v.volume : 1,
