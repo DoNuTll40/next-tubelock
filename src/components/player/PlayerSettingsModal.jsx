@@ -149,6 +149,35 @@ export default function PlayerSettingsModal({
   );
   const reduceMotion = useReducedMotion();
 
+  // YouTube-style quality list: one clean entry per resolution height
+  // - HDR-capable display -> prefer HDR when both HDR & SDR exist at the same height
+  // - SDR display -> prefer SDR when both exist (still shows single-variant tiers like legacy HDR-only or in-progress SDR)
+  const visibleLevels = (() => {
+    const displaySupportsHdr =
+      typeof window !== 'undefined' &&
+      Boolean(window.matchMedia?.('(dynamic-range: high)')?.matches);
+    const byHeight = new Map();
+    for (const lvl of levels) {
+      const key = Number(lvl.height) || lvl.index;
+      const existing = byHeight.get(key);
+      if (!existing) {
+        byHeight.set(key, lvl);
+        continue;
+      }
+      const preferNew = displaySupportsHdr
+        ? Boolean(lvl.isHdr) && !existing.isHdr
+        : !lvl.isHdr && Boolean(existing.isHdr);
+      if (preferNew) {
+        byHeight.set(key, lvl);
+      }
+    }
+    return Array.from(byHeight.values()).sort(
+      (a, b) =>
+        ((b.height || 0) - (a.height || 0)) ||
+        (Number(Boolean(b.isHdr)) - Number(Boolean(a.isHdr)))
+    );
+  })();
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setMounted(true);
@@ -819,9 +848,7 @@ export default function PlayerSettingsModal({
                     {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
-                    {[...levels]
-                      .sort((a, b) => (b.height || 0) - (a.height || 0))
-                      .map((lvl) => {
+                    {visibleLevels.map((lvl) => {
                         const isSelected = currentLevelIndex === lvl.index;
                         return (
                           <button
@@ -1445,9 +1472,7 @@ export default function PlayerSettingsModal({
               </div>
 
               <div className="max-h-72 overflow-y-auto py-1">
-                {[...levels]
-                  .sort((a, b) => (b.height || 0) - (a.height || 0))
-                  .map((lvl) => {
+                {visibleLevels.map((lvl) => {
                     const isSelected = currentLevelIndex === lvl.index;
                     return (
                       <button
