@@ -246,6 +246,8 @@ export function GlobalPlayerProvider({ children }) {
   const isMiniplayerRef = useRef(false);
   const isExpandingFromMiniRef = useRef(false);
   const miniLaunchRectRef = useRef(null);
+  const silencedByParkRef = useRef(false);
+  const savedAudioBeforeSilenceRef = useRef(null);
   const lastNonWatchUrlRef = useRef('/');
   const hasVisitedNonWatchRef = useRef(false);
   const [selection, setSelection] = useState({ id: null, startTime: 0 });
@@ -465,6 +467,57 @@ export function GlobalPlayerProvider({ children }) {
     return () => { void t; };
   }, [pathname, hostEl, clearPlaylist]);
 
+  const silenceAndPauseCurrentVideo = useCallback(({ parked = false } = {}) => {
+    const v = videoRef.current;
+    if (!v) return;
+    try {
+      if (parked) {
+        if (!savedAudioBeforeSilenceRef.current) {
+          savedAudioBeforeSilenceRef.current = {
+            muted: Boolean(v.muted),
+            volume: typeof v.volume === 'number' && v.volume > 0 ? v.volume : 1,
+          };
+        }
+        silencedByParkRef.current = true;
+      } else {
+        silencedByParkRef.current = false;
+      }
+      v.muted = true;
+      v.volume = 0;
+      if (!v.paused) {
+        v.pause();
+      }
+    } catch (_) { }
+  }, []);
+
+  const restoreAudioAndResumeIfParked = useCallback(() => {
+    if (!silencedByParkRef.current) return;
+    silencedByParkRef.current = false;
+    const v = videoRef.current;
+    const saved = savedAudioBeforeSilenceRef.current;
+    savedAudioBeforeSilenceRef.current = null;
+    if (!v) return;
+    try {
+      v.volume = saved && typeof saved.volume === 'number' && saved.volume > 0 ? saved.volume : 1;
+      v.muted = saved ? Boolean(saved.muted) : false;
+      if (v.paused) {
+        if (v.ended) {
+          try { v.currentTime = 0; } catch (_) { }
+        }
+        const playPromise = v.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {
+            // Fallback if browser blocks unmuted autoplay on programmatic navigation
+            try {
+              v.muted = true;
+              v.play().catch(() => { });
+            } catch (_) { }
+          });
+        }
+      }
+    } catch (_) { }
+  }, []);
+
   const dockPlayerSlot = useCallback(
     (slotEl) => {
       if (!slotEl) return;
@@ -478,21 +531,10 @@ export function GlobalPlayerProvider({ children }) {
         globalMiniplayerActive = false;
         setIsMiniplayer(false);
       }
+      restoreAudioAndResumeIfParked();
     },
-    [hostEl]
+    [hostEl, restoreAudioAndResumeIfParked]
   );
-
-  const silenceAndPauseCurrentVideo = useCallback(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    try {
-      v.muted = true;
-      v.volume = 0;
-      if (!v.paused) {
-        v.pause();
-      }
-    } catch (_) { }
-  }, []);
 
   // Prefetch last non-/watch route while watching so swipe-down / `i` Miniplayer return is instant!
   useEffect(() => {
@@ -577,7 +619,7 @@ export function GlobalPlayerProvider({ children }) {
     setIsMiniplayer(false);
     setIsDockedInWatch(false);
     clearPlaylist({ updateUrl: false });
-    silenceAndPauseCurrentVideo();
+    silenceAndPauseCurrentVideo({ parked: true });
     if (hostEl && parkingRef.current && hostEl.parentNode !== parkingRef.current) {
       reparentPlayerHost(parkingRef.current, hostEl);
     }
@@ -634,18 +676,14 @@ export function GlobalPlayerProvider({ children }) {
         setIsDockedInWatch(false);
         const v = videoRef.current;
         if (v && typeof document !== 'undefined' && document.pictureInPictureElement !== v) {
-          try {
-            v.muted = true;
-            v.volume = 0;
-            if (!v.paused) v.pause();
-          } catch (_) { }
+          silenceAndPauseCurrentVideo({ parked: true });
         }
       }
       if (hostEl && parkingRef.current && hostEl.parentNode !== parkingRef.current) {
         reparentPlayerHost(parkingRef.current, hostEl);
       }
     },
-    [hostEl]
+    [hostEl, silenceAndPauseCurrentVideo]
   );
 
   const handleSetAmbientMode = useCallback((val) => {
@@ -863,6 +901,7 @@ export function GlobalPlayerProvider({ children }) {
         setVideo((prev) => ({ ...(prev || {}), ...newVideo, id: nextId }));
         isSwitchingVideoRef.current = false;
         setIsSwitchingVideo(false);
+        restoreAudioAndResumeIfParked();
         return;
       }
 
@@ -886,7 +925,7 @@ export function GlobalPlayerProvider({ children }) {
       setVideo({ ...newVideo, id: nextId });
       setStreamAttemptSeq((s) => s + 1);
     },
-    [handleSelectVideo, silenceAndPauseCurrentVideo]
+    [handleSelectVideo, silenceAndPauseCurrentVideo, restoreAudioAndResumeIfParked]
   );
 
   useEffect(() => {
@@ -1002,6 +1041,7 @@ export function GlobalPlayerProvider({ children }) {
             active_version: initialVideo.active_version ?? prev.active_version ?? null,
           };
         });
+        restoreAudioAndResumeIfParked();
         return;
       }
 
@@ -1030,7 +1070,7 @@ export function GlobalPlayerProvider({ children }) {
       setVideo(initialVideo);
       setStreamAttemptSeq((s) => s + 1);
     },
-    [silenceAndPauseCurrentVideo]
+    [silenceAndPauseCurrentVideo, restoreAudioAndResumeIfParked]
   );
 
   const id = selection.id;

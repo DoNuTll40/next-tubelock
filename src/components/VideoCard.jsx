@@ -49,6 +49,11 @@ function VideoCard({
   renderMeta = null,
   renderMenu = null,
   isMenuOpen = false,
+  extraMenuItems = null,
+  disabledLink = false,
+  statusBadge = null,
+  showNotInterested = true,
+  className = '',
 }) {
   const router = useRouter();
   const [showMenu, setShowMenu] = useState(false);
@@ -180,7 +185,7 @@ function VideoCard({
 
   // Lazy-extract YouTube-style hover tint only when user actually hovers or focuses a card (0 startup Canvas readbacks!)
   const ensureDominantColor = () => {
-    if (isMature || dominantColor) return;
+    if (showRestriction || dominantColor) return;
     if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
       const color = extractDominantColor(imgRef.current);
       if (color) setDominantColor(color);
@@ -365,7 +370,8 @@ function VideoCard({
     canEdit,
     onSaveToWatchLater: canSave ? handleSaveToWatchLater : undefined,
     onOpenPlaylistModal: canSave ? handleOpenPlaylistModal : undefined,
-    onNotInterested: !renderMenu && video?.id ? handleNotInterested : undefined,
+    onNotInterested: showNotInterested && !renderMenu && !extraMenuItems?.length && video?.id ? handleNotInterested : undefined,
+    extraMenuItems,
     isSaving,
   };
 
@@ -435,7 +441,7 @@ function VideoCard({
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
-              crossOrigin={isMature ? undefined : "anonymous"}
+              crossOrigin="anonymous"
               onError={() => setImgError(true)}
               className="w-full h-full object-cover transition-all duration-300"
               loading="lazy"
@@ -542,25 +548,25 @@ function VideoCard({
   if (compact) {
     return (
       <div
-        className="flex gap-2.5 group relative select-none items-start p-1.5 -m-1.5 rounded-xl yt-card-hover cursor-pointer"
-        onMouseEnter={handlePreWarm}
-        onMouseLeave={handlePreWarmCancel}
-        onMouseDown={handlePreWarmImmediate}
-        onFocus={handlePreWarm}
+        className={`flex gap-2.5 sm:gap-3 group relative select-none items-start p-1.5 ${className ? '' : '-m-1.5'} rounded-xl yt-card-hover ${disabledLink ? '' : 'cursor-pointer'} ${showMenu || isMenuOpen ? 'z-30' : ''} ${className}`}
+        onMouseEnter={disabledLink ? undefined : handlePreWarm}
+        onMouseLeave={disabledLink ? undefined : handlePreWarmCancel}
+        onMouseDown={disabledLink ? undefined : handlePreWarmImmediate}
+        onFocus={disabledLink ? undefined : handlePreWarm}
         style={cardHoverStyle}
       >
-        {renderCardLink()}
+        {!disabledLink && renderCardLink()}
         <div
-          className={`relative isolate aspect-video w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${canRevealPoster ? 'z-20' : ''}`}
+          className={`relative isolate aspect-video w-[144px] sm:w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${canRevealPoster ? 'z-20' : ''}`}
         >
           {effectiveThumbnail && !imgError ? (
             <img
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
-              crossOrigin={isMature ? undefined : "anonymous"}
+              crossOrigin="anonymous"
               onError={() => setImgError(true)}
-              className="w-full h-full object-cover group-hover:scale-105 transition-all duration-300"
+              className="w-full h-full object-cover transition-all duration-300"
               loading="lazy"
               decoding="async"
             />
@@ -572,25 +578,25 @@ function VideoCard({
 
           {renderRestriction(true)}
 
-          {video.duration > 0 && (
-            <div className="absolute bottom-1 right-1 z-10 bg-black/80 text-white text-[11px] font-semibold px-1 py-0.2 rounded font-mono">
+          {!disabledLink && video.duration > 0 && (
+            <div className="absolute bottom-1 right-1 z-10 bg-black/80 text-white text-[11px] font-semibold px-1.5 py-0.5 rounded font-mono">
               {formatDuration(video.duration)}
             </div>
           )}
 
           {/* YouTube Watch Progress Bar */}
-          {progressPct > 0 && (
+          {effectiveProgressPct > 0 && (
             <div className="absolute left-0 right-0 bottom-0 z-30 h-1 bg-black/40 overflow-hidden pointer-events-none">
               <div
                 className="h-full bg-[#FF7A00]"
-                style={{ width: `${progressPct}%`}}
+                style={{ width: `${effectiveProgressPct}%` }}
               />
             </div>
           )}
         </div>
 
         <div className="flex-1 min-w-0 pr-1 flex flex-col justify-start">
-          <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[14px] font-semibold line-clamp-2 leading-[1.3] group-hover:text-black dark:group-hover:text-white transition-colors">
+          <h4 className="text-[#0F0F0F] dark:text-[#F1F1F1] text-[14px] sm:text-[15px] font-semibold line-clamp-2 leading-[1.35] group-hover:text-black dark:group-hover:text-white transition-colors">
             {video.title}
           </h4>
           <div className="relative z-20 flex items-center gap-1.5 mt-1 cursor-default">
@@ -598,17 +604,32 @@ function VideoCard({
               <img
                 src={video.author_picture}
                 alt={video.author_name || 'Channel'}
-                className="w-3.5 h-3.5 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
+                className="w-4 h-4 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
                 referrerPolicy="no-referrer"
                 loading="lazy"
                 decoding="async"
               />
             )}
-            <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate font-medium">
-              {video.author_name || 'DONUŤ'}
-            </span>
+            {video.author_handle ? (
+              <Link
+                href={`/@${encodeURIComponent(video.author_handle)}`}
+                onClick={(e) => e.stopPropagation()}
+                className="text-[#606060] dark:text-[#AAAAAA] hover:text-[#212529] dark:hover:text-[#F1F1F1] text-[12px] truncate font-medium transition-colors"
+              >
+                {video.author_name || 'DONUŤ'}
+              </Link>
+            ) : (
+              <span className="text-[#606060] dark:text-[#AAAAAA] text-[12px] truncate font-medium">
+                {video.author_name || 'DONUŤ'}
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-1.5 text-[#606060] dark:text-[#AAAAAA] text-[12px] mt-0.5 truncate">
+          <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-[#606060] dark:text-[#AAAAAA] text-[12px] mt-0.5">
+            {isMature && (
+              <span className="font-semibold text-rose-500 bg-rose-500/10 dark:bg-rose-500/20 px-1.5 py-0.2 rounded text-[10px] border border-rose-500/30 shrink-0">
+                18+
+              </span>
+            )}
             <span className="inline-flex items-center gap-1 whitespace-nowrap">
               <Play className="w-3 h-3 stroke-[2] opacity-80" />
               <span>{viewsShort}</span>
@@ -626,9 +647,12 @@ function VideoCard({
               </>
             )}
           </div>
+          {statusBadge && <div className="mt-1">{statusBadge}</div>}
         </div>
 
-        {(canSave || onDelete || canEdit) && <VideoMenu {...menuProps} variant="compact" />}
+        {(canSave || onDelete || canEdit || extraMenuItems?.length > 0) && (
+          <VideoMenu {...menuProps} variant="compact" />
+        )}
 
         {showDeleteModal && (
           <DeleteVideoModal
@@ -665,7 +689,7 @@ function VideoCard({
               src={effectiveThumbnail}
               alt=""
               aria-hidden="true"
-              crossOrigin={isMature ? undefined : "anonymous"}
+              crossOrigin="anonymous"
               onError={() => setImgError(true)}
               className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none blur-sm scale-110 opacity-30"
               loading="lazy"
@@ -675,7 +699,7 @@ function VideoCard({
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
-              crossOrigin={isMature ? undefined : "anonymous"}
+              crossOrigin="anonymous"
               onError={() => setImgError(true)}
               className="relative z-10 w-full h-full object-contain drop-shadow-sm transition-all duration-300"
               loading="lazy"
@@ -849,6 +873,7 @@ function VideoMenu({
   onSaveToWatchLater,
   onOpenPlaylistModal,
   onNotInterested,
+  extraMenuItems = null,
   isSaving,
 }) {
   const triggerRef = useRef(null);
@@ -1056,6 +1081,40 @@ function VideoMenu({
                   <Pencil className="w-3.5 h-3.5 text-[#FF7A00]" />
                   <span>แก้ไขวิดีโอ</span>
                 </Link>
+              )}
+
+              {Array.isArray(extraMenuItems) && extraMenuItems.length > 0 && (
+                <>
+                  <div className="h-px bg-[#EFECE6] dark:bg-white/10 my-0.5" />
+                  {extraMenuItems.map((item) => {
+                    const ItemIcon = item.icon;
+                    return (
+                      <button
+                        key={item.label}
+                        type="button"
+                        disabled={item.disabled}
+                        onClick={() => {
+                          setShowMenu(false);
+                          item.onClick?.();
+                        }}
+                        className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed ${
+                          item.danger
+                            ? 'hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-700 dark:text-rose-400'
+                            : 'hover:bg-[#F5F2EB] dark:hover:bg-white/10 text-[#606060] dark:text-zinc-300'
+                        }`}
+                      >
+                        {ItemIcon && (
+                          <ItemIcon
+                            className={`w-3.5 h-3.5 shrink-0 ${
+                              item.danger ? 'text-rose-500' : 'text-[#77716A] dark:text-zinc-400'
+                            }`}
+                          />
+                        )}
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </>
               )}
 
               {canDelete && (

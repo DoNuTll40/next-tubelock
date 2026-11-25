@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import CcSubtitleIcon from '../icons/CcSubtitleIcon';
 import { getGearBadge, isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
+import { usePosterPreference } from '@/lib/usePosterPreference';
 import { formatBadgeDuration } from './PlayerEndScreen';
 
 export default function PlayerTopBar({
@@ -33,6 +34,9 @@ export default function PlayerTopBar({
   versions = [],
   activeVersion = null,
 }) {
+  const upNextMature = upNextVideo ? isMatureVideo(upNextVideo) : false;
+  const allow18PlusUpNext = usePosterPreference(upNextMature);
+
   if (!showControls) return null;
   if (!isFullscreen && !isMobileView) return null;
 
@@ -41,10 +45,9 @@ export default function PlayerTopBar({
     ? versions.filter((v) => !v?.status || ['READY', 'COMPLETED'].includes(String(v.status).toUpperCase()))
     : [];
   const hasMultipleVersions = playableVersions.length > 1;
-  const upNextMature = upNextVideo ? isMatureVideo(upNextVideo) : false;
   const upNextThumb = upNextVideo
     ? (upNextMature
-      ? RESTRICTED_POSTER
+      ? (allow18PlusUpNext && upNextVideo.id ? `/api/videos/${upNextVideo.id}/poster` : RESTRICTED_POSTER)
       : (upNextVideo.thumbnail_url || (upNextVideo.id ? `/streams/stream_vid_${upNextVideo.id}/poster.jpg` : null)))
     : null;
   const upNextDuration = upNextVideo ? formatBadgeDuration(upNextVideo.duration) : '00:00';

@@ -339,6 +339,9 @@ export default function WatchPlaylistPanel({
   const items = state?.items;
   const index = state?.currentIndex ?? -1;
   const activeVideo = index >= 0 && items ? items[index] : null;
+  const activeIsMature = isMatureVideo(activeVideo);
+  const allow18PlusActive = usePosterPreference(activeIsMature);
+  const activeIsMasked = activeIsMature && !allow18PlusActive;
 
   const handleColorExtracted = useCallback((videoId, color) => {
     if (!videoId || !color) return;
@@ -785,9 +788,9 @@ export default function WatchPlaylistPanel({
   const activeClass = `${iconButtonClass} yt-playlist-active-btn`;
 
   const activeTheme = activeVideo
-    ? (isMatureVideo(activeVideo)
+    ? (activeIsMasked
       ? MATURE_PLAYLIST_COLOR
-      : (extractedColors[activeVideo.id] ?? null))
+      : (extractedColors[activeVideo.id] ?? (activeIsMature ? MATURE_PLAYLIST_COLOR : null)))
     : null;
 
   const desktopThemeStyle = buildThemeVars(activeTheme, !expanded);
@@ -796,7 +799,7 @@ export default function WatchPlaylistPanel({
     ...buildThemeVars(activeTheme, false),
     '--sheet-player-h': playerHeight ? `${playerHeight}px` : '56.25vw',
   };
-  const activeThumb = getVideoThumb(activeVideo);
+  const activeThumb = getVideoThumb(activeVideo, allow18PlusActive);
 
   const toolbarRow = (
     <div className="yt-playlist-header flex items-center gap-1 px-2.5 pb-2">
@@ -1004,7 +1007,18 @@ export default function WatchPlaylistPanel({
                   >
                     <span className="relative grid h-10 aspect-video shrink-0 place-items-center overflow-hidden rounded-sm bg-[#222222] text-white ring-1 ring-black/10 dark:ring-white/10">
                       {activeThumb ? (
-                        <Image src={activeThumb} alt="" fill unoptimized className="object-cover" />
+                        <Image
+                          src={activeThumb}
+                          alt=""
+                          fill
+                          unoptimized
+                          crossOrigin={!activeIsMasked ? 'anonymous' : undefined}
+                          onLoad={!activeIsMasked && activeVideo?.id ? (e) => {
+                            const color = extractDominantColor(e.currentTarget);
+                            if (color) handleColorExtracted(activeVideo.id, color);
+                          } : undefined}
+                          className="object-cover"
+                        />
                       ) : (
                         <ListVideo className="size-4 text-white/70" aria-hidden="true" />
                       )}

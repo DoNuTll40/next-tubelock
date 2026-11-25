@@ -1,26 +1,21 @@
-import { cookies } from 'next/headers';
+import { getSessionUserId } from '@/lib/access';
+import { getDb } from '@/lib/db';
+import { encodeVideoSlug, isMatureVideo } from '@/lib/videoUtils';
 
-export async function GET(request) {
+export async function GET() {
     try {
-        // 1. ตรวจสอบ tubelock_session จาก Cookie หรือ Header
-        const cookieStore = await cookies();
-        const sessionToken =
-            cookieStore.get('tubelock_session')?.value ||
-            request.headers.get('x-tubelock-session');
+        // 1. ตรวจสอบเซสชันผู้ใช้จาก DB
+        const actor = await getSessionUserId();
 
-        if (!sessionToken) {
+        if (actor == null) {
             return Response.json(
                 {
                     success: false,
-                    error: 'Unauthorized: ไม่พบเซสชันการเข้าสู่ระบบ (tubelock_session)',
+                    error: 'Unauthorized: กรุณาเข้าสู่ระบบก่อนตรวจสอบพื้นที่จัดเก็บ',
                 },
                 { status: 401 }
             );
         }
-
-        // (ออปชันเสริม) หากมีฟังก์ชัน verifySession สามารถเรียกเช็คกับ DB/JWT ได้ตรงนี้
-        // const isValidSession = await verifySession(sessionToken);
-        // if (!isValidSession) return Response.json({ success: false, error: 'Session หมดอายุ' }, { status: 401 });
 
         const tenantId = process.env.AZURE_TENANT_ID;
         const clientId = process.env.AZURE_CLIENT_ID;
@@ -104,17 +99,84 @@ export async function GET(request) {
         // กรองเอาเฉพาะรายการที่เป็นโฟลเดอร์
         const rawFolders = (foldersData.value || []).filter((item) => Boolean(item.folder));
 
-        // ใช้ Promise.all คู่กับ async ภายใน map
-        const streamFolders = await Promise.all(
-            rawFolders.map(async (folder) => ({
-                id: folder.id,
-                name: folder.name,
-                childCount: folder.folder?.childCount || 0,
-                sizeMB: (folder.size / 1024 ** 2).toFixed(2),
-                lastModified: folder.lastModifiedDateTime,
-                imageUrl: `/api/onedrive/poster?folder=${encodeURIComponent(folder.name)}`,
-            }))
+        // ดึง metadata วิดีโอจาก Neon DB แบบ batch เพื่อแสดงชื่อคลิปจริง, ความละเอียด, ความยาว และเรตเนื้อหา
+        const vidIds = Array.from(
+            new Set(
+                rawFolders
+                    .map((f) => String(f.name || '').match(/^stream_vid_(\d+)/i)?.[1])
+                    .filter(Boolean)
+                    .map((n) => Number(n))
+                    .filter((n) => Number.isInteger(n) && n > 0)
+            )
         );
+
+        const videoMetaMap = new Map();
+        if (vidIds.length > 0) {
+            try {
+                const sql = getDb();
+                const videoRows = await sql`
+                    SELECT id, user_id, title, category, resolution, duration, content_rating, status
+                    FROM videos
+                    WHERE id = ANY(${vidIds}::int[]);
+                `;
+                for (const v of videoRows) {
+                    videoMetaMap.set(Number(v.id), {
+                        videoId: Number(v.id),
+                        ownerId: v.user_id != null ? Number(v.user_id) : null,
+                        videoTitle: v.title || '',
+                        videoSlug: encodeVideoSlug(v.id, v.category),
+                        category: v.category || '',
+                        resolution: v.resolution || '',
+                        duration: Number(v.duration || 0),
+                        isMature: isMatureVideo(v),
+                        status: v.status || 'READY',
+                    });
+                }
+            } catch (dbErr) {
+                console.warn('[OneDrive Storage] Skip video metadata enrichment:', dbErr?.message);
+            }
+        }
+
+        // คำนวณยอดรวมทั้งระบบ (Aggregate) และคัดกรองเฉพาะคลิปของผู้ใช้ที่ล็อกอินอยู่
+        let totalHlsBytes = 0;
+        let myHlsBytes = 0;
+        const myUniqueVideoIds = new Set();
+        const myStreamFolders = [];
+
+        for (const folder of rawFolders) {
+            const folderBytes = Number(folder.size || 0);
+            totalHlsBytes += folderBytes;
+
+            const vidNum = Number(String(folder.name || '').match(/^stream_vid_(\d+)/i)?.[1] || 0);
+            const meta = vidNum ? videoMetaMap.get(vidNum) : null;
+            const isMine = Boolean(meta && meta.ownerId != null && meta.ownerId === Number(actor));
+
+            if (isMine) {
+                myHlsBytes += folderBytes;
+                myUniqueVideoIds.add(meta.videoId);
+                myStreamFolders.push({
+                    id: folder.id,
+                    name: folder.name,
+                    childCount: folder.folder?.childCount || 0,
+                    sizeMB: (folderBytes / 1024 ** 2).toFixed(2),
+                    lastModified: folder.lastModifiedDateTime,
+                    imageUrl: `/api/onedrive/poster?folder=${encodeURIComponent(folder.name)}`,
+                    videoId: meta.videoId,
+                    videoTitle: meta.videoTitle,
+                    videoSlug: meta.videoSlug,
+                    category: meta.category,
+                    resolution: meta.resolution,
+                    duration: meta.duration,
+                    isMature: meta.isMature,
+                    status: meta.status,
+                });
+            }
+        }
+
+        const totalHlsGB = Number(bytesToGB(totalHlsBytes));
+        const myUsedGB = Number(bytesToGB(myHlsBytes));
+        const myUsedMB = Number((myHlsBytes / 1024 ** 2).toFixed(2));
+        const otherCloudGB = Number(Math.max(0, Number(bytesToGB(usedBytes)) - myUsedGB).toFixed(2));
 
         return Response.json({
             success: true,
@@ -123,10 +185,18 @@ export async function GET(request) {
                 totalGB: Math.round(totalBytes / 1024 ** 3),
                 remainingGB: Number(bytesToGB(remainingBytes)),
                 usedPercentage: ((usedBytes / totalBytes) * 100).toFixed(1),
+                totalHlsGB,
+                otherCloudGB,
+            },
+            myStorage: {
+                usedGB: myUsedGB,
+                usedMB: myUsedMB,
+                videoCount: myUniqueVideoIds.size,
+                usedPercentageOfTotal: totalBytes > 0 ? ((myHlsBytes / totalBytes) * 100).toFixed(2) : '0.00',
             },
             folders: {
-                totalStreams: streamFolders.length,
-                items: streamFolders,
+                totalStreams: myStreamFolders.length,
+                items: myStreamFolders,
             },
         });
     } catch (error) {

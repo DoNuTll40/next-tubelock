@@ -253,7 +253,7 @@ export async function getPlaylistDetails(sql, rawId, userId) {
            v.resolution, v.fps, v.codec, v.file_size_bytes, v.category, v.content_rating,
            v.views_count, v.status, v.source_type, v.user_id, v.created_at,
            ${sql.unsafe(SLIM_POSTER)} AS thumbnail_url,
-           u.name AS author_name, u.picture AS author_picture,
+           u.name AS author_name, u.picture AS author_picture, u.handle AS author_handle,
            COALESCE(h.last_position_seconds, 0) AS last_position_seconds,
            h.video_id IS NOT NULL AS has_watched
     FROM playlist_items pi

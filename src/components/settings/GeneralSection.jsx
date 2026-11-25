@@ -45,7 +45,7 @@ const THEME_OPTIONS = [
   },
 ];
 
-export default function GeneralSection() {
+export default function GeneralSection({ onThemeChange } = {}) {
   const { theme, resolvedTheme, setTheme } = useTheme();
 
   return (
@@ -75,7 +75,10 @@ export default function GeneralSection() {
                 <button
                   key={opt.id}
                   type="button"
-                  onClick={() => setTheme(opt.id)}
+                  onClick={() => {
+                    setTheme(opt.id);
+                    onThemeChange?.(opt.id);
+                  }}
                   className={`relative flex flex-col rounded-2xl p-4 text-left transition-all duration-200 cursor-pointer border ${isSelected
                     ? 'border-[#FF7A00] bg-[#FFF8F2] dark:bg-[#FF7A00]/10 shadow-[0_4px_16px_rgba(255,122,0,0.18)] ring-2 ring-[#FF7A00]/30'
                     : 'border-[#EFECE6] dark:border-white/10 bg-white dark:bg-[#181818] hover:border-[#D5CFC5] dark:hover:border-white/20 hover:shadow-xs'

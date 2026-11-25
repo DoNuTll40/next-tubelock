@@ -5,10 +5,11 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, ChevronRight, PlayCircle, Folder,
-  ShieldCheck, Save, CheckCircle, Loader2,
+  ShieldCheck, CheckCircle, Loader2,
   Sliders, LifeBuoy, AtSign, User
 } from 'lucide-react';
 import { useViewMode } from '@/context/ViewModeContext';
+import { useTheme } from '@/context/ThemeContext';
 import SettingsSidebar from '@/components/settings/SettingsSidebar';
 import GeneralSection from '@/components/settings/GeneralSection';
 import AccountSection from '@/components/settings/AccountSection';
@@ -18,13 +19,6 @@ import StorageSection from '@/components/settings/StorageSection';
 import SystemSection from '@/components/settings/SystemSection';
 import SupportSection from '@/components/settings/SupportSection';
 import ActionSheetModal from '@/components/settings/ActionSheetModal';
-
-async function sha256(message) {
-  const msgBuffer = new TextEncoder().encode(message.trim().toLowerCase());
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 const VALID_TABS = ['account', 'channel', 'general', 'player', 'system', 'onedrive', 'support'];
 
@@ -38,58 +32,32 @@ function parseTabFromParams(searchParams) {
   return null;
 }
 
-// ─── Standalone Save Button Component ────────────────────────────────────────
-function SaveButton({ saveStatus, isDirty, onSave }) {
+// ─── Subtle Auto-Save Status Pill ────────────────────────────────────────────
+function AutoSaveIndicator({ saveStatus }) {
   if (saveStatus === 'saving') {
     return (
-      <button
-        type="button"
-        disabled
-        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FF7A00]/60 text-white text-xs font-bold cursor-not-allowed select-none"
-      >
-        <Loader2 className="w-4 h-4 animate-spin" />
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#FF7A00]/10 text-[#FF7A00] text-[11px] font-semibold select-none">
+        <Loader2 className="w-3 h-3 animate-spin" />
         <span>กำลังบันทึก...</span>
-      </button>
+      </span>
     );
   }
   if (saveStatus === 'saved') {
     return (
-      <button
-        type="button"
-        disabled
-        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 text-white text-xs font-bold cursor-default select-none"
-      >
-        <CheckCircle className="w-4 h-4" />
-        <span>บันทึกแล้ว!</span>
-      </button>
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[11px] font-semibold select-none">
+        <CheckCircle className="w-3 h-3" />
+        <span>บันทึกอัตโนมัติแล้ว</span>
+      </span>
     );
   }
   if (saveStatus === 'error') {
     return (
-      <button
-        type="button"
-        onClick={onSave}
-        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 text-white text-xs font-bold cursor-pointer hover:bg-red-600 transition select-none"
-      >
-        <Save className="w-4 h-4" />
-        <span>เกิดข้อผิดพลาด ลองอีกครั้ง</span>
-      </button>
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400 text-[11px] font-semibold select-none">
+        <span>ซิงก์ฐานข้อมูลไม่สำเร็จ</span>
+      </span>
     );
   }
-  return (
-    <button
-      type="button"
-      onClick={onSave}
-      disabled={!isDirty}
-      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition active:scale-95 select-none ${isDirty
-        ? 'bg-[#FF7A00] hover:bg-[#E06C00] text-white shadow-[0_4px_12px_rgba(255,122,0,0.35)] cursor-pointer'
-        : 'bg-[#EFECE6] dark:bg-white/10 text-[#8C857B] dark:text-[#666666] cursor-not-allowed'
-        }`}
-    >
-      <Save className="w-4 h-4" />
-      <span>บันทึกการตั้งค่า</span>
-    </button>
-  );
+  return null;
 }
 
 // ─── Internal Settings View Component ────────────────────────────────────────
@@ -97,6 +65,7 @@ function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { isDesktop, isMobile } = useViewMode();
+  const { setTheme } = useTheme();
 
   // Tab derived directly from URL query parameters (single source of truth)
   const urlTab = parseTabFromParams(searchParams);
@@ -115,19 +84,16 @@ function SettingsContent() {
   const [autoStats, setAutoStats] = useState(false);
   const [allow18Plus, setAllow18Plus] = useState(false);
 
-  // Profile States
-  const [gravatarEmail, setGravatarEmail] = useState('');
-  const [gravatarHash, setGravatarHash] = useState('');
-  const [fallbackAvatar, setFallbackAvatar] = useState('mp');
-
   // Stats Summary
   const [videoCount, setVideoCount] = useState(0);
   const [totalSizeGB, setTotalSizeGB] = useState('0.00');
 
-  // Save state
-  const [isDirty, setIsDirty] = useState(false);
+  // Auto-save status indicator
   const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
   const initialLoaded = useRef(false);
+  const dbSyncTimerRef = useRef(null);
+  const statusClearTimerRef = useRef(null);
+  const sessionRef = useRef(null);
 
   // Action Sheet (Mobile)
   const [sheet, setSheet] = useState(null);
@@ -152,46 +118,61 @@ function SettingsContent() {
     router.replace('/settings', { scroll: false });
   };
 
-  const handleEmailChange = (newEmail) => {
-    setGravatarEmail(newEmail);
-    if (!newEmail.trim()) {
-      setGravatarHash('');
+  const syncPreferencesToDb = useCallback(async (patch) => {
+    if (!sessionRef.current) {
+      setSaveStatus('saved');
+      clearTimeout(statusClearTimerRef.current);
+      statusClearTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
+      return;
     }
-  };
+
+    setSaveStatus('saving');
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferences: patch }),
+      });
+      if (!res.ok) throw new Error('sync failed');
+      setSaveStatus('saved');
+      clearTimeout(statusClearTimerRef.current);
+      statusClearTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2200);
+    } catch {
+      setSaveStatus('error');
+      clearTimeout(statusClearTimerRef.current);
+      statusClearTimerRef.current = setTimeout(() => setSaveStatus('idle'), 3500);
+    }
+  }, []);
 
   // ─── Load session ─────────────────────────────────────────────────────────
   useEffect(() => {
     fetch('/api/auth/me')
       .then((r) => r.json())
-      .then(({ session: s }) => setSession(s))
+      .then(({ session: s }) => {
+        sessionRef.current = s || null;
+        setSession(s);
+      })
       .catch(() => { });
   }, []);
 
-  // ─── Load settings on mount ───────────────────────────────────────────────
+  // ─── Load settings on mount (localStorage + Neon DB userPreferences) ──────
   useEffect(() => {
     let isMounted = true;
     async function loadData() {
       try {
         setLoading(true);
 
+        let local18Plus = false;
+        let localPlayer = {};
         if (typeof window !== 'undefined') {
-          const storedEmail = localStorage.getItem('pt_gravatar_email') || '';
-          const storedFallback = localStorage.getItem('pt_fallback_avatar') || 'mp';
-          const stored18Plus = localStorage.getItem('tubelock_allow_18plus') === '1';
+          local18Plus = localStorage.getItem('tubelock_allow_18plus') === '1';
+          try {
+            localPlayer = JSON.parse(localStorage.getItem('tubelock_settings') || '{}') || {};
+          } catch {}
           if (isMounted) {
-            setGravatarEmail(storedEmail);
-            setFallbackAvatar(storedFallback);
-            setAllow18Plus(stored18Plus);
-            if (storedEmail.trim()) {
-              sha256(storedEmail).then((h) => { if (isMounted) setGravatarHash(h); });
-            }
+            setAllow18Plus(local18Plus);
           }
         }
-
-        let localPlayer = {};
-        try {
-          localPlayer = JSON.parse(localStorage.getItem('tubelock_settings') || '{}') || {};
-        } catch {}
 
         const [settingsRes, videosRes] = await Promise.all([
           fetch('/api/settings').then((r) => r.json()).catch(() => null),
@@ -200,12 +181,42 @@ function SettingsContent() {
 
         if (isMounted) {
           const defaults = settingsRes?.success ? settingsRes.data?.player_defaults : null;
-          setVolume(localPlayer.volume ?? defaults?.volume ?? 0.8);
-          setAutoplay(localPlayer.autoplay ?? defaults?.autoplay ?? true);
-          setDefaultSpeed(localPlayer.default_speed ?? defaults?.speed ?? defaults?.default_speed ?? 1);
-          setDefaultFit(localPlayer.default_fit ?? defaults?.fit ?? defaults?.default_fit ?? 'fit');
-          setSeekStep(localPlayer.seek_step ?? defaults?.seekStep ?? defaults?.seek_step ?? 10);
-          setAutoStats(localPlayer.auto_stats ?? defaults?.statsForNerds ?? defaults?.auto_stats ?? false);
+          const userPrefs = settingsRes?.success ? settingsRes.userPreferences : null;
+
+          const resolvedVolume = userPrefs?.volume ?? localPlayer.volume ?? defaults?.volume ?? 0.8;
+          const resolvedAutoplay = userPrefs?.autoplay ?? localPlayer.autoplay ?? defaults?.autoplay ?? true;
+          const resolvedSpeed = userPrefs?.default_speed ?? localPlayer.default_speed ?? defaults?.speed ?? defaults?.default_speed ?? 1;
+          const resolvedFit = userPrefs?.default_fit ?? localPlayer.default_fit ?? defaults?.fit ?? defaults?.default_fit ?? 'fit';
+          const resolvedSeek = userPrefs?.seek_step ?? localPlayer.seek_step ?? defaults?.seekStep ?? defaults?.seek_step ?? 10;
+          const resolvedStats = userPrefs?.auto_stats ?? localPlayer.auto_stats ?? defaults?.statsForNerds ?? defaults?.auto_stats ?? false;
+
+          setVolume(resolvedVolume);
+          setAutoplay(resolvedAutoplay);
+          setDefaultSpeed(resolvedSpeed);
+          setDefaultFit(resolvedFit);
+          setSeekStep(resolvedSeek);
+          setAutoStats(resolvedStats);
+
+          if (typeof userPrefs?.allow_18plus === 'boolean') {
+            setAllow18Plus(userPrefs.allow_18plus);
+            savePosterPreference(userPrefs.allow_18plus);
+          }
+          if (userPrefs?.theme && ['light', 'dark', 'auto'].includes(userPrefs.theme)) {
+            setTheme(userPrefs.theme);
+          }
+
+          if (userPrefs && typeof window !== 'undefined') {
+            try {
+              localStorage.setItem('tubelock_settings', JSON.stringify({
+                volume: resolvedVolume,
+                autoplay: resolvedAutoplay,
+                default_speed: resolvedSpeed,
+                default_fit: resolvedFit,
+                seek_step: resolvedSeek,
+                auto_stats: resolvedStats,
+              }));
+            } catch {}
+          }
         }
 
         if (videosRes?.success && Array.isArray(videosRes.data) && isMounted) {
@@ -223,55 +234,46 @@ function SettingsContent() {
       }
     }
     loadData();
-    return () => { isMounted = false; };
-  }, []);
+    return () => {
+      isMounted = false;
+      clearTimeout(dbSyncTimerRef.current);
+      clearTimeout(statusClearTimerRef.current);
+    };
+  }, [setTheme]);
 
-  // ─── Gravatar hash update ─────────────────────────────────────────────────
+  // ─── Auto-save player settings to localStorage + debounced Neon DB sync ───
   useEffect(() => {
-    let isMounted = true;
-    if (gravatarEmail.trim()) {
-      sha256(gravatarEmail).then((h) => {
-        if (isMounted) setGravatarHash(h);
-      });
-    }
-    return () => { isMounted = false; };
-  }, [gravatarEmail]);
-
-  // ─── Track dirty state ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (initialLoaded.current) {
-      setIsDirty(true);
-      setSaveStatus('idle');
-    }
-  }, [
-    volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats,
-    gravatarEmail, fallbackAvatar, allow18Plus,
-  ]);
-
-  const handleSave = useCallback(() => {
-    setSaveStatus('saving');
+    if (!initialLoaded.current) return;
+    const playerPatch = {
+      volume,
+      autoplay,
+      default_speed: defaultSpeed,
+      default_fit: defaultFit,
+      seek_step: seekStep,
+      auto_stats: autoStats,
+    };
     try {
-      localStorage.setItem('tubelock_settings', JSON.stringify({
-        volume,
-        autoplay,
-        default_speed: defaultSpeed,
-        default_fit: defaultFit,
-        seek_step: seekStep,
-        auto_stats: autoStats,
-      }));
-      localStorage.setItem('pt_gravatar_email', gravatarEmail.trim());
-      localStorage.setItem('pt_fallback_avatar', fallbackAvatar);
-      savePosterPreference(allow18Plus);
+      localStorage.setItem('tubelock_settings', JSON.stringify(playerPatch));
       window.dispatchEvent(new Event('storage'));
+    } catch {}
 
-      setSaveStatus('saved');
-      setIsDirty(false);
-      setTimeout(() => setSaveStatus('idle'), 3000);
-    } catch {
-      setSaveStatus('error');
-      setTimeout(() => setSaveStatus('idle'), 4000);
-    }
-  }, [volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats, gravatarEmail, fallbackAvatar, allow18Plus]);
+    clearTimeout(dbSyncTimerRef.current);
+    dbSyncTimerRef.current = setTimeout(() => {
+      void syncPreferencesToDb(playerPatch);
+    }, 400);
+  }, [volume, autoplay, defaultSpeed, defaultFit, seekStep, autoStats, syncPreferencesToDb]);
+
+  const handleToggle18Plus = useCallback((checked) => {
+    setAllow18Plus(checked);
+    try {
+      savePosterPreference(checked);
+    } catch {}
+    void syncPreferencesToDb({ allow_18plus: checked });
+  }, [syncPreferencesToDb]);
+
+  const handleThemeSync = useCallback((nextTheme) => {
+    void syncPreferencesToDb({ theme: nextTheme });
+  }, [syncPreferencesToDb]);
 
   // ─── Other actions ────────────────────────────────────────────────────────
   const handleClearHistory = async () => {
@@ -299,7 +301,7 @@ function SettingsContent() {
   const renderCurrentSection = (tabKey) => {
     switch (tabKey) {
       case 'general':
-        return <GeneralSection />;
+        return <GeneralSection onThemeChange={handleThemeSync} />;
       case 'account':
         return <AccountSection session={session} />;
       case 'channel':
@@ -328,7 +330,7 @@ function SettingsContent() {
         return (
           <SystemSection
             allow18Plus={allow18Plus}
-            setAllow18Plus={setAllow18Plus}
+            setAllow18Plus={handleToggle18Plus}
             handleClearHistory={handleClearHistory}
             handleFactoryReset={handleFactoryReset}
           />
@@ -336,7 +338,7 @@ function SettingsContent() {
       case 'support':
         return <SupportSection />;
       default:
-        return <GeneralSection />;
+        return <GeneralSection onThemeChange={handleThemeSync} />;
     }
   };
 
@@ -366,17 +368,12 @@ function SettingsContent() {
       {/* ── DESKTOP ──────────────────────────────────────────────────────────── */}
       {isDesktop && (
         <div className="flex gap-10 items-start">
-          {/* Left Sidebar + Save */}
+          {/* Left Sidebar + Auto-save status */}
           <div className="sticky top-22 w-64 shrink-0 flex flex-col gap-3">
             <SettingsSidebar activeTab={desktopTab} onSelectTab={handleDesktopTabChange} />
-            {(isDirty || desktopTab === 'player') && (
+            {saveStatus !== 'idle' && (
               <div className="px-3 mt-1">
-                <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
-                {isDirty && saveStatus === 'idle' && (
-                  <p className="text-[10px] text-[#8C857B] dark:text-[#AAAAAA] mt-2 px-1 leading-relaxed">
-                    มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก กด <strong>&ldquo;บันทึก&rdquo;</strong> เพื่อบันทึกไปยัง Neon DB
-                  </p>
-                )}
+                <AutoSaveIndicator saveStatus={saveStatus} />
               </div>
             )}
           </div>
@@ -407,7 +404,7 @@ function SettingsContent() {
                   </button>
                   <h1 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1] tracking-tight">การตั้งค่า</h1>
                 </div>
-                <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
+                <AutoSaveIndicator saveStatus={saveStatus} />
               </div>
 
               <div className='flex flex-col gap-4 px-4 pb-20'>
@@ -580,9 +577,7 @@ function SettingsContent() {
                     {subPage === 'support' && 'เกี่ยวกับและช่วยเหลือ'}
                   </h2>
                 </div>
-                {(subPage === 'player' || isDirty) && (
-                  <SaveButton saveStatus={saveStatus} isDirty={isDirty} onSave={handleSave} />
-                )}
+                <AutoSaveIndicator saveStatus={saveStatus} />
               </div>
               {renderCurrentSection(subPage)}
             </div>
