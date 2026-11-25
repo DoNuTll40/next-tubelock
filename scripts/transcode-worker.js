@@ -1286,6 +1286,7 @@ function extractHdr10Metadata(vStream, isHdr, hdrType) {
     if (!isHdr || hdrType === 'HLG') {
         return {
             hdrMasteringDisplay: null,
+            x265MasteringDisplay: null,
             hdrContentLight: null,
             hdrMaxNits: 0,
             hdrMaxCll: 0,
@@ -1295,22 +1296,24 @@ function extractHdr10Metadata(vStream, isHdr, hdrType) {
     const mdcv = sideList.find((sd) => /mastering display/i.test(String(sd?.side_data_type || '')));
     const cll = sideList.find((sd) => /content light level/i.test(String(sd?.side_data_type || '')));
 
-    let hdrMasteringDisplay = 'G(0.2650,0.6900)B(0.1500,0.0600)R(0.6800,0.3200)WP(0.3127,0.3290)L(1000.0000,0.0001)';
-    let hdrMaxNits = 1000;
+    let gx = 0.265, gy = 0.69, bx = 0.15, by = 0.06, rx = 0.68, ry = 0.32, wpx = 0.3127, wpy = 0.329;
+    let maxLum = 1000, minLum = 0.0001;
     if (mdcv) {
-        const gx = parseRatioNum(mdcv.green_x, 0.265);
-        const gy = parseRatioNum(mdcv.green_y, 0.69);
-        const bx = parseRatioNum(mdcv.blue_x, 0.15);
-        const by = parseRatioNum(mdcv.blue_y, 0.06);
-        const rx = parseRatioNum(mdcv.red_x, 0.68);
-        const ry = parseRatioNum(mdcv.red_y, 0.32);
-        const wpx = parseRatioNum(mdcv.white_point_x, 0.3127);
-        const wpy = parseRatioNum(mdcv.white_point_y, 0.329);
-        const maxLum = Math.max(100, parseRatioNum(mdcv.max_luminance, 1000));
-        const minLum = Math.max(0.0001, parseRatioNum(mdcv.min_luminance, 0.0001));
-        hdrMaxNits = Math.round(maxLum);
-        hdrMasteringDisplay = `G(${gx.toFixed(4)},${gy.toFixed(4)})B(${bx.toFixed(4)},${by.toFixed(4)})R(${rx.toFixed(4)},${ry.toFixed(4)})WP(${wpx.toFixed(4)},${wpy.toFixed(4)})L(${maxLum.toFixed(4)},${minLum.toFixed(4)})`;
+        gx = parseRatioNum(mdcv.green_x, 0.265);
+        gy = parseRatioNum(mdcv.green_y, 0.69);
+        bx = parseRatioNum(mdcv.blue_x, 0.15);
+        by = parseRatioNum(mdcv.blue_y, 0.06);
+        rx = parseRatioNum(mdcv.red_x, 0.68);
+        ry = parseRatioNum(mdcv.red_y, 0.32);
+        wpx = parseRatioNum(mdcv.white_point_x, 0.3127);
+        wpy = parseRatioNum(mdcv.white_point_y, 0.329);
+        maxLum = Math.max(100, parseRatioNum(mdcv.max_luminance, 1000));
+        minLum = Math.max(0.0001, parseRatioNum(mdcv.min_luminance, 0.0001));
     }
+    const hdrMaxNits = Math.round(maxLum);
+    const hdrMasteringDisplay = `G(${gx.toFixed(4)},${gy.toFixed(4)})B(${bx.toFixed(4)},${by.toFixed(4)})R(${rx.toFixed(4)},${ry.toFixed(4)})WP(${wpx.toFixed(4)},${wpy.toFixed(4)})L(${maxLum.toFixed(4)},${minLum.toFixed(4)})`;
+    // x265 expects SMPTE ST 2086 integer units (chromaticity * 50000, luminance * 10000)
+    const x265MasteringDisplay = `G(${Math.round(gx * 50000)},${Math.round(gy * 50000)})B(${Math.round(bx * 50000)},${Math.round(by * 50000)})R(${Math.round(rx * 50000)},${Math.round(ry * 50000)})WP(${Math.round(wpx * 50000)},${Math.round(wpy * 50000)})L(${Math.round(maxLum * 10000)},${Math.max(1, Math.round(minLum * 10000))})`;
 
     let hdrMaxCll = 1000;
     let hdrMaxFall = 400;
@@ -1321,7 +1324,7 @@ function extractHdr10Metadata(vStream, isHdr, hdrType) {
         if (ma > 0) hdrMaxFall = Math.round(ma);
     }
     const hdrContentLight = `${hdrMaxCll},${hdrMaxFall}`;
-    return { hdrMasteringDisplay, hdrContentLight, hdrMaxNits, hdrMaxCll };
+    return { hdrMasteringDisplay, x265MasteringDisplay, hdrContentLight, hdrMaxNits, hdrMaxCll };
 }
 
 let cachedHasZscale = null;
@@ -1344,23 +1347,22 @@ function buildHdrToSdrToneMapChain(meta) {
     return 'colorspace=all=bt709:iall=bt2020:fast=1';
 }
 
-function buildSvtAv1Params(meta, targetHeight) {
-    const tileCols = targetHeight >= 2160 ? 2 : targetHeight >= 720 ? 1 : 0;
-    const tileRows = targetHeight >= 1080 ? 1 : 0;
-    const trcCode = meta.hdrType === 'HLG' ? 18 : 16;
+function buildX265HdrParams(meta, maxrateK, bufsizeK) {
+    const isHlg = meta.hdrType === 'HLG';
     const parts = [
-        'enable-hdr=1',
-        'color-primaries=9',
-        `transfer-characteristics=${trcCode}`,
-        'matrix-coefficients=9',
-        'color-range=0',
-        'fast-decode=1',
+        'repeat-headers=1',
+        'open-gop=0',
+        'colorprim=bt2020',
+        `transfer=${isHlg ? 'arib-std-b67' : 'smpte2084'}`,
+        'colormatrix=bt2020nc',
+        'range=limited',
+        `vbv-maxrate=${maxrateK}`,
+        `vbv-bufsize=${bufsizeK}`,
     ];
-    if (tileCols > 0) parts.push(`tile-columns=${tileCols}`);
-    if (tileRows > 0) parts.push(`tile-rows=${tileRows}`);
-    if (meta.hdrType !== 'HLG') {
-        if (meta.hdrMasteringDisplay) parts.push(`mastering-display=${meta.hdrMasteringDisplay}`);
-        if (meta.hdrContentLight) parts.push(`content-light=${meta.hdrContentLight}`);
+    if (!isHlg) {
+        parts.push('hdr10=1', 'hdr10-opt=1');
+        if (meta.x265MasteringDisplay) parts.push(`master-display=${meta.x265MasteringDisplay}`);
+        if (meta.hdrContentLight) parts.push(`max-cll=${meta.hdrContentLight}`);
     }
     return parts.join(':');
 }
@@ -1392,7 +1394,7 @@ function parseProbeMeta(probeData) {
     const hdrColorTrc = hdrType === 'HLG' ? 'arib-std-b67' : 'smpte2084';
     const hdr10Meta = extractHdr10Metadata(vStream, isHdr, hdrType);
     const sourceCodec = vStream.codec_name || 'h264';
-    const codec = isHdr ? 'av01' : 'h264';
+    const codec = isHdr ? 'hevc' : 'h264';
     const bitrate = probeData.format?.bit_rate
         ? Math.round(parseInt(probeData.format.bit_rate, 10))
         : (vStream.bit_rate ? Math.round(parseInt(vStream.bit_rate, 10)) : 0);
@@ -1499,14 +1501,26 @@ function buildMasterM3U8(qualities) {
     for (const q of sorted) {
         if (q.is_hdr) {
             const videoRange = q.hdr_type === 'HLG' ? 'HLG' : 'PQ';
-            const trcCode = q.hdr_type === 'HLG' ? '18' : '16';
-            const av1Level = q.height >= 1440 ? '12' : q.height >= 1080 ? '08' : q.height >= 720 ? '05' : '04';
-            const codecs = hasAudioTrack
-                ? `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0,mp4a.40.2`
-                : `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0`;
-            lines.push(
-                `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height},CODECS="${codecs}",VIDEO-RANGE=${videoRange}`
-            );
+            if (q.hdr_codec === 'av01') {
+                // Backward compatibility for existing AV1 HDR renditions
+                const trcCode = q.hdr_type === 'HLG' ? '18' : '16';
+                const av1Level = q.height >= 1440 ? '12' : q.height >= 1080 ? '08' : q.height >= 720 ? '05' : '04';
+                const codecs = hasAudioTrack
+                    ? `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0,mp4a.40.2`
+                    : `av01.0.${av1Level}M.10.0.110.09.${trcCode}.09.0`;
+                lines.push(
+                    `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height},CODECS="${codecs}",VIDEO-RANGE=${videoRange}`
+                );
+            } else {
+                // HEVC Main10 (hvc1) — universal hardware HDR10 on Android (Samsung/Snapdragon/Exynos), iOS/Safari, macOS & Windows
+                const hevcLevel = q.height >= 2160 ? 'L153' : q.height >= 1440 ? 'L150' : q.height >= 1080 ? 'L123' : 'L93';
+                const codecs = hasAudioTrack
+                    ? `hvc1.2.4.${hevcLevel}.B0,mp4a.40.2`
+                    : `hvc1.2.4.${hevcLevel}.B0`;
+                lines.push(
+                    `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height},CODECS="${codecs}",VIDEO-RANGE=${videoRange}`
+                );
+            }
         } else if (hasFmp4) {
             // Dual-tier SDR H.264 rendition inside an fMP4 master playlist (seamless SourceBuffer.changeType)
             const avcHex = q.height >= 1080 ? '2a' : q.height >= 720 ? '1f' : q.height >= 360 ? '1e' : '15';
@@ -1599,16 +1613,17 @@ async function runHighQualityPass({
     } = meta;
     const audioArgs = buildAudioEncodeArgs(meta);
     // YouTube-style Smart Dual-Range Tiering:
-    // - 1080p / 1440p / 2160p on HDR source (or 720p when source itself < 1080p) -> True AV1 10-bit HDR10 (MDCV/CLL + Multi-Tile fast-decode)
+    // - 1080p / 1440p / 2160p on HDR source (or 720p when source itself < 1080p) -> True HEVC 10-bit HDR10 (hvc1 Main10 + MDCV/CLL)
     // - 720p on >= 1080p HDR source -> Hable Tone-Mapped H.264 8-bit SDR in fMP4 (0% drop-frame smooth fallback for SDR monitors / older devices!)
     const encodeAsHdr = Boolean(isHdr && (height >= 1080 || meta.srcHeight < 1080));
     const useFmp4 = Boolean(isHdr);
-    const svtParams = encodeAsHdr ? buildSvtAv1Params(meta, height) : null;
+    const hevcPreset = height >= 2160 ? 'faster' : 'fast';
+    const x265Params = encodeAsHdr ? buildX265HdrParams(meta, maxrateK, bufsizeK) : null;
     const toneMapSuffix = isHdr && !encodeAsHdr ? `,${buildHdrToSdrToneMapChain(meta)}` : '';
 
     await logger.log(
         encodeAsHdr
-            ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} True HDR (${hdrType} • AV1 10-bit fMP4 + Multi-Tile fast-decode + ${bitrateK}k • เสียง ${audioLabel})...`
+            ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} True HDR (${hdrType} • HEVC 10-bit hvc1 preset ${hevcPreset} + ${bitrateK}k • เสียง ${audioLabel})...`
             : isHdr
                 ? `⚡ ${passLabel}: กำลังหั่น ${qualityName} SDR (H.264 fMP4 + Hable HDR→SDR Tone-Map + ${bitrateK}k • เสียง ${audioLabel})...`
                 : `⚡ ${passLabel}: กำลังหั่น ${qualityName} (preset fast + lanczos + ${bitrateK}k • เสียง ${audioLabel})...`
@@ -1620,10 +1635,13 @@ async function runHighQualityPass({
             '-vf', `scale=w=${width}:h=${height}:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos`,
             '-sws_flags', 'lanczos',
             '-pix_fmt', 'yuv420p10le',
-            '-c:v', 'libsvtav1', '-preset', '8',
-            '-svtav1-params', svtParams,
+            '-c:v', 'libx265', '-preset', hevcPreset,
+            '-profile:v', 'main10',
+            '-tag:v', 'hvc1',
+            '-x265-params', x265Params,
             '-g', gopSize,
-            '-b:v', `${bitrateK}k`,
+            '-force_key_frames', 'expr:gte(t,n_forced*4)',
+            '-b:v', `${bitrateK}k`, '-maxrate', `${maxrateK}k`, '-bufsize', `${bufsizeK}k`,
             '-color_primaries', 'bt2020',
             '-color_trc', hdrColorTrc,
             '-colorspace', 'bt2020nc',
@@ -1680,7 +1698,7 @@ async function runHighQualityPass({
                     lane,
                     lanePct,
                     status: 'TRANSCODING',
-                    stageDetail: `${stagePrefix}${encodeAsHdr ? ' [HDR AV1]' : isHdr ? ' [SDR Tone-Map]' : ''}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
+                    stageDetail: `${stagePrefix}${encodeAsHdr ? ' [HDR HEVC]' : isHdr ? ' [SDR Tone-Map]' : ''}: ${pct}% (${formatTime(sec)} / ${formatTime(duration)} นาที)`,
                 }).finally(() => {
                     progressInFlight = false;
                 });
@@ -1706,6 +1724,7 @@ async function runHighQualityPass({
             is_hdr: encodeAsHdr,
             is_fmp4: useFmp4,
             hdr_type: encodeAsHdr ? hdrType : null,
+            hdr_codec: encodeAsHdr ? 'hevc' : null,
             audio_channels: audioChannels,
             audio_layout: audioLayout,
         },
@@ -2522,7 +2541,9 @@ async function runFinalize({ driveId, streamFolderName, masterPlaylistPath, temp
         onedrive_folder_id: streamFolderId,
         hls_folder_path: `/streams/${streamFolderName}`,
         master_playlist_path: masterPlaylistPath,
-        codec: readyQualities.some((q) => q.is_hdr) ? 'av01' : null,
+        codec: readyQualities.some((q) => q.is_hdr)
+            ? (readyQualities.some((q) => q.hdr_codec === 'av01') ? 'av01' : 'hevc')
+            : null,
         audio_channels: finalAudioSample ? finalAudioSample.audio_channels : null,
     };
 
@@ -2661,7 +2682,7 @@ async function main() {
 
         const meta = parseProbeMeta(probeData);
         const hdrTag = meta.isHdr
-            ? ` | 🌈 True HDR (${meta.hdrType} • ${meta.pixFmt}${meta.hdrMaxNits ? ` • ${meta.hdrMaxNits}nit / MaxCLL ${meta.hdrMaxCll}` : ''}) -> 144p–720p H.264 SDR + 1080p–4K AV1 10-bit HDR10 fMP4`
+            ? ` | 🌈 True HDR (${meta.hdrType} • ${meta.pixFmt}${meta.hdrMaxNits ? ` • ${meta.hdrMaxNits}nit / MaxCLL ${meta.hdrMaxCll}` : ''}) -> 144p–720p H.264 SDR + 1080p–4K HEVC 10-bit (hvc1) HDR10 fMP4`
             : ` | SDR (${meta.pixFmt}) -> H.264`;
         const hiResTag = meta.hiResEligible
             ? ` + 🎧 Hi-Res ${meta.hiResBitDepth}-bit/${(meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1)}kHz ${meta.hiResFormat.toUpperCase()}${meta.hiResFallbackReason ? ' (Auto-FLAC >1.5GB)' : ''}`

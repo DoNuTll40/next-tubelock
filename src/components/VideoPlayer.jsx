@@ -1378,11 +1378,16 @@ export default function VideoPlayer({
                 hls.autoLevelCapping = computedAutoCap;
                 if (parsed.length > 1) {
                   const sortedByHeight = [...parsed].sort((a, b) => (a.height || 0) - (b.height || 0));
-                  const fastStart = isMobile
-                    ? sortedByHeight[0]
-                    : sortedByHeight.find((l) => l.height >= 360 && l.height <= 480) || sortedByHeight[0];
+                  // On HDR-capable displays, prefer starting directly on the lowest HDR tier (e.g. 1080p HDR)
+                  // so Android Chrome initializes SurfaceFlinger directly in 10-bit HDR mode without getting stuck in SDR!
+                  const firstHdrLevel = displaySupportsHdr ? sortedByHeight.find((l) => l.isHdr) : null;
+                  const fastStart = firstHdrLevel
+                    ? firstHdrLevel
+                    : isMobile
+                      ? sortedByHeight[0]
+                      : sortedByHeight.find((l) => l.height >= 360 && l.height <= 480) || sortedByHeight[0];
                   if (fastStart) {
-                    // Load only chunk #0 from fast-start level (~150-250 KB) while keeping Auto ABR active for chunk #1+
+                    // Load only chunk #0 from fast-start level while keeping Auto ABR active for chunk #1+
                     hls.startLevel = fastStart.index;
                     setIsCurrentLevelHdr(Boolean(fastStart.isHdr));
                     onHdrStateChange?.(Boolean(fastStart.isHdr));
