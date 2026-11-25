@@ -155,7 +155,10 @@ export default function PlayerSettingsModal({
   const visibleLevels = (() => {
     const displaySupportsHdr =
       typeof window !== 'undefined' &&
-      Boolean(window.matchMedia?.('(dynamic-range: high)')?.matches);
+      Boolean(
+        window.matchMedia?.('(video-dynamic-range: high)')?.matches ||
+          window.matchMedia?.('(dynamic-range: high)')?.matches
+      );
     const byHeight = new Map();
     for (const lvl of levels) {
       const key = Number(lvl.height) || lvl.index;

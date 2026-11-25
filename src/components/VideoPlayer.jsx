@@ -1342,7 +1342,10 @@ export default function VideoPlayer({
               let appliedSaved = false;
               const displaySupportsHdr =
                 typeof window !== 'undefined' &&
-                Boolean(window.matchMedia?.('(dynamic-range: high)')?.matches);
+                Boolean(
+                  window.matchMedia?.('(video-dynamic-range: high)')?.matches ||
+                    window.matchMedia?.('(dynamic-range: high)')?.matches
+                );
               const screenPhysHeight =
                 typeof window !== 'undefined'
                   ? Math.round((window.screen?.height || 1080) * (window.devicePixelRatio || 1))
