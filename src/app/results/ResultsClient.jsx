@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import BrowserMediaImage from '@/components/BrowserMediaImage';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -71,7 +72,7 @@ export default function ResultsClient({ initialQuery = '' }) {
   }, []);
 
   // Helper to apply chips and panel filters
-  const applyFilters = (videoList) => {
+  const applyFilters = useCallback((videoList) => {
     let result = [...videoList];
 
     // Apply Chip Filter
@@ -126,7 +127,7 @@ export default function ResultsClient({ initialQuery = '' }) {
     }
 
     return result;
-  };
+  }, [activeChip, durationFilter, featureFilter, sortBy]);
 
   // 🚀 Advanced Multi-Signal YouTube-Grade Relevance Search Algorithm
   const searchResults = useMemo(() => {
@@ -278,7 +279,7 @@ export default function ResultsClient({ initialQuery = '' }) {
       .map((item) => item.video);
 
     return applyFilters(sortedVideos);
-  }, [videos, currentQuery, activeChip, durationFilter, featureFilter, sortBy, renderNow]);
+  }, [videos, currentQuery, applyFilters, renderNow]);
 
   return (
     <div className="w-full min-h-[calc(100vh-56px)] bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#0F0F0F] dark:text-[#F1F1F1] pb-16">
@@ -563,7 +564,7 @@ function HorizontalVideoCard({ video }) {
         className="w-full sm:w-[360px] md:w-[420px] lg:w-[480px] aspect-video rounded-2xl overflow-hidden relative bg-zinc-900 shrink-0 shadow-2xs group-hover:shadow-md transition duration-200"
       >
         {effectiveThumbnail && !imgError ? (
-          <img
+          <BrowserMediaImage
             src={effectiveThumbnail}
             alt={video.title}
             onError={() => setImgError(true)}
@@ -615,7 +616,7 @@ function HorizontalVideoCard({ video }) {
         {/* Channel Row (Avatar + Name + Verified Badge) */}
         <div className="flex items-center gap-2 mt-3 mb-2">
           {video.author_picture ? (
-            <img
+            <BrowserMediaImage
               src={video.author_picture}
               alt={video.author_name || 'Channel'}
               className="w-6 h-6 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"

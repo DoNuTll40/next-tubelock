@@ -1,4 +1,5 @@
 import { getSessionUserId, isAdmin } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { getDb } from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { decodeVideoSlug } from '@/lib/videoUtils';
@@ -41,7 +42,16 @@ export async function GET(request, context) {
     const preferFull = searchParams.get('full') === '1';
     const requestedVersion = searchParams.get('v') || searchParams.get('versionId') || null;
     const sql = getDb();
-    const viewerUserId = await getSessionUserId(sql);
+    const [viewerUserId, [policy]] = await Promise.all([
+      getSessionUserId(sql),
+      sql`SELECT user_id, visibility, category, content_rating FROM videos WHERE id = ${id}`,
+    ]);
+    if (!policy) {
+      return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404, headers: timing('access') });
+    }
+    if (!canViewVideo(policy, viewerUserId, isAdmin(viewerUserId))) {
+      return NextResponse.json({ success: false, error: 'วิดีโอนี้ตั้งค่าเป็นส่วนตัว' }, { status: 403, headers: timing('access') });
+    }
     const wantsAdultPreviews = searchParams.get('previews') === '1' &&
       request.cookies.get(POSTER_PREFERENCE)?.value === '1';
     const showAdultPreviews = wantsAdultPreviews && Boolean(viewerUserId);
@@ -53,20 +63,17 @@ export async function GET(request, context) {
       preferFull,
     });
 
-    const rating = data?.video;
-    if (notReady || !rating || (rating.status && rating.status !== 'READY')) {
+    if (notReady || !data?.video || (data.video.status && data.video.status !== 'READY')) {
       return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404, headers: timing(path) });
     }
-    if (!canViewVideo(rating, viewerUserId, viewerUserId != null && isAdmin(viewerUserId))) {
-      return NextResponse.json({ success: false, error: 'วิดีโอนี้ตั้งค่าเป็นส่วนตัว' }, { status: 403, headers: timing(path) });
-    }
 
-    return NextResponse.json(showAdultPreviews ? data : protectSourcePreviews(data, rating), { headers: timing(path) });
+    const video = { ...data.video, ...policy, visibility: policy.visibility ?? 'public' };
+    const responseData = { ...data, video };
+    return NextResponse.json(showAdultPreviews ? responseData : protectSourcePreviews(responseData, video), { headers: timing(path) });
   } catch (err) {
-    console.error('[API_VIDEO_SOURCE_ERROR]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message },
-      { status: err.message === 'Video not found' ? 404 : 500 }
-    );
+    if (err.message === 'Video not found') {
+      return NextResponse.json({ success: false, error: 'Video not found' }, { status: 404, headers: EDGE_CACHE_HEADERS });
+    }
+    return apiError(err, { context: 'GET /api/videos/[id]/source', headers: EDGE_CACHE_HEADERS });
   }
 }

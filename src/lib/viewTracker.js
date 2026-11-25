@@ -1,150 +1,66 @@
-import { getDb } from './db';
+import { watchTimeThreshold } from './videoUtils.js';
+import { canViewVideo } from './videoVisibility.js';
 
-// ── In-Memory State across Fast Refresh / Hot Reloading ───────────────
-const viewBuffer = globalThis.__tubelock_view_buffer || (globalThis.__tubelock_view_buffer = new Map());
-const viewCooldown = globalThis.__tubelock_view_cooldown || (globalThis.__tubelock_view_cooldown = new Map());
+export async function recordVerifiedView(sql, { videoId, versionId, viewer, watchTime }) {
+  const [video] = await sql`
+    SELECT id, user_id, visibility, duration
+    FROM videos
+    WHERE id = ${videoId} AND (${versionId}::int IS NOT NULL OR status = 'READY' OR status IS NULL)
+  `;
+  if (!video) return { status: 404, body: { success: false, error: 'Video not found' } };
+  if (!canViewVideo(video, viewer.id, viewer.isAdmin)) {
+    return { status: 403, body: { success: false, error: 'Forbidden' } };
+  }
 
-// ── Configuration ─────────────────────────────────────────────────────
-// 1. ครบ 5 วิวเมื่อไหร่ ให้เขียนลง Database ทันที
-export const BATCH_THRESHOLD = 5;
-
-// 2. Cooldown ป้องกันผู้ใช้เดิม / IP เดิมปั๊มวิวซ้ำภายใน 15 นาที
-export const COOLDOWN_MS = 15 * 60 * 1000;
-
-// 3. ปัดกวาดวิวที่ยังไม่ถึง 5 วิวลง DB ทุกๆ 30 วินาที เพื่อไม่ให้ยอดตกหล่น
-export const FLUSH_INTERVAL_MS = 30 * 1000;
-
-/**
- * Flush pending views count for a specific video into Neon DB
- */
-export async function flushVideoViews(videoId) {
-  const vId = String(videoId);
-  const count = viewBuffer.get(vId) || 0;
-  if (count <= 0) return 0;
-
-  // Atomically claim the count
-  viewBuffer.delete(vId);
-
-  try {
-    const sql = getDb();
-    await sql`
-      UPDATE videos 
-      SET views_count = COALESCE(views_count, 0) + ${count}
-      WHERE id = ${Number(vId)};
+  let duration = Number(video.duration);
+  if (versionId != null) {
+    const [version] = await sql`
+      SELECT duration FROM video_versions
+      WHERE id = ${versionId} AND video_id = ${videoId} AND (status = 'READY' OR status IS NULL)
     `;
-    console.log(`[ViewTracker] 🚀 Flushed ${count} view(s) to DB for Video #${vId}`);
-    return count;
-  } catch (err) {
-    console.error(`[ViewTracker Error] Failed to flush views for Video #${vId}:`, err?.message);
-    // Put back count if DB update failed
-    viewBuffer.set(vId, (viewBuffer.get(vId) || 0) + count);
-    return 0;
-  }
-}
-
-/**
- * Periodic Sweep: Flush all pending views in buffer to DB
- */
-export async function flushAllPendingViews() {
-  if (viewBuffer.size === 0) return;
-  const entries = Array.from(viewBuffer.entries());
-  for (const [vId, count] of entries) {
-    if (count > 0) {
-      await flushVideoViews(vId);
-    }
-  }
-}
-
-// Ensure background sweep timer is started once
-if (!globalThis.__tubelock_view_flush_timer) {
-  globalThis.__tubelock_view_flush_timer = setInterval(() => {
-    flushAllPendingViews().catch((err) => {
-      console.warn('[ViewTracker Background Sweep Warning]:', err?.message);
-    });
-
-    // Cleanup expired cooldown keys
-    const now = Date.now();
-    for (const [key, expiresAt] of viewCooldown.entries()) {
-      if (expiresAt <= now) {
-        viewCooldown.delete(key);
-      }
-    }
-  }, FLUSH_INTERVAL_MS);
-}
-
-/**
- * Record a verified quality view
- * 
- * @param {Object} params
- * @param {string|number} params.videoId
- * @param {string} params.clientKey - Unique fingerprint (e.g. userId_videoId or ip_videoId)
- * @param {number} params.watchTime - Accumulated active playback time in seconds
- * @param {number} params.duration - Total video duration in seconds
- */
-export async function recordVerifiedView({ videoId, clientKey, watchTime, duration }) {
-  if (!videoId) {
-    return { success: false, error: 'Video ID is required' };
+    if (!version) return { status: 404, body: { success: false, error: 'Video version not found' } };
+    duration = Number(version.duration) || duration;
   }
 
-  const vId = String(videoId);
-  const now = Date.now();
-
-  // 1. ตรวจสอบเงื่อนไขเวลาในการรับชมจริง (Watch Time Threshold)
-  // ต้องดูอย่างน้อย 15 วินาที หรือ 30% ของคลิปหากเป็นคลิปสั้น
-  const dur = Number(duration) || 0;
-  const minRequiredSec = dur > 0 ? Math.min(15, Math.max(3, dur * 0.3)) : 15;
-  const elapsed = Number(watchTime) || 0;
-
-  if (elapsed < minRequiredSec) {
-    return {
-      success: false,
-      counted: false,
-      reason: 'insufficient_watch_time',
-      message: `ต้องรับชมอย่างน้อย ${Math.ceil(minRequiredSec)} วินาที (ดูไปแล้ว ${elapsed} วินาที)`,
-    };
+  if (!(duration > 0) || watchTime > duration * 1.1) {
+    return { status: 400, body: { success: false, counted: false, reason: 'invalid_watch_time' } };
+  }
+  if (watchTime < watchTimeThreshold(duration)) {
+    return { status: 400, body: { success: false, counted: false, reason: 'insufficient_watch_time' } };
   }
 
-  // 2. ตรวจสอบ Cooldown ป้องกันการปั๊มวิวซ้ำ (F5 หรือเปิดดูซ้ำภายใน 15 นาที)
-  const cooldownKey = `${clientKey}_${vId}`;
-  const existingCooldown = viewCooldown.get(cooldownKey);
-
-  if (existingCooldown && existingCooldown > now) {
-    const remainingMin = Math.ceil((existingCooldown - now) / 60000);
-    return {
-      success: true,
-      counted: false,
-      reason: 'cooldown',
-      message: `วิวนี้ถูกบันทึกไปแล้ว (Cooldown อีก ${remainingMin} นาที)`,
-    };
-  }
-
-  // Set 15-minute cooldown
-  viewCooldown.set(cooldownKey, now + COOLDOWN_MS);
-
-  // 3. สะสมแต้มใน In-Memory Buffer
-  const currentCount = (viewBuffer.get(vId) || 0) + 1;
-  viewBuffer.set(vId, currentCount);
-
-  console.log(`[ViewTracker] 📈 Video #${vId} buffer count: ${currentCount}/${BATCH_THRESHOLD}`);
-
-  // 4. เงื่อนไข Batch: ถ้าครบ 5 วิว ให้เขียนลง Neon DB ทันที
-  let flushed = false;
-  if (currentCount >= BATCH_THRESHOLD) {
-    await flushVideoViews(vId);
-    flushed = true;
-  }
-
-  return {
-    success: true,
-    counted: true,
-    flushed,
-    bufferCount: flushed ? 0 : currentCount,
-  };
-}
-
-/**
- * Get current pending buffer count (useful for UI preview or telemetry)
- */
-export function getPendingBufferCount(videoId) {
-  return viewBuffer.get(String(videoId)) || 0;
+  // Lock the authorized row, then claim the window and increment in one statement.
+  const viewerKey = `user_${viewer.id}`;
+  const [result] = await sql`
+    WITH eligible AS MATERIALIZED (
+      SELECT id FROM videos
+      WHERE id = ${videoId}
+        AND user_id IS NOT DISTINCT FROM ${video.user_id}
+        AND visibility IS NOT DISTINCT FROM ${video.visibility}
+        AND (
+          (${versionId}::int IS NULL AND (status = 'READY' OR status IS NULL))
+          OR EXISTS (
+            SELECT 1 FROM video_versions vv
+            WHERE vv.id = ${versionId} AND vv.video_id = videos.id AND (vv.status = 'READY' OR vv.status IS NULL)
+          )
+        )
+      FOR UPDATE
+    ), claimed AS (
+      INSERT INTO video_view_log (video_id, viewer_key, bucket)
+      SELECT id, ${viewerKey}, FLOOR(EXTRACT(EPOCH FROM NOW()) / 900)::bigint
+      FROM eligible
+      ON CONFLICT DO NOTHING
+      RETURNING video_id
+    ), counted AS (
+      UPDATE videos v SET views_count = COALESCE(v.views_count, 0) + 1
+      FROM claimed WHERE v.id = claimed.video_id
+      RETURNING v.id
+    )
+    SELECT EXISTS (SELECT 1 FROM eligible) AS eligible, EXISTS (SELECT 1 FROM counted) AS counted
+  `;
+  if (!result.eligible) return { status: 409, body: { success: false, error: 'Video changed' } };
+  const body = result.counted
+    ? { success: true, counted: true }
+    : { success: true, counted: false, reason: 'cooldown' };
+  return { status: 200, body };
 }

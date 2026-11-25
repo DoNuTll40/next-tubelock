@@ -1,20 +1,9 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { evictCachedServerSession, getServerSessionByToken } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { getDb } from '@/lib/db';
 import { fetchGeoIP, isPrivateIP, parseUserAgent } from '@/lib/sessionUtils';
-
-// ─── Helper: resolve current user from cookie token ──────────────────────────
-async function getCurrentSession(sql, token) {
-    if (!token) return null;
-    const [row] = await sql`
-        SELECT id AS session_id, user_id
-        FROM user_sessions
-        WHERE session_token = ${token}
-          AND is_active = TRUE
-          AND expires_at > NOW()
-    `;
-    return row || null;
-}
 
 // ─── GET /api/auth/sessions ───────────────────────────────────────────────────
 // Returns all active sessions for the current user (with automatic GeoIP backfill for missing locations)
@@ -25,7 +14,7 @@ export async function GET() {
 
     try {
         const sql = getDb();
-        const current = await getCurrentSession(sql, token);
+        const current = await getServerSessionByToken(token, sql);
         if (!current) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
         const sessions = await sql`
@@ -42,7 +31,7 @@ export async function GET() {
                 last_seen_at,
                 expires_at
             FROM user_sessions
-            WHERE user_id  = ${current.user_id}
+            WHERE user_id  = ${current.user.id}
               AND is_active = TRUE
               AND expires_at > NOW()
             ORDER BY last_seen_at DESC
@@ -74,15 +63,14 @@ export async function GET() {
                     ...s,
                     country,
                     city,
-                    is_current: s.id === current.session_id,
+                    is_current: s.id === current.sessionId,
                 };
             })
         );
 
         return NextResponse.json({ sessions: enriched });
     } catch (err) {
-        console.error('[Sessions GET Error]:', err);
-        return NextResponse.json({ error: 'Server error' }, { status: 500 });
+        return apiError(err, { context: 'GET /api/auth/sessions' });
     }
 }
 
@@ -95,7 +83,7 @@ export async function PATCH(request) {
 
     try {
         const sql = getDb();
-        const current = await getCurrentSession(sql, token);
+        const current = await getServerSessionByToken(token, sql);
         if (!current) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
         const body = await request.json().catch(() => ({}));
@@ -115,13 +103,12 @@ export async function PATCH(request) {
                 os = ${parsed.os},
                 browser = ${parsed.browser},
                 last_seen_at = NOW()
-            WHERE id = ${current.session_id};
+            WHERE id = ${current.sessionId} AND is_active = TRUE AND expires_at > NOW();
         `;
 
         return NextResponse.json({ success: true, device: parsed });
     } catch (err) {
-        console.error('[Sessions PATCH Error]:', err);
-        return NextResponse.json({ error: 'Server error' }, { status: 500 });
+        return apiError(err, { context: 'PATCH /api/auth/sessions' });
     }
 }
 
@@ -135,35 +122,42 @@ export async function DELETE(request) {
 
     try {
         const body = await request.json().catch(() => ({}));
-        const { sessionId, all } = body;
+        const { sessionId, all } = body ?? {};
+        const targetSessionId = typeof sessionId === 'number' ||
+            (typeof sessionId === 'string' && /^\d+$/.test(sessionId))
+            ? Number(sessionId) : 0;
+        const revokeAll = all === true;
+        if (!revokeAll && (!Number.isInteger(targetSessionId) || targetSessionId < 1 || targetSessionId > 2147483647)) {
+            return NextResponse.json({ error: 'A valid sessionId or all: true is required' }, { status: 400 });
+        }
 
         const sql = getDb();
-        const current = await getCurrentSession(sql, token);
-        if (!current) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-        if (all) {
-            await sql`
-                UPDATE user_sessions
+        const [result] = await sql`
+            WITH actor_session AS (
+                SELECT id, user_id FROM user_sessions
+                WHERE session_token = ${token} AND is_active = TRUE AND expires_at > NOW()
+            ),
+            revoked AS (
+                UPDATE user_sessions AS target
                 SET is_active = FALSE
-                WHERE user_id = ${current.user_id}
-                  AND id != ${current.session_id}
-                  AND is_active = TRUE
-            `;
-        } else if (sessionId) {
-            await sql`
-                UPDATE user_sessions
-                SET is_active = FALSE
-                WHERE id = ${sessionId}
-                  AND user_id = ${current.user_id}
-                  AND id != ${current.session_id}
-            `;
-        } else {
-            return NextResponse.json({ error: 'sessionId or all required' }, { status: 400 });
+                FROM actor_session
+                WHERE target.user_id = actor_session.user_id
+                    AND target.id <> actor_session.id
+                    AND target.is_active = TRUE
+                    AND (${revokeAll} OR target.id = ${revokeAll ? 0 : targetSessionId})
+                RETURNING target.session_token
+            )
+            SELECT EXISTS (SELECT 1 FROM actor_session) AS authorized,
+                ARRAY(SELECT session_token FROM revoked) AS revoked_tokens;
+        `;
+        if (!result.authorized) {
+            evictCachedServerSession(token);
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
+        for (const revokedToken of result.revoked_tokens) evictCachedServerSession(revokedToken);
 
         return NextResponse.json({ success: true });
     } catch (err) {
-        console.error('[Sessions DELETE Error]:', err);
-        return NextResponse.json({ error: 'Server error' }, { status: 500 });
+        return apiError(err, { context: 'DELETE /api/auth/sessions' });
     }
 }

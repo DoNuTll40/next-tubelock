@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { usePathname } from 'next/navigation';
 
 const SidebarContext = createContext(null);
@@ -10,12 +10,13 @@ export function SidebarProvider({ children }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [previousPathname, setPreviousPathname] = useState(pathname);
 
-  // Auto-close overlay drawer whenever route changes
-  useEffect(() => {
+  if (pathname !== previousPathname) {
+    setPreviousPathname(pathname);
     setIsDrawerOpen(false);
     setIsMobileOpen(false);
-  }, [pathname]);
+  }
 
   const toggleSidebar = () => {
     setIsExpanded((prev) => !prev);

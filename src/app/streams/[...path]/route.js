@@ -1,10 +1,20 @@
 import { isMatureVideo, isPreviewImage, RESTRICTED_POSTER } from '@/lib/videoUtils';
 import { NextResponse } from 'next/server';
+import { getCachedServerSession } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { assetCache, isTempauthValid, sourceCache, wrapWithWorkerCache } from '@/lib/videoSourceService';
+import { canViewVideo, normalizeVideoVisibility } from '@/lib/videoVisibility';
 
 export const dynamic = 'force-dynamic';
+
+const ACCESS_TTL_MS = 30 * 1000;
+const NO_STORE = 'private, no-store';
+
+function forbidden() {
+  return new NextResponse('Forbidden', { status: 403, headers: { 'Cache-Control': NO_STORE } });
+}
 
 /**
  * GET /streams/[...path]
@@ -21,34 +31,59 @@ export async function GET(request, context) {
     const folderName = path[0]; // e.g. 'stream_vid_823'
     const fileName = path.slice(1).join('/'); // e.g. 'poster.jpg' หรือ '1080p/001.ts'
     const isPreview = isPreviewImage(fileName);
-    const redirectAsset = (url, cacheablePreview = false) => {
-      const response = NextResponse.redirect(url, 307);
-      if (isPreview) {
-        response.headers.set(
-          'Cache-Control',
-          cacheablePreview ? 'private, max-age=900' : 'private, no-store'
-        );
-      }
-      return response;
-    };
     const cacheKey = `${folderName}/${fileName}`.toLowerCase();
+    const restrictedPoster = () => redirectAsset(new URL(RESTRICTED_POSTER, request.url));
+    function redirectAsset(url, previewAccessUntil = 0) {
+      const response = NextResponse.redirect(url, 307);
+      const maxAge = Math.floor((previewAccessUntil - Date.now()) / 1000);
+      response.headers.set('Cache-Control', maxAge > 0 ? `private, max-age=${maxAge}` : NO_STORE);
+      return response;
+    }
 
-    // ⚡ 1. Ultra-fast In-Memory Hit (<1ms) with Mature Check & Token Expiration Validation
+    let sessionPromise;
+    const canRequestAsset = async (video) => {
+      if (canViewVideo(video)) return true;
+      sessionPromise ??= getCachedServerSession();
+      const session = await sessionPromise;
+      return canViewVideo(video, session?.id, Boolean(session?.isAdmin));
+    };
+    const redirectToFile = (url, isPrivate, accessUntil) => redirectAsset(
+      wrapWithWorkerCache(fileName, url),
+      isPreview && !isPrivate ? accessUntil : 0
+    );
+    const rememberAsset = (video, url, checkedAt, expiresAt) => {
+      const isPrivate = normalizeVideoVisibility(video.visibility) === 'private';
+      const accessUntil = checkedAt + ACCESS_TTL_MS;
+      assetCache.set(cacheKey, {
+        url,
+        isMature: isMatureVideo(video),
+        isPrivate,
+        ownerId: video.user_id,
+        videoId: video.id,
+        folderId: video.onedrive_folder_id,
+        accessUntil,
+        expiresAt,
+      });
+      return url ? redirectToFile(url, isPrivate, accessUntil) : restrictedPoster();
+    };
+
+    // Recheck access on each hit. Refresh the policy before reusing a longer-lived URL.
     const cached = assetCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      if (isPreview && cached.isMature) {
-        return redirectAsset(new URL(RESTRICTED_POSTER, request.url), false);
-      }
+    const hasCachedAsset = cached?.expiresAt > Date.now() && typeof cached.isPrivate === 'boolean';
+    if (hasCachedAsset && cached.accessUntil > Date.now()) {
+      const policy = { visibility: cached.isPrivate ? 'private' : 'public', user_id: cached.ownerId };
+      if (!(await canRequestAsset(policy))) return forbidden();
+      if (isPreview && cached.isMature) return restrictedPoster();
       if (cached.url && isTempauthValid(cached.url)) {
-        return redirectAsset(wrapWithWorkerCache(fileName, cached.url), isPreview && !cached.isMature);
+        return redirectToFile(cached.url, cached.isPrivate, cached.accessUntil);
       }
     }
-    assetCache.delete(cacheKey);
+    if (!hasCachedAsset) assetCache.delete(cacheKey);
 
-    // ⚡ 2. Check in-memory sourceCache BEFORE hitting Neon DB (<1ms, 0 DB queries, 0 Graph calls!)
-    const matchVersioned = folderName.match(/^stream_vid_(\d+)_v(\d+)$/i);
-    const matchId = !matchVersioned ? folderName.match(/^stream_vid_(\d+)$/i) : null;
-    const tryServeFromSourceCache = (videoId, versionId = null, knownMature = null) => {
+    const match = /^stream_vid_(\d+)(?:_v(\d+))?$/i.exec(folderName);
+    const videoId = match ? Number(match[1]) : null;
+    const versionId = match?.[2] ? Number(match[2]) : null;
+    const tryServeFromSourceCache = async (videoId, versionId, knownVideo, checkedAt) => {
       const candidateKeys = versionId
         ? [`${videoId}:vid:${versionId}`, `${videoId}:v:${versionId}`]
         : [`${videoId}:v:default`, String(videoId), `${videoId}:v:legacy`];
@@ -57,80 +92,76 @@ export async function GET(request, context) {
         if (!memSource || memSource.expiresAt <= Date.now() || !Array.isArray(memSource.data?.items)) {
           continue;
         }
-        const matureFlag = knownMature !== null ? knownMature : isMatureVideo(memSource.data?.video);
-        if (isPreview && matureFlag) {
-          assetCache.set(cacheKey, {
-            url: null,
-            isMature: true,
-            expiresAt: Date.now() + 15 * 60 * 1000,
-          });
-          return redirectAsset(new URL(RESTRICTED_POSTER, request.url), false);
+        const sourceVideo = memSource.data.video;
+        if (!sourceVideo || !Object.hasOwn(sourceVideo, 'visibility') || Number(sourceVideo.id) !== Number(videoId)) {
+          continue;
+        }
+        if (knownVideo) {
+          if (sourceVideo.onedrive_folder_id !== knownVideo.onedrive_folder_id) continue;
+        } else if (!(memSource.accessCheckedAt + ACCESS_TTL_MS > Date.now()) ||
+          Number(sourceVideo.active_version?.id || 0) !== (versionId || 0)) {
+          continue;
+        }
+        if (!(await canRequestAsset(sourceVideo))) {
+          if (knownVideo) continue;
+          return forbidden();
+        }
+
+        const video = knownVideo ?? sourceVideo;
+        const accessCheckedAt = checkedAt ?? memSource.accessCheckedAt;
+        if (isPreview && isMatureVideo(video)) {
+          return rememberAsset(video, null, accessCheckedAt, Date.now() + 15 * 60 * 1000);
         }
         const foundItem = memSource.data.items.find(
           (i) => i.name?.toLowerCase() === fileName.toLowerCase()
         );
         if (foundItem?.downloadUrl && isTempauthValid(foundItem.downloadUrl)) {
-          assetCache.set(cacheKey, {
-            url: foundItem.downloadUrl,
-            isMature: matureFlag,
-            expiresAt: Date.now() + (isPreview ? 15 : 40) * 60 * 1000,
-          });
-          return redirectAsset(
-            wrapWithWorkerCache(fileName, foundItem.downloadUrl),
-            isPreview && !matureFlag
+          return rememberAsset(
+            video, foundItem.downloadUrl, accessCheckedAt, Date.now() + (isPreview ? 15 : 40) * 60 * 1000
           );
         }
       }
       return null;
     };
 
-    if (matchVersioned) {
-      const earlyHit = tryServeFromSourceCache(
-        parseInt(matchVersioned[1], 10),
-        parseInt(matchVersioned[2], 10)
-      );
-      if (earlyHit) return earlyHit;
-    } else if (matchId) {
-      const earlyHit = tryServeFromSourceCache(parseInt(matchId[1], 10));
+    if (videoId != null) {
+      const earlyHit = await tryServeFromSourceCache(videoId, versionId);
       if (earlyHit) return earlyHit;
     }
 
     const sql = getDb();
+    const accessCheckedAt = Date.now();
 
     // ⚡ 3. Locate video (or specific version) metadata in Neon DB (slim projection — never fetch source_cache!)
     let rows = [];
-    let resolvedVersionId = null;
 
-    if (matchVersioned) {
-      const vidId = parseInt(matchVersioned[1], 10);
-      const verId = parseInt(matchVersioned[2], 10);
-      resolvedVersionId = verId;
+    if (versionId != null) {
       rows = await sql`
-        SELECT v.id, vv.onedrive_folder_id, v.category, v.content_rating
+        SELECT v.id, vv.onedrive_folder_id, v.category, v.content_rating, v.visibility, v.user_id
         FROM video_versions vv
         JOIN videos v ON v.id = vv.video_id
-        WHERE vv.id = ${verId}
-          AND vv.video_id = ${vidId}
+        WHERE vv.id = ${versionId}
+          AND vv.video_id = ${videoId}
           AND (vv.status = 'READY' OR vv.status IS NULL)
         LIMIT 1;
       `;
-    } else if (matchId) {
-      const vidId = parseInt(matchId[1], 10);
+    } else if (videoId != null) {
       rows = await sql`
-        SELECT id, onedrive_folder_id, category, content_rating
+        SELECT id, onedrive_folder_id, category, content_rating, visibility, user_id
         FROM videos 
-        WHERE id = ${vidId} AND (status = 'READY' OR status IS NULL)
+        WHERE id = ${videoId} AND (status = 'READY' OR status IS NULL)
         LIMIT 1;
       `;
     }
 
     if (!rows || rows.length === 0) {
+      const folderPath = `%/${folderName.replace(/[\\%_]/g, '\\$&')}/%`;
       rows = await sql`
-        SELECT id, onedrive_folder_id, category, content_rating
+        SELECT id, onedrive_folder_id, category, content_rating, visibility, user_id
         FROM videos 
         WHERE (status = 'READY' OR status IS NULL)
-          AND (master_playlist_path LIKE ${'%' + folderName + '%'}
-            OR thumbnail_url LIKE ${'%' + folderName + '%'})
+          AND (('/' || master_playlist_path) LIKE ${folderPath}
+            OR ('/' || thumbnail_url) LIKE ${folderPath})
         LIMIT 1;
       `;
     }
@@ -140,14 +171,9 @@ export async function GET(request, context) {
     }
 
     const video = rows[0];
-    const mature = isMatureVideo(video);
-    if (isPreview && mature) {
-      assetCache.set(cacheKey, {
-        url: null,
-        isMature: true,
-        expiresAt: Date.now() + 15 * 60 * 1000,
-      });
-      return redirectAsset(new URL(RESTRICTED_POSTER, request.url), false);
+    if (!(await canRequestAsset(video))) return forbidden();
+    if (isPreview && isMatureVideo(video)) {
+      return rememberAsset(video, null, accessCheckedAt, Date.now() + 15 * 60 * 1000);
     }
 
     const folderId = video.onedrive_folder_id;
@@ -155,8 +181,13 @@ export async function GET(request, context) {
       return new NextResponse('OneDrive folder ID not found for video', { status: 404 });
     }
 
-    // ⚡ 4. Fallback in-memory sourceCache check (covers non-standard folder names matched via LIKE above)
-    const fallbackSourceHit = tryServeFromSourceCache(video.id, resolvedVersionId, mature);
+    if (hasCachedAsset && cached.videoId === video.id && cached.folderId === folderId &&
+      cached.expiresAt > Date.now() && cached.url && isTempauthValid(cached.url)) {
+      return rememberAsset(video, cached.url, accessCheckedAt, cached.expiresAt);
+    }
+
+    // Legacy folder names can reuse source URLs after resolving their video in the database.
+    const fallbackSourceHit = await tryServeFromSourceCache(video.id, versionId, video, accessCheckedAt);
     if (fallbackSourceHit) return fallbackSourceHit;
 
     // ⚡ 4. Fetch direct download link for this single asset from OneDrive via Microsoft Graph
@@ -169,24 +200,22 @@ export async function GET(request, context) {
     );
 
     if (!fileRes.ok) {
-      return new NextResponse(`File "${fileName}" not found in OneDrive stream folder (${fileRes.status})`, { status: 404 });
+      if (fileRes.status === 404) return new NextResponse('Stream asset not found', { status: 404 });
+      return apiError(new Error(`Graph stream asset lookup returned ${fileRes.status}`), {
+        context: 'GET /streams/[...path]', status: 502,
+      });
     }
 
     const fileData = await fileRes.json();
     const downloadUrl = fileData['@microsoft.graph.downloadUrl'];
     if (!downloadUrl) {
-      return new NextResponse('Could not obtain download URL from OneDrive', { status: 500 });
+      return apiError(new Error('Graph stream asset had no download URL'), {
+        context: 'GET /streams/[...path]', status: 502,
+      });
     }
 
-    assetCache.set(cacheKey, {
-      url: downloadUrl,
-      isMature: mature,
-      expiresAt: Date.now() + (isPreview ? 15 : 60) * 60 * 1000,
-    });
-
-    return redirectAsset(wrapWithWorkerCache(fileName, downloadUrl), isPreview && !mature);
+    return rememberAsset(video, downloadUrl, accessCheckedAt, Date.now() + (isPreview ? 15 : 60) * 60 * 1000);
   } catch (err) {
-    console.error('[Stream Asset Proxy Error]:', err);
-    return new NextResponse(err.message, { status: 500 });
+    return apiError(err, { context: 'GET /streams/[...path]' });
   }
 }

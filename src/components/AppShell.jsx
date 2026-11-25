@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { Suspense } from 'react';
 import Navbar from '@/components/Navbar';
 import Sidebar from '@/components/Sidebar';
 import SidebarDrawer from '@/components/SidebarDrawer';
@@ -34,7 +34,9 @@ export default function AppShell({ session, children }) {
   ) : (
     <div className="flex flex-col min-h-screen w-full relative bg-[#FBF9F5] dark:bg-[#0F0F0F] text-[#212529] dark:text-[#F1F1F1] transition-colors duration-200">
       {/* Top Navigation */}
-      <Navbar session={session} />
+      <Suspense>
+        <Navbar session={session} />
+      </Suspense>
 
       {/* Main Body */}
       <div className="flex-1 flex w-full">

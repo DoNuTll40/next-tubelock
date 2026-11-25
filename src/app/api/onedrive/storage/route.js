@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { getSessionUserId } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { encodeVideoSlug, isMatureVideo } from '@/lib/videoUtils';
@@ -22,14 +23,8 @@ export async function GET() {
         const clientSecret = process.env.AZURE_CLIENT_SECRET;
         const targetUser = process.env.ONEDRIVE_USER_ID;
 
-        if (!tenantId || !clientId || !clientSecret) {
-            return Response.json(
-                {
-                    success: false,
-                    error: 'กรุณาตั้งค่า AZURE_TENANT_ID, AZURE_CLIENT_ID และ AZURE_CLIENT_SECRET ใน .env',
-                },
-                { status: 400 }
-            );
+        if (!tenantId || !clientId || !clientSecret || !targetUser) {
+            throw new Error('OneDrive credentials are incomplete');
         }
 
         // 2. ขอ Token จาก Microsoft
@@ -50,14 +45,9 @@ export async function GET() {
         const tokenData = await tokenRes.json();
 
         if (!tokenRes.ok) {
-            return Response.json(
-                {
-                    success: false,
-                    status: tokenRes.status,
-                    error: tokenData.error_description || tokenData.error,
-                },
-                { status: tokenRes.status }
-            );
+            return apiError(new Error(tokenData.error_description || tokenData.error || `Token response ${tokenRes.status}`), {
+                context: 'GET /api/onedrive/storage', status: 502,
+            });
         }
 
         const accessToken = tokenData.access_token;
@@ -79,11 +69,9 @@ export async function GET() {
 
         if (!driveRes.ok) {
             const errText = await driveRes.text();
-            console.error('[Microsoft Graph driveRes Error]:', driveRes.status, errText);
-            return Response.json(
-                { success: false, error: `ไม่สามารถดึงข้อมูล Drive (${driveRes.status}): ${errText}` },
-                { status: driveRes.status }
-            );
+            return apiError(new Error(`Graph drive response ${driveRes.status}: ${errText}`), {
+                context: 'GET /api/onedrive/storage', status: 502,
+            });
         }
 
         const driveData = await driveRes.json();
@@ -200,10 +188,6 @@ export async function GET() {
             },
         });
     } catch (error) {
-        console.error('OneDrive API Route Error:', error);
-        return Response.json(
-            { success: false, error: error.message },
-            { status: 500 }
-        );
+        return apiError(error, { context: 'GET /api/onedrive/storage' });
     }
 }

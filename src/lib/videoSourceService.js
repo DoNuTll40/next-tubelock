@@ -76,8 +76,8 @@ export function invalidateVideoCaches(videoId, versionId = null) {
   }
   const prefix = `stream_vid_${idStr}/`;
   const verPrefixBase = `stream_vid_${idStr}_v`;
-  for (const key of assetCache.keys()) {
-    if (key.startsWith(prefix) || key.startsWith(verPrefixBase)) {
+  for (const [key, asset] of assetCache) {
+    if (key.startsWith(prefix) || key.startsWith(verPrefixBase) || String(asset.videoId) === idStr) {
       assetCache.delete(key);
     }
   }
@@ -703,6 +703,7 @@ export async function resolveVideoSourceServer(
       LIMIT 1;
     `;
 
+    const accessCheckedAt = Date.now();
     let rows;
     try {
       rows = await queryWithVersions();
@@ -797,12 +798,13 @@ export async function resolveVideoSourceServer(
       : cleanBaseVideo;
 
     const storeInMemoryCache = (payloadData, expiresAt) => {
-      sourceCache.set(cacheKey, { data: payloadData, expiresAt });
+      const entry = { data: payloadData, expiresAt, accessCheckedAt };
+      sourceCache.set(cacheKey, entry);
       partialCache.delete(cacheKey);
       if (activeVersionId) {
-        sourceCache.set(`${id}:vid:${activeVersionId}`, { data: payloadData, expiresAt });
+        sourceCache.set(`${id}:vid:${activeVersionId}`, entry);
       } else {
-        sourceCache.set(String(id), { data: payloadData, expiresAt });
+        sourceCache.set(String(id), entry);
       }
     };
 

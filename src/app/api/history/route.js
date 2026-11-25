@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { getDb } from '@/lib/db';
+import { getDb, retryDbRead } from '@/lib/db';
+import { apiError } from '@/lib/apiError';
 import { getCachedServerSession } from '@/lib/access';
 import { protectVideoPoster, isMusicVideo } from '@/lib/videoUtils';
 
@@ -24,7 +25,7 @@ export async function GET(request) {
     let history;
     if (query) {
       const searchPattern = `%${query}%`;
-      history = await sql`
+      history = await retryDbRead(() => sql`
         SELECT 
           h.id AS history_id,
           h.video_id,
@@ -57,9 +58,9 @@ export async function GET(request) {
           AND (v.title ILIKE ${searchPattern} OR v.description ILIKE ${searchPattern})
         ORDER BY h.watched_at DESC
         LIMIT 150;
-      `;
+      `);
     } else {
-      history = await sql`
+      history = await retryDbRead(() => sql`
         SELECT 
           h.id AS history_id,
           h.video_id,
@@ -91,7 +92,7 @@ export async function GET(request) {
         WHERE h.user_id = ${session.id}
         ORDER BY h.watched_at DESC
         LIMIT 150;
-      `;
+      `);
     }
 
     return NextResponse.json({
@@ -105,8 +106,7 @@ export async function GET(request) {
       })),
     });
   } catch (error) {
-    console.error('[API History GET Error]:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiError(error, { context: 'GET /api/history' });
   }
 }
 
@@ -185,8 +185,7 @@ export async function POST(request) {
 
     return NextResponse.json({ success: true, isMusic });
   } catch (error) {
-    console.error('[API History POST Error]:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiError(error, { context: 'POST /api/history' });
   }
 }
 
@@ -254,7 +253,6 @@ export async function DELETE(request) {
 
     return NextResponse.json({ success: false, error: 'Missing videoId or all parameter' }, { status: 400 });
   } catch (error) {
-    console.error('[API History DELETE Error]:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiError(error, { context: 'DELETE /api/history' });
   }
 }

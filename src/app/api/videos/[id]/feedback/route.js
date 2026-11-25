@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCachedServerSession, accessError } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
+import { rateLimitResponse } from '@/lib/rateLimit';
 import { decodeVideoSlug } from '@/lib/videoUtils';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +19,8 @@ export async function POST(request, context) {
     const session = await getCachedServerSession();
     const userId = session?.id ?? null;
     if (userId == null) return accessError(401);
+    const limited = await rateLimitResponse(sql, 'videoFeedback', userId);
+    if (limited) return limited;
 
     const { id: rawId } = await context.params;
     const videoId = decodeVideoSlug(rawId) || parseInt(rawId, 10);
@@ -47,7 +51,6 @@ export async function POST(request, context) {
 
     return NextResponse.json({ success: true, hidden: true, feedbackType, videoId });
   } catch (err) {
-    console.error('[API_VIDEO_FEEDBACK_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'POST /api/videos/[id]/feedback' });
   }
 }

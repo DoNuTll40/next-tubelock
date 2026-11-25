@@ -1,9 +1,10 @@
+import { apiError } from '@/lib/apiError';
 import { protectVideoPoster } from '@/lib/videoUtils';
 import { ensureVideoVersionsSchema } from '@/lib/videoVersions';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
-import { isAdmin, accessError } from '@/lib/access';
+import { isAdmin, accessError, getServerSessionByToken } from '@/lib/access';
 import { isMusicVideo } from '@/lib/videoUtils';
 import { buildUserTasteProfile, rankHomeFeedVideos } from '@/lib/recommendationEngine';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
@@ -76,21 +77,8 @@ export async function GET(request) {
     // Resolve user_id from session cookie
     const cookieStore = await cookies();
     const token = cookieStore.get('tubelock_session')?.value;
-    let userId = null;
-    if (token) {
-      try {
-        const sessionRows = await sql`
-          SELECT user_id FROM user_sessions
-          WHERE session_token = ${token}
-            AND is_active = TRUE
-            AND expires_at > NOW()
-          LIMIT 1;
-        `;
-        if (sessionRows.length > 0) {
-          userId = sessionRows[0].user_id;
-        }
-      } catch (_) {}
-    }
+    const session = await getServerSessionByToken(token, sql).catch(() => null);
+    const userId = session?.user.id ?? null;
 
     const isMine = searchParams.get('mine') === '1';
     if (isMine && userId == null) {
@@ -312,7 +300,6 @@ export async function GET(request) {
 
     return NextResponse.json({ success: true, data: rankedRows }, { headers });
   } catch (err) {
-    console.error('[API_VIDEOS_GET_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message, data: [] }, { status: 500 });
+    return apiError(err, { context: 'GET /api/videos', body: { data: [] } });
   }
 }

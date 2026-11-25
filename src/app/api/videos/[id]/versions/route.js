@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getSessionUserId, isAdmin } from '@/lib/access';
@@ -47,7 +48,6 @@ export async function GET(request, context) {
       }
     );
   } catch (err) {
-    console.error('[GET_VIDEO_VERSIONS_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'GET /api/videos/[id]/versions' });
   }
 }

@@ -1,7 +1,7 @@
-import { protectVideoPoster } from '@/lib/videoUtils';
 import { cookies } from 'next/headers';
-import { getDb } from '@/lib/db';
-import { isMusicVideo } from '@/lib/videoUtils';
+import { getSessionUserId } from '@/lib/access';
+import { getDb, retryDbRead } from '@/lib/db';
+import { isMusicVideo, protectVideoPoster } from '@/lib/videoUtils';
 import HistoryClient from './HistoryClient';
 
 export const dynamic = 'force-dynamic';
@@ -17,25 +17,15 @@ export default async function HistoryPage() {
   const token = cookieStore.get('tubelock_session')?.value;
   const isPaused = cookieStore.get('tubelock_pause_history')?.value === 'true';
 
-  let user = null;
   let history = [];
 
   if (token) {
     try {
       const sql = getDb();
-      const userRows = await sql`
-        SELECT s.user_id, u.name, u.email, u.picture
-        FROM user_sessions s
-        JOIN users u ON u.id = s.user_id
-        WHERE s.session_token = ${token}
-          AND s.is_active = TRUE
-          AND s.expires_at > NOW()
-        LIMIT 1;
-      `;
-      user = userRows[0] || null;
+      const userId = await getSessionUserId(sql);
 
-      if (user) {
-        const rows = await sql`
+      if (userId != null) {
+        const rows = await retryDbRead(() => sql`
           SELECT 
             h.id AS history_id,
             h.video_id,
@@ -63,10 +53,10 @@ export default async function HistoryPage() {
           FROM watch_history_log h
           JOIN videos v ON h.video_id = v.id
           LEFT JOIN users u ON v.user_id = u.id
-          WHERE h.user_id = ${user.user_id}
+          WHERE h.user_id = ${userId}
           ORDER BY h.watched_at DESC
           LIMIT 150;
-        `;
+        `);
 
         history = rows.map((r) => ({
           ...protectVideoPoster(r),
@@ -87,7 +77,6 @@ export default async function HistoryPage() {
   return (
     <HistoryClient
       initialHistory={history}
-      initialUser={user}
       initialIsPaused={isPaused}
     />
   );

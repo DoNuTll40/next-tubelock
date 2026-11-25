@@ -1,4 +1,6 @@
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
+import { getDb } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 // Default fallback configs in case DB is unreachable or keys are missing
@@ -26,7 +28,7 @@ const DEFAULT_SETTINGS = {
   },
 };
 
-import { getDb } from '@/lib/db';
+const PUBLIC_SETTINGS_KEYS = Object.keys(DEFAULT_SETTINGS);
 
 function getDbClient() {
   return getDb();
@@ -92,14 +94,14 @@ export async function GET() {
     `;
 
     const [rows, actor] = await Promise.all([
-      sql`SELECT key, value FROM app_settings;`,
-      getSessionUserId().catch(() => null),
+      sql`SELECT key, value FROM app_settings WHERE key = ANY(${PUBLIC_SETTINGS_KEYS}::text[]);`,
+      getSessionUserId(sql).catch(() => null),
     ]);
 
     // Map rows array into an object: { [key]: value }
     const settingsMap = { ...DEFAULT_SETTINGS };
     for (const row of rows) {
-      if (row.key) {
+      if (PUBLIC_SETTINGS_KEYS.includes(row.key)) {
         settingsMap[row.key] = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
       }
     }
@@ -122,17 +124,10 @@ export async function GET() {
       userPreferences,
     });
   } catch (error) {
-    console.error('[API_SETTINGS_GET_ERROR]:', error);
-    // Return fallback gracefully to prevent web crash
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Failed to fetch settings from database',
-        data: DEFAULT_SETTINGS,
-        userPreferences: null,
-      },
-      { status: 500 }
-    );
+    return apiError(error, {
+      context: 'GET /api/settings',
+      body: { data: DEFAULT_SETTINGS, userPreferences: null },
+    });
   }
 }
 
@@ -174,14 +169,7 @@ export async function PATCH(request) {
       userPreferences: typeof savedPrefs === 'string' ? JSON.parse(savedPrefs) : savedPrefs,
     });
   } catch (error) {
-    console.error('[API_SETTINGS_PATCH_ERROR]:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Failed to save user preferences',
-      },
-      { status: 500 }
-    );
+    return apiError(error, { context: 'PATCH /api/settings' });
   }
 }
 
@@ -242,13 +230,6 @@ export async function POST(request) {
       },
     });
   } catch (error) {
-    console.error('[API_SETTINGS_POST_ERROR]:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Failed to update settings in database',
-      },
-      { status: 500 }
-    );
+    return apiError(error, { context: 'POST /api/settings' });
   }
 }

@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import path from 'path';
@@ -83,10 +84,6 @@ export async function POST(request) {
       isComplete,
     });
   } catch (err) {
-    console.error('[Upload Chunk Error]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message || 'บันทึกชิ้นส่วนไฟล์ไม่สำเร็จ' },
-      { status: 500 }
-    );
+    return apiError(err, { context: 'POST /api/hls/upload-chunk', message: 'บันทึกชิ้นส่วนไฟล์ไม่สำเร็จ' });
   }
 }

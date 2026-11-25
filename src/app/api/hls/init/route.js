@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { createHlsFolder } from '@/lib/onedriveServer';
@@ -27,10 +28,6 @@ export async function POST(request) {
       ...folderInfo,
     });
   } catch (err) {
-    console.error('[HLS Init Error]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message || 'ไม่สามารถสร้างโฟลเดอร์ HLS บน OneDrive ได้' },
-      { status: 500 }
-    );
+    return apiError(err, { context: 'POST /api/hls/init', message: 'ไม่สามารถสร้างโฟลเดอร์ HLS บน OneDrive ได้' });
   }
 }

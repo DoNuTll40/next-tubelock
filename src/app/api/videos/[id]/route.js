@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { protectVideoPoster, decodeVideoSlug } from '@/lib/videoUtils';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
@@ -119,7 +120,7 @@ export async function GET(request, context) {
       }
     );
   } catch (err) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'GET /api/videos/[id]' });
   }
 }
 
@@ -240,11 +241,7 @@ export async function DELETE(request, context) {
       }
     );
   } catch (err) {
-    console.error('[DELETE_VIDEO_ERROR]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message },
-      { status: 500 }
-    );
+    return apiError(err, { context: 'DELETE /api/videos/[id]' });
   }
 }
 
@@ -484,7 +481,6 @@ export async function PATCH(request, context) {
       },
     });
   } catch (err) {
-    console.error('[PATCH_VIDEO_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'PATCH /api/videos/[id]' });
   }
 }

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { getSessionUserId } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { getDb } from '@/lib/db';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 let tableEnsured = false;
 
@@ -27,35 +29,17 @@ async function ensureSearchHistoryTable(sql) {
   }
 }
 
-async function resolveUserId(sql) {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('tubelock_session')?.value;
-  if (!token) return null;
-
-  try {
-    const sessionRows = await sql`
-      SELECT user_id FROM user_sessions
-      WHERE session_token = ${token}
-        AND is_active = TRUE
-        AND expires_at > NOW()
-      LIMIT 1;
-    `;
-    return sessionRows.length > 0 ? sessionRows[0].user_id : null;
-  } catch {
-    return null;
-  }
-}
-
 // 📥 GET: ดึงประวัติการค้นหาของ Account ที่กำลังล็อกอิน
 export async function GET() {
   try {
     const sql = getDb();
-    await ensureSearchHistoryTable(sql);
-
-    const userId = await resolveUserId(sql);
-    if (!userId) {
+    const userId = await getSessionUserId(sql);
+    if (userId == null) {
       return NextResponse.json({ success: true, loggedIn: false, data: [] });
     }
+    const limited = await rateLimitResponse(sql, 'searchHistoryRead', userId);
+    if (limited) return limited;
+    await ensureSearchHistoryTable(sql);
 
     const rows = await sql`
       SELECT id, query, thumbnail, updated_at
@@ -77,11 +61,7 @@ export async function GET() {
       })),
     });
   } catch (error) {
-    console.error('Error in GET /api/search/history:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch search history' },
-      { status: 500 }
-    );
+    return apiError(error, { context: 'GET /api/search/history' });
   }
 }
 
@@ -89,9 +69,11 @@ export async function GET() {
 export async function POST(request) {
   try {
     const sql = getDb();
-    await ensureSearchHistoryTable(sql);
-
-    const userId = await resolveUserId(sql);
+    const userId = await getSessionUserId(sql);
+    if (userId != null) {
+      const limited = await rateLimitResponse(sql, 'searchHistoryWrite', userId);
+      if (limited) return limited;
+    }
     const body = await request.json().catch(() => ({}));
     const query = (body.query || '').trim();
     const thumbnail = body.thumbnail || null;
@@ -100,10 +82,11 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: 'Query is required' }, { status: 400 });
     }
 
-    if (!userId) {
+    if (userId == null) {
       // ผู้ใช้ยังไม่ล็อกอิน ให้ client จัดการเก็บใน localStorage
       return NextResponse.json({ success: true, loggedIn: false });
     }
+    await ensureSearchHistoryTable(sql);
 
     // Upsert: ถ้าเคยค้นคำนี้แล้วให้อัปเดต updated_at และ thumbnail ล่าสุด
     await sql`
@@ -117,11 +100,7 @@ export async function POST(request) {
 
     return NextResponse.json({ success: true, loggedIn: true });
   } catch (error) {
-    console.error('Error in POST /api/search/history:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to save search history' },
-      { status: 500 }
-    );
+    return apiError(error, { context: 'POST /api/search/history' });
   }
 }
 
@@ -129,12 +108,13 @@ export async function POST(request) {
 export async function DELETE(request) {
   try {
     const sql = getDb();
-    await ensureSearchHistoryTable(sql);
-
-    const userId = await resolveUserId(sql);
-    if (!userId) {
+    const userId = await getSessionUserId(sql);
+    if (userId == null) {
       return NextResponse.json({ success: true, loggedIn: false });
     }
+    const limited = await rateLimitResponse(sql, 'searchHistoryWrite', userId);
+    if (limited) return limited;
+    await ensureSearchHistoryTable(sql);
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
@@ -157,10 +137,6 @@ export async function DELETE(request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error in DELETE /api/search/history:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to delete search history' },
-      { status: 500 }
-    );
+    return apiError(error, { context: 'DELETE /api/search/history' });
   }
 }

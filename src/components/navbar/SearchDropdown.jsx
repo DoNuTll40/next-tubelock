@@ -1,5 +1,6 @@
 'use client';
 
+import BrowserMediaImage from '@/components/BrowserMediaImage';
 import React, { useState, useEffect, useRef } from 'react';
 import { History, Search, X } from 'lucide-react';
 
@@ -294,7 +295,7 @@ export default function SearchDropdown({
                 <div className="flex items-center gap-1 shrink-0">
                   {thumbnail && (
                     <div className="w-14 h-8 sm:w-16 sm:h-9 rounded-md overflow-hidden bg-black/20 shrink-0 border border-black/10 dark:border-white/10 shadow-xs">
-                      <img
+                      <BrowserMediaImage
                         src={thumbnail}
                         alt=""
                         className="w-full h-full object-cover"

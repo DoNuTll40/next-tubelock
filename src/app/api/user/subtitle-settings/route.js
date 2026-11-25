@@ -1,5 +1,6 @@
+import { apiError } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { getSessionUserId } from '@/lib/access';
 import { getDb } from '@/lib/db';
 
 let columnEnsured = false;
@@ -23,10 +24,9 @@ async function ensureSubtitleColumn(sql) {
  */
 export async function GET() {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get('tubelock_session')?.value;
+    const userId = await getSessionUserId();
 
-    if (!token) {
+    if (userId == null) {
       return NextResponse.json({
         success: true,
         authenticated: false,
@@ -37,17 +37,11 @@ export async function GET() {
     const sql = getDb();
     await ensureSubtitleColumn(sql);
 
-    const rows = await sql`
-      SELECT u.id AS user_id, u.subtitle_settings
-      FROM user_sessions s
-      JOIN users u ON u.id = s.user_id
-      WHERE s.session_token = ${token}
-        AND s.is_active = TRUE
-        AND s.expires_at > NOW()
-      LIMIT 1
+    const [user] = await sql`
+      SELECT subtitle_settings FROM users WHERE id = ${userId}
     `;
 
-    if (!rows || rows.length === 0) {
+    if (!user) {
       return NextResponse.json({
         success: true,
         authenticated: false,
@@ -55,26 +49,17 @@ export async function GET() {
       });
     }
 
-    const raw = rows[0].subtitle_settings;
+    const raw = user.subtitle_settings;
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
 
     return NextResponse.json({
       success: true,
       authenticated: true,
-      userId: rows[0].user_id,
+      userId,
       subtitleSettings: parsed || null,
     });
   } catch (error) {
-    console.error('[API_USER_SUBTITLE_GET_ERROR]:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        authenticated: false,
-        subtitleSettings: null,
-        error: error.message || 'Failed to load user subtitle settings',
-      },
-      { status: 500 }
-    );
+    return apiError(error, { context: 'GET /api/user/subtitle-settings', message: 'Failed to load user subtitle settings', body: { authenticated: false, subtitleSettings: null } });
   }
 }
 
@@ -84,10 +69,9 @@ export async function GET() {
  */
 export async function POST(request) {
   try {
-    const cookieStore = await cookies();
-    const token = cookieStore.get('tubelock_session')?.value;
+    const userId = await getSessionUserId();
 
-    if (!token) {
+    if (userId == null) {
       return NextResponse.json({
         success: false,
         authenticated: false,
@@ -100,25 +84,6 @@ export async function POST(request) {
 
     const sql = getDb();
     await ensureSubtitleColumn(sql);
-
-    const sessionRows = await sql`
-      SELECT user_id
-      FROM user_sessions
-      WHERE session_token = ${token}
-        AND is_active = TRUE
-        AND expires_at > NOW()
-      LIMIT 1
-    `;
-
-    if (!sessionRows || sessionRows.length === 0) {
-      return NextResponse.json({
-        success: false,
-        authenticated: false,
-        error: 'Session expired or invalid',
-      }, { status: 401 });
-    }
-
-    const userId = sessionRows[0].user_id;
 
     // Merge with existing subtitle_settings if partial update
     const existingRows = await sql`
@@ -150,13 +115,6 @@ export async function POST(request) {
       subtitleSettings: updatedSettings,
     });
   } catch (error) {
-    console.error('[API_USER_SUBTITLE_POST_ERROR]:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Failed to save user subtitle settings',
-      },
-      { status: 500 }
-    );
+    return apiError(error, { context: 'POST /api/user/subtitle-settings', message: 'Failed to save user subtitle settings' });
   }
 }

@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { uploadHlsFileDirect, createHlsFileUploadSession } from '@/lib/onedriveServer';
@@ -75,10 +76,6 @@ export async function POST(request) {
       itemId: lastResult?.id,
     });
   } catch (err) {
-    console.error('[HLS Upload File Error]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message || 'เกิดข้อผิดพลาดในการอัปโหลดไฟล์ HLS' },
-      { status: 500 }
-    );
+    return apiError(err, { context: 'POST /api/hls/upload-file', message: 'เกิดข้อผิดพลาดในการอัปโหลดไฟล์ HLS' });
   }
 }

@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
 import { getCachedServerSession, evictCachedServerSession, accessError } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { validateHandleFormat } from '@/lib/channelHandle';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,12 +18,12 @@ export async function GET(request) {
     const sql = getDb();
     const session = await getCachedServerSession();
     const userId = session?.id ?? null;
+    if (userId == null) return accessError(401);
 
     const { searchParams } = new URL(request.url);
     const rawHandle = searchParams.get('handle');
 
     if (rawHandle === null) {
-      if (userId == null) return accessError(401);
       const rows = await sql`
         SELECT id, name, picture, handle, bio, banner_url
         FROM users
@@ -44,6 +46,8 @@ export async function GET(request) {
       });
     }
 
+    const limited = await rateLimitResponse(sql, 'handleAvailability', userId);
+    if (limited) return limited;
     const check = validateHandleFormat(rawHandle);
     if (!check.valid) {
       return NextResponse.json({
@@ -64,7 +68,7 @@ export async function GET(request) {
     `;
 
     if (existing.length > 0) {
-      const isOwn = userId != null && Number(existing[0].id) === Number(userId);
+      const isOwn = Number(existing[0].id) === Number(userId);
       return NextResponse.json({
         success: true,
         handle: check.handle,
@@ -84,8 +88,7 @@ export async function GET(request) {
       reason: 'สามารถใช้งาน @handle นี้ได้',
     });
   } catch (err) {
-    console.error('[API_USER_HANDLE_GET_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'GET /api/user/handle' });
   }
 }
 
@@ -171,7 +174,6 @@ export async function PATCH(request) {
         { status: 409 }
       );
     }
-    console.error('[API_USER_HANDLE_PATCH_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'PATCH /api/user/handle' });
   }
 }

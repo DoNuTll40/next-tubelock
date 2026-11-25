@@ -1,5 +1,6 @@
 'use client';
 
+import BrowserMediaImage from '@/components/BrowserMediaImage';
 import React, { useState, useEffect, useEffectEvent, useRef, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { Play, RotateCcw, Loader2, LockKeyhole, X } from 'lucide-react';
@@ -164,7 +165,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
         className={`relative w-full aspect-video rounded-xl overflow-hidden bg-zinc-900 transition-all duration-300 shadow-2xl ${canRevealPoster ? 'z-20' : ''}`}
       >
         {thumbnail ? (
-          <img
+          <BrowserMediaImage
             ref={imgRef}
             src={thumbnail}
             alt={v.title || 'Recommended video'}
@@ -245,7 +246,7 @@ function EndScreenCard({ video: v, isThirdOnMobile, onPreWarm, isFullscreen = fa
         {/* Author Name */}
         <div className={`flex items-center gap-1.5 truncate ${isFullscreen ? 'mt-1.5 sm:mt-2' : 'mt-1'}`}>
           {v.author_picture && (
-            <img
+            <BrowserMediaImage
               src={v.author_picture}
               alt={v.author_name || 'Channel'}
               className={`rounded-full object-cover shrink-0 ring-1 ring-white/15 ${isFullscreen ? 'w-4 h-4 sm:w-5 sm:h-5' : 'w-3.5 h-3.5 sm:w-4 sm:h-4'
@@ -364,7 +365,7 @@ function MobileEndScreenPrompt({ video: v, isFullscreen = false, onPreWarm, onSe
           )}
 
           {thumbnail ? (
-            <img
+            <BrowserMediaImage
               src={thumbnail}
               alt={v.title || 'Recommended video'}
               className="w-full h-full object-cover"
@@ -581,7 +582,7 @@ function DesktopCountdownEndScreen({
           )}
 
           {thumbnail ? (
-            <img
+            <BrowserMediaImage
               ref={imgRef}
               key={canSample ? `sample-${thumbnail}` : `display-${thumbnail}`}
               src={thumbnail}
@@ -710,7 +711,7 @@ function DesktopCountdownEndScreen({
 
         <div className={`flex max-w-full items-center justify-center gap-1.5 text-zinc-400 ${isFullscreen ? 'mt-2 text-xs sm:text-sm' : 'mt-1 text-[11px] sm:text-xs'}`}>
           {v.author_picture && (
-            <img
+            <BrowserMediaImage
               src={v.author_picture}
               alt={v.author_name || 'Channel'}
               className={`shrink-0 rounded-full object-cover ring-1 ring-white/15 ${isFullscreen ? 'size-5' : 'size-4'}`}

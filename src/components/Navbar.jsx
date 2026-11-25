@@ -1,7 +1,9 @@
 'use client';
 
+import BrowserMediaImage from '@/components/BrowserMediaImage';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import Image from 'next/image';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { User, Menu, Search, Mic, Plus, Bell, X } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useSidebar } from '@/context/SidebarContext';
@@ -19,14 +21,22 @@ async function sha256(message) {
 export default function Navbar({ session }) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlQuery = pathname === '/results' ? searchParams.get('search_query') : null;
   const { toggleSidebar, toggleDrawer } = useSidebar();
   const { mode, isDesktop, mounted } = useViewMode();
   const [avatarUrl, setAvatarUrl] = useState('');
   const [imgError, setImgError] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(urlQuery || '');
+  const [previousUrlQuery, setPreviousUrlQuery] = useState(urlQuery);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const searchContainerRef = useRef(null);
   const searchInputRef = useRef(null);
+
+  if (urlQuery !== previousUrlQuery) {
+    setPreviousUrlQuery(urlQuery);
+    if (urlQuery) setSearchQuery(urlQuery);
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -110,17 +120,6 @@ export default function Navbar({ session }) {
     }
   };
 
-  // Sync search input from URL when visiting /results
-  useEffect(() => {
-    if (typeof window !== 'undefined' && pathname === '/results') {
-      const params = new URLSearchParams(window.location.search);
-      const q = params.get('search_query');
-      if (q) {
-        setSearchQuery(q);
-      }
-    }
-  }, [pathname]);
-
   const isWatchPage = pathname?.startsWith('/watch');
   const [isScrolled, setIsScrolled] = useState(false);
 
@@ -174,9 +173,12 @@ export default function Navbar({ session }) {
           </button>
 
           <Link href="/" className="flex items-center gap-2 transition">
-            <img
+            <Image
               src="/images/TubeLock.png"
               alt="TubeLock Logo"
+              width={28}
+              height={28}
+              loading="eager"
               className="w-7 h-7 rounded-lg object-contain shadow-[0_2px_8px_rgba(255,122,0,0.3)] shrink-0"
             />
             <div className="flex items-start gap-1">
@@ -319,7 +321,7 @@ export default function Navbar({ session }) {
             )}
             <div className="w-8 h-8 rounded-full overflow-hidden bg-[#EFECE6] dark:bg-white/10 border border-[#EFECE6] dark:border-white/10 flex items-center justify-center">
               {avatarUrl && !imgError ? (
-                <img
+                <BrowserMediaImage
                   src={session?.picture ? session?.picture : avatarUrl}
                   alt="Profile"
                   onError={() => setImgError(true)}

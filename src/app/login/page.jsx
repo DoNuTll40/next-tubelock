@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
+import Image from 'next/image';
 import { useSearchParams } from 'next/navigation';
 
 function LoginForm() {
@@ -11,9 +12,12 @@ function LoginForm() {
     <div className="min-h-screen w-full relative flex items-center justify-center p-4 select-none">
       <div className="max-w-md w-full bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-3xl p-8 flex flex-col items-center text-center shadow-xl shadow-[#252018]/8 dark:shadow-black/30">
         <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-[0_8px_24px_rgba(255,122,0,0.35)] mb-4 shrink-0">
-          <img
+          <Image
             src="/images/TubeLock.png"
             alt="TubeLock Logo"
+            width={64}
+            height={64}
+            loading="eager"
             className="w-full h-full object-contain"
           />
         </div>

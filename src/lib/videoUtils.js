@@ -483,6 +483,11 @@ export function decodeVideoSlug(slugOrId) {
   return null;
 }
 
+export function watchTimeThreshold(duration) {
+  if (!Number.isFinite(duration) || duration <= 0) return 15;
+  return Math.min(15, Math.max(Math.min(3, duration), duration * 0.3));
+}
+
 /**
  * Checks whether a video is classified as 18+, mature, or adult content
  */

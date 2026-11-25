@@ -15,17 +15,6 @@ function formatBangkokTimeLabel() {
   }
 }
 
-export async function ensureWorkerLogsColumn(sql) {
-  try {
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS worker_logs JSONB DEFAULT '[]'::jsonb;`;
-  } catch (err) {
-    console.warn('[worker_logs schema warning]:', err.message);
-  }
-  try {
-    await sql`ALTER TABLE video_versions ADD COLUMN IF NOT EXISTS worker_logs JSONB DEFAULT '[]'::jsonb;`;
-  } catch (_) {}
-}
-
 export async function appendWorkerLog(
   sql,
   videoId,
@@ -48,7 +37,6 @@ export async function appendWorkerLog(
   };
 
   try {
-    await ensureWorkerLogsColumn(sql);
     const entryJson = JSON.stringify([entry]);
     if (verNum) {
       await sql`

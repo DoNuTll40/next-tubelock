@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { getDb } from '@/lib/db';
 import { createUploadSession } from '@/lib/onedriveServer';
+import { rateLimitResponse } from '@/lib/rateLimit';
+import { MAX_UPLOAD_BYTES, reserveUploadCapacity } from '@/lib/uploadLimits';
 import {
   ensureVideoVersionsSchema,
   ensurePrimaryVersionSeeded,
@@ -14,17 +17,24 @@ import {
  * and register initial video record (or a new video_versions record if targetVideoId is given).
  */
 export async function POST(request) {
+  let sql;
+  let reservationName;
   try {
-    const sql = getDb();
+    sql = getDb();
     const userId = await getSessionUserId(sql);
     if (userId == null) return accessError(401);
+    const limited = await rateLimitResponse(sql, 'uploadSession', userId);
+    if (limited) return limited;
     const admin = isAdmin(userId);
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ success: false, error: 'ข้อมูลอัปโหลดไม่ถูกต้อง' }, { status: 400 });
+    }
     const {
       fileName,
       title,
       description = '',
-      fileSize = 0,
+      fileSize,
       targetVideoId = null,
       versionLabel = '',
       versionKey = '',
@@ -40,11 +50,27 @@ export async function POST(request) {
       );
     }
 
-    const parsedTargetId = targetVideoId != null ? parseInt(targetVideoId, 10) : null;
-    if (targetVideoId != null && (!parsedTargetId || Number.isNaN(parsedTargetId))) {
+    if (!Number.isSafeInteger(fileSize) || fileSize < 1) {
+      return NextResponse.json({ success: false, error: 'ขนาดไฟล์ต้องเป็นจำนวนเต็มบวก' }, { status: 400 });
+    }
+    if (fileSize > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({
+        success: false,
+        error: 'ไฟล์มีขนาดเกินขีดจำกัดการอัปโหลด',
+        maxFileSize: MAX_UPLOAD_BYTES,
+      }, { status: 413 });
+    }
+
+    const parsedTargetId = targetVideoId == null ? null : Number(targetVideoId);
+    if (targetVideoId != null && (
+      (typeof targetVideoId !== 'number' && (typeof targetVideoId !== 'string' || !/^\d+$/.test(targetVideoId))) ||
+      !Number.isInteger(parsedTargetId) ||
+      parsedTargetId < 1 || parsedTargetId > 2147483647
+    )) {
       return NextResponse.json({ success: false, error: 'targetVideoId ไม่ถูกต้อง' }, { status: 400 });
     }
 
+    let ownerId = userId;
     if (parsedTargetId) {
       const parentRows = await sql`
         SELECT id, title, user_id
@@ -55,6 +81,7 @@ export async function POST(request) {
       if (!parentRows.length) {
         return accessError(404);
       }
+      ownerId = parentRows[0].user_id ?? userId;
     }
 
     // 1. Sanitize file name and create a unique raw file name
@@ -64,6 +91,14 @@ export async function POST(request) {
       .replace(/[^a-zA-Z0-9_\u0E00-\u0E7F-]/g, '_')
       .slice(0, 80);
     const uniqueRawFileName = `${crypto.randomUUID()}_${cleanBase}.${ext}`;
+
+    if (!(await reserveUploadCapacity(sql, ownerId, uniqueRawFileName, fileSize))) {
+      return NextResponse.json({
+        success: false,
+        error: 'พื้นที่จัดเก็บของบัญชีไม่เพียงพอสำหรับไฟล์นี้',
+      }, { status: 413 });
+    }
+    reservationName = uniqueRawFileName;
 
     // 2. Request Microsoft Graph to open an upload session directly into /raw
     const targetFolder = '/raw';
@@ -88,11 +123,17 @@ export async function POST(request) {
       const nextSort = (Number(maxSortRows?.[0]?.max_sort) || 0) + 1;
 
       const verRows = await sql`
+        WITH reservation AS (
+          DELETE FROM upload_reservations
+          WHERE raw_file_name = ${reservationName} AND expires_at > NOW()
+          RETURNING user_id, file_size_bytes
+        )
         INSERT INTO video_versions (
           video_id, version_key, label, badge, aspect_label, description,
-          is_default, sort_order, source_type, raw_file_name, file_size_bytes,
+          is_default, sort_order, source_type, raw_file_name, file_size_bytes, upload_reserved_bytes, upload_quota_user_id,
           status, transcode_progress, stage_detail, created_at, updated_at
-        ) VALUES (
+        )
+        SELECT
           ${parsedTargetId},
           ${uniqueKey},
           ${cleanLabel},
@@ -103,17 +144,20 @@ export async function POST(request) {
           ${nextSort},
           'hls',
           ${uniqueRawFileName},
-          ${fileSize},
+          reservation.file_size_bytes,
+          reservation.file_size_bytes,
+          reservation.user_id,
           'UPLOADING',
           0,
           'กำลังอัปโหลดไฟล์เวอร์ชันใหม่ตรงเข้า OneDrive (/raw)',
           NOW(),
           NOW()
-        )
+        FROM reservation
         RETURNING id, video_id, version_key, label, badge, aspect_label, status, raw_file_name, created_at;
       `;
 
       const createdVersion = verRows[0];
+      if (!createdVersion) throw new Error('Upload reservation expired before registration');
       return NextResponse.json({
         success: true,
         videoId: parsedTargetId,
@@ -132,10 +176,16 @@ export async function POST(request) {
 
     // 4. Create initial video record in Neon DB with status 'UPLOADING'
     const rows = await sql`
+      WITH reservation AS (
+        DELETE FROM upload_reservations
+        WHERE raw_file_name = ${reservationName} AND expires_at > NOW()
+        RETURNING file_size_bytes
+      )
       INSERT INTO videos (
         title, 
         description, 
-        file_size_bytes, 
+        file_size_bytes,
+        upload_reserved_bytes,
         status, 
         transcode_progress, 
         stage_detail, 
@@ -145,24 +195,27 @@ export async function POST(request) {
         user_id,
         created_at, 
         updated_at
-      ) VALUES (
+      )
+      SELECT
         ${videoTitle}, 
         ${description}, 
-        ${fileSize}, 
+        reservation.file_size_bytes,
+        reservation.file_size_bytes,
         'UPLOADING', 
         0, 
         'กำลังอัปโหลดไฟล์ตรงเข้า OneDrive Business (/raw)', 
         ${uniqueRawFileName}, 
         'hls', 
-        ${['Upload', 'HLS']}, 
+        ${['Upload', 'HLS']}::text[],
         ${userId},
         NOW(), 
         NOW()
-      )
+      FROM reservation
       RETURNING id, title, status, raw_file_name, created_at;
     `;
 
     const createdVideo = rows[0];
+    if (!createdVideo) throw new Error('Upload reservation expired before registration');
 
     return NextResponse.json({
       success: true,
@@ -175,18 +228,11 @@ export async function POST(request) {
       message: 'เปิด Upload Session กับ Microsoft Graph สำเร็จ',
     });
   } catch (err) {
-    console.error('[Upload Session Error Details]:', {
-      message: err.message,
-      stack: err.stack,
-      name: err.name,
-    });
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: err.message || 'ไม่สามารถเปิด Upload Session กับ Microsoft Graph ได้',
-        details: err.stack || err.toString(),
-      },
-      { status: 500 }
-    );
+    if (reservationName) {
+      await sql`DELETE FROM upload_reservations WHERE raw_file_name = ${reservationName};`.catch((releaseError) => {
+        console.error('[Upload reservation cleanup]', releaseError);
+      });
+    }
+    return apiError(err, { context: 'POST /api/upload/session' });
   }
 }

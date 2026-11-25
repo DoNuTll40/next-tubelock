@@ -11,9 +11,8 @@ export async function GET(request) {
     const cookieStore = await cookies();
     const token = cookieStore.get('tubelock_session')?.value;
 
-    // Deactivate session in DB (soft delete) and evict from proxy & server memory caches
+    // Deactivate the session and clear the shared cache.
     if (token) {
-        globalThis.__tubelock_proxy_sessions?.delete(token);
         evictCachedServerSession(token);
         try {
             const sql = getDb();
@@ -22,6 +21,7 @@ export async function GET(request) {
                 SET is_active = FALSE
                 WHERE session_token = ${token}
             `;
+            evictCachedServerSession(token);
         } catch (err) {
             console.error('[Logout DB Error]:', err);
         }

@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
@@ -69,10 +70,6 @@ export async function POST(request) {
       message: `บันทึกชุด HLS "${title}" เข้าคลังสื่อเรียบร้อยแล้ว`,
     });
   } catch (err) {
-    console.error('[HLS Complete Error]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message || 'บันทึกข้อมูล HLS ล้มเหลว' },
-      { status: 500 }
-    );
+    return apiError(err, { context: 'POST /api/hls/complete', message: 'บันทึกข้อมูล HLS ล้มเหลว' });
   }
 }

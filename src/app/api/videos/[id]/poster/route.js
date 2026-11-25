@@ -1,9 +1,10 @@
-import { getSessionUserId } from '@/lib/access';
+import { getSessionUserId, isAdmin } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
 import { isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
 import { assetCache, isTempauthValid, sourceCache } from '@/lib/videoSourceService';
+import { canViewVideo } from '@/lib/videoVisibility';
 
 const headers = { 'Cache-Control': 'private, no-store' };
 
@@ -29,7 +30,7 @@ export async function GET(request, { params }) {
   if (!userId) {
     return respondWithPoster(RESTRICTED_POSTER, true);
   }
-  return loadPoster(request, params, true);
+  return loadPoster(request, params, userId, true);
 }
 
 export async function POST(request, { params }) {
@@ -37,10 +38,10 @@ export async function POST(request, { params }) {
   if (!userId) {
     return Response.json({ error: 'Authentication required' }, { status: 401, headers });
   }
-  return loadPoster(request, params, false);
+  return loadPoster(request, params, userId, false);
 }
 
-async function loadPoster(request, params, asImage) {
+async function loadPoster(request, params, userId, asImage) {
   const { id } = await params;
   if (!/^\d+$/.test(id) || Number(id) > 2147483647) {
     return Response.json({ error: 'Invalid video ID' }, { status: 400, headers });
@@ -61,7 +62,7 @@ async function loadPoster(request, params, asImage) {
             v.id,
             COALESCE(NULLIF(vv.thumbnail_url, ''), v.thumbnail_url) AS thumbnail_url,
             COALESCE(vv.onedrive_folder_id, v.onedrive_folder_id) AS onedrive_folder_id,
-            v.category, v.content_rating,
+            v.category, v.content_rating, v.visibility, v.user_id,
             vv.id AS version_id,
             to_jsonb(v)->>'source_cache_expires_at' AS cached_until,
             jsonb_path_query_first(to_jsonb(v)->'source_cache', '$.items[*] ? (@.name == "poster.jpg").downloadUrl') #>> '{}' AS cached_poster
@@ -73,17 +74,24 @@ async function loadPoster(request, params, asImage) {
           LIMIT 1;
         `;
         video = rows[0] || null;
-      } catch (_) {}
+      } catch {
+        // Legacy installations can still load the base video without video_versions.
+      }
     }
     if (!video) {
       const [row] = await sql`
-        SELECT id, thumbnail_url, onedrive_folder_id, category, content_rating,
+        SELECT id, thumbnail_url, onedrive_folder_id, category, content_rating, visibility, user_id,
           to_jsonb(v)->>'source_cache_expires_at' AS cached_until,
           jsonb_path_query_first(to_jsonb(v)->'source_cache', '$.items[*] ? (@.name == "poster.jpg").downloadUrl') #>> '{}' AS cached_poster
         FROM videos v
         WHERE id = ${Number(id)} AND (status = 'READY' OR status IS NULL)
       `;
       video = row || null;
+    }
+    if (video && !canViewVideo(video, userId, isAdmin(userId))) {
+      return asImage
+        ? respondWithPoster(RESTRICTED_POSTER, true)
+        : Response.json({ error: 'Forbidden' }, { status: 403, headers });
     }
     if (!isMatureVideo(video)) {
       return Response.json({ error: 'Poster not found' }, { status: 404, headers });
@@ -96,10 +104,11 @@ async function loadPoster(request, params, asImage) {
     }
 
     const streamFolderName = video.version_id ? `stream_vid_${video.id}_v${video.version_id}` : `stream_vid_${video.id}`;
+    const revealCacheKey = `${streamFolderName}/poster.jpg:reveal`;
 
     if (searchParams.get('fresh') !== '1') {
       const minimumExpiry = Date.now() + 5 * 60 * 1000;
-      const assetCached = assetCache.get(`${streamFolderName}/poster.jpg`);
+      const assetCached = assetCache.get(revealCacheKey) || assetCache.get(`${streamFolderName}/poster.jpg`);
       const assetUrl = assetCached && assetCached.expiresAt > Date.now() ? assetCached.url : null;
       const memory = video.version_id
         ? sourceCache.get(`${video.id}:vid:${video.version_id}`)
@@ -125,7 +134,7 @@ async function loadPoster(request, params, asImage) {
       const metadata = await response.json();
       const url = metadata['@microsoft.graph.downloadUrl'];
       if (url) {
-        assetCache.set(`${streamFolderName}/poster.jpg`, {
+        assetCache.set(revealCacheKey, {
           url,
           isMature: true,
           expiresAt: Date.now() + 15 * 60 * 1000,

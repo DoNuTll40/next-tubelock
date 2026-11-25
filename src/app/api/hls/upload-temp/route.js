@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
 import { Readable } from 'stream';
@@ -53,10 +54,6 @@ export async function POST(request) {
       fileSize: stat.size,
     });
   } catch (err) {
-    console.error('[Upload Temp Error]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message || 'ไม่สามารถบันทึกไฟล์ชั่วคราวบนเซิร์ฟเวอร์ได้' },
-      { status: 500 }
-    );
+    return apiError(err, { context: 'POST /api/hls/upload-temp', message: 'ไม่สามารถบันทึกไฟล์ชั่วคราวบนเซิร์ฟเวอร์ได้' });
   }
 }

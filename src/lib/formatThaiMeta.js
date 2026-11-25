@@ -1,7 +1,8 @@
-import moment from 'moment';
-import 'moment/locale/th';
-
-moment.locale('th');
+const relativeTime = new Intl.RelativeTimeFormat('th-TH', { numeric: 'always' });
+const minuteSeconds = 60;
+const hourSeconds = 60 * minuteSeconds;
+const daySeconds = 24 * hourSeconds;
+const monthSeconds = 30.436875 * daySeconds;
 
 /**
  * Formats view count into compact Thai YouTube-style label
@@ -29,23 +30,27 @@ export function formatThaiViews(rawCount) {
 }
 
 /**
- * Formats a timestamp into concise Thai YouTube-style relative time using moment.js
+ * Formats a timestamp into concise Thai YouTube-style relative time.
  * e.g. "เมื่อสักครู่", "5 นาทีที่แล้ว", "2 ชม. ที่แล้ว", "3 วันที่แล้ว", "1 เดือนที่แล้ว"
  */
 export function formatThaiRelativeTime(dateInput) {
   if (!dateInput) return '';
-  const m = moment(dateInput);
-  if (!m.isValid()) return '';
-
-  const diffSeconds = Math.max(0, moment().diff(m, 'seconds'));
+  const timestamp = new Date(dateInput).getTime();
+  if (!Number.isFinite(timestamp)) return '';
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
   if (diffSeconds < 60) return 'เมื่อสักครู่';
 
-  const raw = m.locale('th').fromNow();
-  return raw
-    .replace(/^ไม่กี่วินาทีที่แล้ว$/, 'เมื่อสักครู่')
-    .replace(/^หนึ่ง\s*/, '1 ')
-    .replace(/ชั่วโมงที่แล้ว$/, 'ชม. ที่แล้ว')
-    .replace(/ชั่วโมง/, 'ชม. ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  const minutes = Math.round(diffSeconds / minuteSeconds);
+  const hours = Math.round(diffSeconds / hourSeconds);
+  const days = Math.round(diffSeconds / daySeconds);
+  const months = Math.round(diffSeconds / monthSeconds);
+  const [amount, unit] = minutes < 45 ? [minutes, 'minute']
+    : hours < 22 ? [hours, 'hour']
+      : days < 26 ? [days, 'day']
+        : months < 11 ? [Math.max(1, months), 'month']
+          : [Math.max(1, Math.round(diffSeconds / (12 * monthSeconds))), 'year'];
+
+  return relativeTime.format(-amount, unit)
+    .replace('ที่ผ่านมา', 'ที่แล้ว')
+    .replace('ชั่วโมง', 'ชม. ');
 }

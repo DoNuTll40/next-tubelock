@@ -5,20 +5,51 @@ export function isSubtitleWorkflowActive(video) {
   return activeStatuses.has(video.subtitle_status) || video.audio_status === 'extracting';
 }
 
-function githubClient() {
-  const token = (process.env.GITHUB_TOKEN || process.env.GH_PAT || process.env.GITHUB_PAT || '').trim();
+function githubToken() {
+  return (process.env.GITHUB_TOKEN || process.env.GH_PAT || process.env.GITHUB_PAT || '').trim();
+}
+
+export function isWorkflowConfigured() {
+  return Boolean(githubToken());
+}
+
+function githubClient(timeout = 6000) {
+  const token = githubToken();
   if (!token) throw new Error('ยังไม่ได้ตั้งค่า GitHub token');
   const repo = process.env.GITHUB_REPO || 'DoNuTll40/next-tubelock';
-  return async (path, method = 'GET') => {
+  return async (path, method = 'GET', body) => {
     const response = await fetch(`https://api.github.com/repos/${repo}/actions/${path}`, {
       method,
-      headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}` },
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'TubeLock-Studio-Dispatcher',
+        ...(body && { 'Content-Type': 'application/json' }),
+      },
+      ...(body && { body: JSON.stringify(body) }),
       cache: 'no-store',
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(timeout),
     });
-    if (!response.ok) throw new Error(`GitHub Actions HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = new Error(`GitHub Actions HTTP ${response.status} (${method} ${path})`);
+      error.status = response.status;
+      throw error;
+    }
     if (method === 'GET') return response.json();
   };
+}
+
+export async function triggerGitHubWorkflow(workflowFile, inputs) {
+  const github = githubClient(15000);
+  await github(`workflows/${workflowFile}/dispatches`, 'POST', {
+    ref: process.env.GITHUB_BRANCH || 'main',
+    inputs,
+  });
+}
+
+export function normalizeSubtitlePrompt(prompt) {
+  return typeof prompt === 'string' ? prompt.trim().slice(0, 1000) : '';
 }
 
 async function findRun(github, video) {

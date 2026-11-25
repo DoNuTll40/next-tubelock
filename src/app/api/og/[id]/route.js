@@ -24,6 +24,7 @@ export async function GET(request, context) {
       SELECT id, title, thumbnail_url, content_rating, category
       FROM videos
       WHERE id = ${numericId} AND (status = 'READY' OR status IS NULL)
+        AND LOWER(TRIM(COALESCE(visibility, 'public'))) <> 'private'
       LIMIT 1;
     `;
 

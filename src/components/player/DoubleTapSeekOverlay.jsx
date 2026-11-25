@@ -14,50 +14,32 @@ export default function DoubleTapSeekOverlay({ side, accumulatedSeconds }) {
   const arrowsContainerRef = useRef(null);
   const textRef = useRef(null);
   const waveTimelineRef = useRef(null);
-  const isExitingRef = useRef(false);
 
-  // Sync when side appears or changes
-  useEffect(() => {
-    if (side) {
-      isExitingRef.current = false;
-      setRenderedSide(side);
-    }
-  }, [side]);
+  if (side && side !== renderedSide) setRenderedSide(side);
 
   // Handle smooth GSAP exit animation when side becomes null
   useEffect(() => {
-    if (!side && renderedSide && !isExitingRef.current) {
-      isExitingRef.current = true;
-      if (waveTimelineRef.current) {
-        waveTimelineRef.current.kill();
-      }
+    const container = containerRef.current;
+    if (side || !renderedSide || !container) return;
 
-      if (containerRef.current) {
-        const isLeft = renderedSide === 'left';
-        gsap.to(containerRef.current, {
-          opacity: 0,
-          x: isLeft ? -45 : 45,
-          scale: 0.94,
-          duration: 0.22,
-          ease: 'power2.in',
-          onComplete: () => {
-            setRenderedSide(null);
-            isExitingRef.current = false;
-          },
-        });
-      } else {
-        setRenderedSide(null);
-        isExitingRef.current = false;
-      }
-    }
+    waveTimelineRef.current?.kill();
+    const exitTween = gsap.to(container, {
+      opacity: 0,
+      x: renderedSide === 'left' ? -45 : 45,
+      scale: 0.94,
+      duration: 0.22,
+      ease: 'power2.in',
+      onComplete: () => setRenderedSide(null),
+    });
+    return () => exitTween.kill();
   }, [side, renderedSide]);
 
   // Main GSAP Enter + Staggered Wave animation
   useGSAP(
     () => {
-      if (!renderedSide || isExitingRef.current) return;
+      if (!side) return;
 
-      const isLeft = renderedSide === 'left';
+      const isLeft = side === 'left';
       const container = containerRef.current;
       const arrows = arrowsContainerRef.current?.children;
 
@@ -108,13 +90,13 @@ export default function DoubleTapSeekOverlay({ side, accumulatedSeconds }) {
         ).set(arrows, { x: 0 });
       }
     },
-    { dependencies: [renderedSide], scope: containerRef }
+    { dependencies: [side], scope: containerRef }
   );
 
   // Trigger pulse & ripple whenever seconds update (subsequent double/triple taps)
   useGSAP(
     () => {
-      if (!renderedSide || !accumulatedSeconds || isExitingRef.current) return;
+      if (!side || !accumulatedSeconds) return;
 
       const ripple = rippleRef.current;
       const text = textRef.current;
@@ -139,7 +121,7 @@ export default function DoubleTapSeekOverlay({ side, accumulatedSeconds }) {
         );
       }
     },
-    { dependencies: [accumulatedSeconds], scope: containerRef }
+    { dependencies: [side, accumulatedSeconds], scope: containerRef }
   );
 
   if (!renderedSide) return null;

@@ -1,5 +1,6 @@
 'use client';
 
+import BrowserMediaImage from '@/components/BrowserMediaImage';
 import {
   ChevronDown, ChevronRight, ArrowLeft, Play, Pause, Cast, Settings, Layers, LockKeyhole
 } from 'lucide-react';
@@ -70,7 +71,7 @@ export default function PlayerTopBar({
           >
             <div className="relative w-20 sm:w-24 aspect-video rounded-lg overflow-hidden bg-zinc-900 shrink-0 border border-white/10">
               {upNextThumb && (
-                <img
+                <BrowserMediaImage
                   src={upNextThumb}
                   alt={upNextVideo.title || 'รายการถัดไป'}
                   className="w-full h-full object-cover"

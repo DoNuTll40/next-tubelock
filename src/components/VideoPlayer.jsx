@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+import BrowserMediaImage from '@/components/BrowserMediaImage';
+import { useState, useRef, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { Play, Pause, Volume2, VolumeX, X, SkipBack, SkipForward } from 'lucide-react';
-import { formatResolutionBadge, formatQualityLevel } from '@/lib/videoUtils';
+import { formatResolutionBadge, formatQualityLevel, watchTimeThreshold } from '@/lib/videoUtils';
 import { preloadHlsModule } from '@/lib/playbackResolver';
 import { useSession } from '@/context/SessionContext';
 import {
@@ -1025,34 +1026,23 @@ export default function VideoPlayer({
       }
       lastTickTimeRef.current = nowTs;
 
-      // เกณฑ์ 15 วินาที หรือ 30% ของคลิปสั้น
-      const minRequired = dur > 0 ? Math.min(15, Math.max(3, dur * 0.3)) : 15;
+      const viewDuration = Number(activeVersion?.duration || currentVideo?.duration) || dur;
+      const minRequired = watchTimeThreshold(viewDuration);
       if (accumulatedWatchTimeRef.current >= minRequired) {
         viewCountRecordedRef.current = true;
 
-        const storageKey = `tubelock_viewed_${videoId}`;
-        const alreadyCountedInSession = typeof window !== 'undefined' && sessionStorage.getItem(storageKey);
-
-        if (!alreadyCountedInSession) {
-          if (typeof window !== 'undefined') {
-            try { sessionStorage.setItem(storageKey, '1'); } catch (_) { }
-          }
-
-          const payload = JSON.stringify({
-            watchTime: Math.floor(accumulatedWatchTimeRef.current),
-            duration: Math.floor(dur),
-          });
-
-          if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-            navigator.sendBeacon(`/api/videos/${videoId}/view`, payload);
-          } else {
-            fetch(`/api/videos/${videoId}/view`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: payload,
-              keepalive: true,
-            }).catch(() => { });
-          }
+        const viewUrl = `/api/videos/${videoId}/view`;
+        const payload = JSON.stringify({
+          watchTime: Math.min(accumulatedWatchTimeRef.current, viewDuration > 0 ? viewDuration * 1.1 : Infinity),
+          versionId: activeVersion?.id ? Number(activeVersion.id) : null,
+        });
+        if (!navigator.sendBeacon?.(viewUrl, payload)) {
+          fetch(viewUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+          }).catch(() => { });
         }
       }
     }
@@ -1179,10 +1169,23 @@ export default function VideoPlayer({
     }
   }, [shouldAutoplay, restoreAudioAfterTransition]);
 
+  // Read current playback options without reconnecting an already playing stream.
+  const getPlaybackOptions = useEffectEvent(() => ({
+    attemptAutoPlay,
+    checkAndUpdateRatio,
+    fps,
+    onHdrStateChange,
+    onRefreshStream,
+    restoreAudioAfterTransition,
+    targetInitialTime,
+    updateRatio,
+  }));
+
   // Initialize HLS or Native Player
   useEffect(() => {
     const v = video.current;
     if (!v || !src || isSwitchingVideo) return;
+    const { targetInitialTime } = getPlaybackOptions();
 
     isTransitioningStreamRef.current = true;
     try {
@@ -1301,6 +1304,7 @@ export default function VideoPlayer({
           hlsInstanceRef.current = hls;
 
           hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+            const { attemptAutoPlay, fps, onHdrStateChange, updateRatio } = getPlaybackOptions();
             setIsBuffering(false);
             isEndedRef.current = false;
             setIsEnded(false);
@@ -1401,6 +1405,7 @@ export default function VideoPlayer({
           });
 
           hls.on(Hls.Events.LEVEL_SWITCHED, (event, data) => {
+            const { checkAndUpdateRatio, fps, onHdrStateChange, updateRatio } = getPlaybackOptions();
             const lvl = hls.levels[data.level];
             if (lvl) {
               const lvlFps = lvl.attrs?.['FRAME-RATE'] ? parseFloat(lvl.attrs['FRAME-RATE']) : Number(fps) || 0;
@@ -1418,6 +1423,7 @@ export default function VideoPlayer({
           });
 
           hls.on(Hls.Events.LEVEL_LOADED, (event, data) => {
+            const { checkAndUpdateRatio, updateRatio } = getPlaybackOptions();
             const lvl = hls.levels[data.level];
             if (lvl && lvl.width > 0 && lvl.height > 0) {
               updateRatio(lvl.width / lvl.height);
@@ -1426,6 +1432,7 @@ export default function VideoPlayer({
           });
 
           hls.on(Hls.Events.FRAG_BUFFERED, () => {
+            const { attemptAutoPlay, checkAndUpdateRatio } = getPlaybackOptions();
             checkAndUpdateRatio();
             attemptAutoPlay();
           });
@@ -1441,6 +1448,7 @@ export default function VideoPlayer({
 
           hls.on(Hls.Events.ERROR, (event, data) => {
             if (data.fatal) {
+              const { onRefreshStream } = getPlaybackOptions();
               switch (data.type) {
                 case Hls.ErrorTypes.NETWORK_ERROR:
                   hlsRetryCountRef.current += 1;
@@ -1527,7 +1535,7 @@ export default function VideoPlayer({
           }
         }
         if (isActiveRef.current && shouldAutoplay && !isUserPausedRef.current) {
-          restoreAudioAfterTransition();
+          getPlaybackOptions().restoreAudioAfterTransition();
           v.play().then(() => setIsPlaying(true)).catch((err) => {
             if (err?.name === 'NotAllowedError') {
               v.muted = true;
@@ -1658,7 +1666,7 @@ export default function VideoPlayer({
     showToast(`ระดับเสียง: ${Math.round(val * 100)}%`);
   };
 
-  const toggleMute = () => {
+  const toggleMute = useCallback(() => {
     if (!video.current) return;
     const nextMuted = !isMuted;
     isUserMutedRef.current = nextMuted;
@@ -1679,7 +1687,7 @@ export default function VideoPlayer({
     setIsMuted(nextMuted);
     showToast(nextMuted ? 'ปิดเสียง' : `ระดับเสียง: ${Math.round(targetVol * 100)}%`);
     resetControlsTimer();
-  };
+  }, [isMuted, resetControlsTimer, showToast, video, volume]);
 
   const handleSelectAudioMode = useCallback((mode) => {
     const nextPrefer = mode === 'hires';
@@ -2387,7 +2395,7 @@ export default function VideoPlayer({
   };
 
   // Fullscreen & PiP with Mobile Orientation Auto-Lock
-  const toggleFullscreen = async () => {
+  const toggleFullscreen = useCallback(async () => {
     if (!containerRef.current) return;
     const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
 
@@ -2413,7 +2421,7 @@ export default function VideoPlayer({
             const hasVideoSize = vEl?.videoWidth > 0 && vEl?.videoHeight > 0;
             const isPortrait = hasVideoSize
               ? vEl.videoHeight > vEl.videoWidth
-              : isVerticalVideo || videoRatio < 1;
+              : videoRatio < 1;
             const target = isPortrait ? 'portrait' : 'landscape';
             try {
               await window.screen.orientation.lock(target);
@@ -2465,9 +2473,9 @@ export default function VideoPlayer({
       }
     }
     resetControlsTimer();
-  };
+  }, [resetControlsTimer, video, videoRatio]);
 
-  const togglePiP = async () => {
+  const togglePiP = useCallback(async () => {
     const v = video.current;
     if (!v) return;
     try {
@@ -2496,7 +2504,7 @@ export default function VideoPlayer({
     } catch (err) {
       console.warn('PiP error:', err);
     }
-  };
+  }, [showToast, video]);
 
   // Mobile-Only PWA Auto Picture-in-Picture when leaving the app to use other apps
   useEffect(() => {
@@ -2790,7 +2798,7 @@ export default function VideoPlayer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, isMiniplayer, onToggleMiniplayer, togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, handleUserSetCcActive, playlistActive, playPlaylistNext, playPlaylistPrev]);
+  }, [isActive, isMiniplayer, onToggleMiniplayer, togglePlay, commitSeek, duration, seekStep, volume, toggleMute, showToast, togglePiP, toggleFullscreen, hasSubtitles, handleUserSetCcActive, playlistActive, playPlaylistNext, playPlaylistPrev]);
 
   // Sync position progress & playback speed with OS media controls (Android / Lockscreen / Bluetooth)
   const syncMediaPositionState = useCallback((positionOverride = null) => {
@@ -3310,14 +3318,14 @@ export default function VideoPlayer({
           }`}
         >
           {/* Ambient blurred backdrop fills entire player */}
-          <img
+          <BrowserMediaImage
             src={poster}
             alt=""
             aria-hidden="true"
             className="absolute inset-0 w-full h-full object-cover blur-2xl scale-110 opacity-40 select-none pointer-events-none"
           />
           {/* Main crisp poster image */}
-          <img
+          <BrowserMediaImage
             src={poster}
             alt={title || 'Video Poster'}
             className={`w-full h-full relative z-[1] select-none pointer-events-none ${
@@ -3348,7 +3356,7 @@ export default function VideoPlayer({
           }`}
         >
           {poster && !keepScrubPreviewOnLoad && (
-            <img
+            <BrowserMediaImage
               src={poster}
               alt=""
               className="absolute inset-0 w-full h-full object-contain opacity-65"
@@ -3544,7 +3552,7 @@ export default function VideoPlayer({
                   style={{ aspectRatio: videoRatio || 16 / 9 }}
                 >
                   {poster && !keepScrubPreviewOnLoad && (
-                    <img
+                    <BrowserMediaImage
                       src={poster}
                       alt=""
                       className="absolute inset-0 w-full h-full object-cover opacity-70"

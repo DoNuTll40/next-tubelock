@@ -2,26 +2,9 @@ import React from 'react';
 import Link from 'next/link';
 import fs from 'fs/promises';
 import path from 'path';
-import { marked } from 'marked';
+import { renderMarkdownDocument } from '@/lib/renderMarkdownDocument';
 import { Edit3, ChevronRight, ArrowLeft, ArrowRight, Clock } from 'lucide-react';
 import DocsTableOfContents from './DocsTableOfContents';
-
-function decodeHtmlEntities(str = '') {
-  return String(str)
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'");
-}
-
-function slugifyHeading(text = '') {
-  return String(text)
-    .toLowerCase()
-    .replace(/[^\w\u0E00-\u0E7F]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
 
 function formatThaiDate(dateInput) {
   if (!dateInput) return null;
@@ -41,12 +24,6 @@ function formatThaiDate(dateInput) {
     return str;
   }
 }
-
-// Configure marked with GFM (GitHub Flavored Markdown)
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-});
 
 export default async function MarkdownDocViewer({
   docSlug,        // e.g. 'policy'
@@ -68,29 +45,12 @@ export default async function MarkdownDocViewer({
     markdown = fileContent;
     fileMtime = fileStat?.mtime || null;
   } catch (err) {
-    markdown = `# Error\n\nCould not load \`${docPath}\`: ${err.message}`;
+    console.error('[MarkdownDocViewer] Could not read documentation:', err);
+    markdown = '# ไม่สามารถโหลดเอกสารได้';
   }
 
   const displayDate = formatThaiDate(updatedAt || fileMtime);
-
-  // Strip frontmatter metadata (--- ... ---) from display content
-  markdown = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
-
-  // Parse Markdown to standard HTML (Use marked default without broken renderer overrides)
-  let htmlContent = marked.parse(markdown);
-
-  // Extract clean plain-text H2 titles and inject matching anchor IDs in one pass
-  const toc = [];
-  const usedIds = new Map();
-  htmlContent = htmlContent.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, (fullMatch, headingInner) => {
-    const plainText = decodeHtmlEntities(headingInner.replace(/<[^>]+>/g, '')).trim();
-    const baseId = slugifyHeading(plainText) || `section-${toc.length + 1}`;
-    const count = usedIds.get(baseId) || 0;
-    usedIds.set(baseId, count + 1);
-    const id = count === 0 ? baseId : `${baseId}-${count + 1}`;
-    toc.push({ id, title: plainText });
-    return `<h2 id="${id}" class="scroll-mt-20">${headingInner}</h2>`;
-  });
+  const { html: htmlContent, toc } = renderMarkdownDocument(markdown);
 
   const githubEditUrl = `https://github.com/DoNuTll40/next-tubelock/blob/main/${docPath}`;
 

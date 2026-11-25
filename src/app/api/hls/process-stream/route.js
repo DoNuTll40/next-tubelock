@@ -1,4 +1,5 @@
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
+import { apiErrorBody } from '@/lib/apiError';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -213,10 +214,9 @@ export async function GET(request) {
           folderName: uploadResult.folderName,
         });
       } catch (err) {
-        console.error('[Process Stream Error]:', err);
-        sendEvent({
-          error: err.message || 'เกิดข้อผิดพลาดในการประมวลผล HLS',
-        });
+        sendEvent(apiErrorBody(err, {
+          context: 'GET /api/hls/process-stream', message: 'เกิดข้อผิดพลาดในการประมวลผล HLS',
+        }));
       } finally {
         if (jobId && cleanupDir) {
           global.__tubelock_jobs.delete(jobId);

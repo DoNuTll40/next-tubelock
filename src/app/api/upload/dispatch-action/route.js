@@ -1,74 +1,17 @@
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { ensureWorkerLogsColumn, appendWorkerLog } from '@/lib/workerLogs';
-import { EVALUATED_RATING_STATUSES } from '@/lib/ratingStatus';
+import { appendWorkerLog } from '@/lib/workerLogs';
+import { dispatchSpriteRating, resolveRatingModel } from '@/lib/ratingWorkflow';
+import { markSubtitleDispatchFailed, normalizeSubtitlePrompt, triggerGitHubWorkflow } from '@/lib/subtitleWorkflow';
+import { getRawUploadMismatch } from '@/lib/uploadVerification';
+import { CONTENT_RATINGS } from '@/lib/videoEditorUtils';
 import { normalizeVideoLanguageCode, getVideoLanguage } from '@/lib/videoLanguages';
-
-async function ensureAiColumns(sql) {
-  try {
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS audio_status VARCHAR(50) DEFAULT 'waiting';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_status VARCHAR(50) DEFAULT 'waiting';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_model VARCHAR(100) DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_job_id VARCHAR(120) DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS source_language VARCHAR(20) DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_status VARCHAR(50) DEFAULT 'waiting';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS sprite_preview_url TEXT DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS content_rating VARCHAR(50) DEFAULT 'all';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_selected_rating VARCHAR(50) DEFAULT 'all';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS ai_suggested_rating VARCHAR(50) DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS rating_check_status VARCHAR(50) DEFAULT 'pending';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS vision_analysis JSONB;`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(50) DEFAULT 'waiting';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS thumbnail_options JSONB DEFAULT '[]'::jsonb;`;
-    await ensureWorkerLogsColumn(sql);
-  } catch (_) {}
-}
-
-export async function triggerGitHubWorkflow(workflowFile, inputs) {
-  const githubToken = (
-    process.env.GITHUB_TOKEN ||
-    process.env.GH_PAT ||
-    process.env.GITHUB_PAT ||
-    ''
-  ).trim();
-  const githubRepo = process.env.GITHUB_REPO || 'DoNuTll40/next-tubelock';
-  const githubBranch = process.env.GITHUB_BRANCH || 'main';
-
-  if (!githubToken) {
-    throw new Error('ยังไม่ได้ตั้งค่า GITHUB_TOKEN ใน .env.local หรือ Vercel Environment Variables');
-  }
-
-  const dispatchUrl = `https://api.github.com/repos/${githubRepo}/actions/workflows/${workflowFile}/dispatches`;
-  const res = await fetch(dispatchUrl, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${githubToken}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'TubeLock-Studio-Dispatcher',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      ref: githubBranch,
-      inputs,
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`GitHub Actions Dispatch Error (${res.status} on ${workflowFile}): ${errText}`);
-  }
-  return true;
-}
 
 /**
  * POST /api/upload/dispatch-action
- * Dispatches one of the 3 specialized GitHub Actions workflows:
- * - 'sprite_rating'   -> sprite-content-rating.yml
- * - 'transcode'       -> transcode.yml
+ * Dispatches subtitle, rating, transcode, or thumbnail workers.
  */
 export async function POST(request) {
   try {
@@ -85,12 +28,6 @@ export async function POST(request) {
     } = body;
     const parsedVersionId = versionId != null ? parseInt(versionId, 10) : null;
 
-    const envModelName = (process.env.GEMINI_MODEL_NAME || 'gemini-3.5-flash-lite')
-      .replace(/['"]/g, '')
-      .replace(/flesh/gi, 'flash')
-      .trim();
-    const resolvedModel = model && model.trim() ? model.replace(/flesh/gi, 'flash').trim() : envModelName;
-
     if (!videoId || !workflowType) {
       return NextResponse.json(
         { success: false, error: 'กรุณาระบุ videoId และ workflowType' },
@@ -101,12 +38,13 @@ export async function POST(request) {
     const sql = getDb();
     const userId = await getSessionUserId(sql);
     if (userId == null) return accessError(401);
-    await ensureAiColumns(sql);
+    const admin = isAdmin(userId);
 
     const rows = await sql`
-      SELECT id, title, raw_file_name, content_rating, audio_status, subtitle_status, source_language, sprite_status, rating_check_status, thumbnail_status, status, updated_at
+      SELECT id, title, raw_file_name, upload_reserved_bytes, content_rating, audio_status, subtitle_status,
+             source_language, thumbnail_status, status, updated_at
       FROM videos
-      WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
+      WHERE id = ${videoId} AND (${admin} OR user_id = ${userId})
       LIMIT 1;
     `;
     if (!rows || rows.length === 0) {
@@ -118,6 +56,11 @@ export async function POST(request) {
 
     const video = rows[0];
     const effectiveRawName = video.raw_file_name || '';
+
+    if (workflowType !== 'transcode' || !parsedVersionId) {
+      const uploadMismatch = await getRawUploadMismatch(video);
+      if (uploadMismatch) return uploadMismatch;
+    }
 
     // Anti-Spam / Concurrent execution debounce (45 seconds)
     const nowMs = Date.now();
@@ -159,7 +102,7 @@ export async function POST(request) {
             subtitle_job_id = ${subtitleJobId},
             source_language = CASE WHEN ${resolvedLang} <> '' THEN ${resolvedLang} ELSE source_language END,
             updated_at = NOW()
-        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+        WHERE id = ${videoId} AND (${admin} OR user_id = ${userId});
       `;
 
       try {
@@ -168,7 +111,7 @@ export async function POST(request) {
           video_id: String(videoId),
           raw_file_name: String(effectiveRawName),
           source_language: String(resolvedLang),
-          custom_prompt: String(customPrompt || '').trim(),
+          custom_prompt: normalizeSubtitlePrompt(customPrompt),
         });
         await appendWorkerLog(sql, videoId, {
           source: 'sub',
@@ -176,18 +119,13 @@ export async function POST(request) {
           message: `🚀 ส่งคำสั่งทำซับใหม่ (ภาษา: ${langMeta ? langMeta.label : 'ตรวจอัตโนมัติ'}) เข้าคิว GitHub Actions — รอ Runner รับงาน...`,
         });
       } catch (wfErr) {
-        await sql`
-          UPDATE videos
-          SET audio_status = CASE WHEN audio_status = 'extracting' THEN 'failed' ELSE audio_status END,
-              subtitle_status = 'failed',
-              updated_at = NOW()
-          WHERE id = ${videoId} AND subtitle_job_id = ${subtitleJobId};
-        `;
+        await markSubtitleDispatchFailed(sql, videoId, subtitleJobId, video.audio_status)
+          .catch((rollbackError) => console.error('[Subtitle dispatch rollback]', rollbackError));
         await appendWorkerLog(sql, videoId, {
           source: 'sub',
           label: 'เสียง & ซับไตเติล AI',
           level: 'error',
-          message: `❌ ส่งคำสั่ง extract-audio-subtitles.yml ล้มเหลว: ${wfErr.message}`,
+          message: '❌ ส่งคำสั่งสร้างซับไตเติลไม่สำเร็จ',
         });
         throw wfErr;
       }
@@ -204,41 +142,44 @@ export async function POST(request) {
     }
 
     if (workflowType === 'sprite_rating') {
-      if (isRecent && (video.sprite_status === 'generating' || video.rating_check_status === 'analyzing')) {
+      const resolvedModel = resolveRatingModel(model);
+      if (!resolvedModel) {
+        return NextResponse.json({ success: false, error: 'โมเดลตรวจเรตไม่ถูกต้อง' }, { status: 400 });
+      }
+      const targetUserRating = userRating || video.content_rating || 'auto';
+      if (targetUserRating !== 'auto' && !CONTENT_RATINGS.some(({ id }) => id === targetUserRating)) {
+        return NextResponse.json({ success: false, error: 'เรตเนื้อหาไม่ถูกต้อง' }, { status: 400 });
+      }
+
+      const claimedRating = await dispatchSpriteRating(sql, {
+        videoId,
+        userId,
+        admin,
+        rawFileName: effectiveRawName,
+        userRating: targetUserRating,
+        autoApply,
+        model: resolvedModel,
+      });
+      if (!claimedRating) {
+        const [latest] = await sql`
+          SELECT sprite_status, rating_check_status FROM videos
+          WHERE id = ${videoId} AND (${admin} OR user_id = ${userId});
+        `;
+        if (!latest) return accessError(404);
+        if (latest.sprite_status !== 'generating' && latest.rating_check_status !== 'analyzing') {
+          return NextResponse.json({ success: false, error: 'สถานะการประเมินเรตเปลี่ยนไป' }, { status: 409 });
+        }
         return NextResponse.json({
           success: true,
           videoId,
           workflowType,
-          spriteStatus: video.sprite_status,
-          ratingCheckStatus: video.rating_check_status,
+          spriteStatus: latest.sprite_status,
+          ratingCheckStatus: latest.rating_check_status,
           alreadyRunning: true,
           message: 'GitHub Action #2 กำลังสร้าง Sprite Sheet และตรวจเรตเนื้อหาอยู่แล้ว ไม่ต้องส่งซ้ำ',
         });
       }
 
-      const targetUserRating = userRating || video.content_rating || 'auto';
-
-      const claimedRating = await sql`
-        UPDATE videos
-        SET sprite_status = 'generating',
-            rating_check_status = 'analyzing',
-            user_selected_rating = ${targetUserRating},
-            updated_at = NOW()
-        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId})
-          AND NOT (COALESCE(rating_check_status, '') = ANY(${EVALUATED_RATING_STATUSES}::text[]))
-        RETURNING id;
-      `;
-      if (!claimedRating.length) {
-        return NextResponse.json({ success: false, error: 'ประเมินเรตแล้วและล็อกการแก้ไข' }, { status: 409 });
-      }
-
-      await triggerGitHubWorkflow('sprite-content-rating.yml', {
-        video_id: String(videoId),
-        raw_file_name: String(effectiveRawName),
-        user_rating: String(targetUserRating),
-        auto_apply: autoApply ? 'true' : 'false',
-        model: String(resolvedModel),
-      });
       await appendWorkerLog(sql, videoId, {
         source: 'rating',
         label: 'Sprite & Rating',
@@ -249,8 +190,8 @@ export async function POST(request) {
         success: true,
         videoId,
         workflowType,
-        spriteStatus: 'generating',
-        ratingCheckStatus: 'analyzing',
+        spriteStatus: claimedRating.sprite_status,
+        ratingCheckStatus: claimedRating.rating_check_status,
         message: 'ส่งคำสั่งให้ GitHub Actions สร้าง Sprite Sheet Grid และประเมินเรตเนื้อหาด้วย AI เรียบร้อยแล้ว',
       });
     }
@@ -258,7 +199,7 @@ export async function POST(request) {
     if (workflowType === 'transcode') {
       if (parsedVersionId) {
         const verRows = await sql`
-          SELECT id, label, raw_file_name, status, updated_at
+          SELECT id, label, raw_file_name, upload_reserved_bytes, status, updated_at
           FROM video_versions
           WHERE id = ${parsedVersionId} AND video_id = ${videoId}
           LIMIT 1;
@@ -267,6 +208,8 @@ export async function POST(request) {
           return NextResponse.json({ success: false, error: `ไม่พบเวอร์ชัน ID #${parsedVersionId}` }, { status: 404 });
         }
         const ver = verRows[0];
+        const uploadMismatch = await getRawUploadMismatch(ver);
+        if (uploadMismatch) return uploadMismatch;
         const verRecent = (Date.now() - (ver.updated_at ? new Date(ver.updated_at).getTime() : 0)) < 45000;
         if (verRecent && ['PROCESSING', 'TRANSCODING', 'QUEUED'].includes(ver.status)) {
           return NextResponse.json({
@@ -346,7 +289,7 @@ export async function POST(request) {
         UPDATE videos
         SET thumbnail_status = 'generating',
             updated_at = NOW()
-        WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+        WHERE id = ${videoId} AND (${admin} OR user_id = ${userId});
       `;
 
       try {
@@ -360,33 +303,36 @@ export async function POST(request) {
           message: `🚀 ส่งคำสั่ง GitHub Actions (extract-thumbnails.yml) สกัดภาพปก 3 ช่วงสำหรับ ${effectiveRawName}`,
         });
       } catch (wfErr) {
-        const isNotFound = /404|Not Found/i.test(wfErr.message || '');
+        const isNotFound = wfErr.status === 404;
         await appendWorkerLog(sql, videoId, {
           source: 'thumbnail',
           label: 'Thumbnails',
           level: isNotFound ? 'warn' : 'error',
           message: isNotFound
             ? '⚠️ ยังไม่พบ workflow extract-thumbnails.yml บน GitHub branch main'
-            : `❌ ส่งคำสั่ง extract-thumbnails.yml ล้มเหลว: ${wfErr.message}`,
+            : '❌ ส่งคำสั่งสกัดภาพปกไม่สำเร็จ',
         });
         await sql`
           UPDATE videos
           SET thumbnail_status = ${isNotFound ? 'waiting' : 'failed'},
               updated_at = NOW()
-          WHERE id = ${videoId} AND (${isAdmin(userId)} OR user_id = ${userId});
+          WHERE id = ${videoId} AND (${admin} OR user_id = ${userId});
         `;
-        return NextResponse.json(
-          {
+        if (isNotFound) {
+          return NextResponse.json({
             success: false,
             videoId,
             workflowType,
-            workflowNotFound: isNotFound,
-            error: isNotFound
-              ? 'ยังไม่พบ workflow extract-thumbnails.yml บน GitHub (กรุณา commit & push ไฟล์ขึ้น branch main)'
-              : wfErr.message,
-          },
-          { status: isNotFound ? 200 : 502 }
-        );
+            workflowNotFound: true,
+            error: 'ยังไม่พบ workflow สำหรับสกัดภาพปก',
+          });
+        }
+        return apiError(wfErr, {
+          context: 'POST /api/upload/dispatch-action thumbnails',
+          status: 502,
+          message: 'ส่งคำสั่งสกัดภาพปกไม่สำเร็จ',
+          body: { videoId, workflowType, workflowNotFound: false },
+        });
       }
 
       return NextResponse.json({
@@ -403,10 +349,9 @@ export async function POST(request) {
       { status: 400 }
     );
   } catch (err) {
-    console.error('[Dispatch Action Error]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message || 'ไม่สามารถสั่งรัน GitHub Actions ได้' },
-      { status: 500 }
-    );
+    return apiError(err, {
+      context: 'POST /api/upload/dispatch-action',
+      message: 'ไม่สามารถส่งคำสั่งไปยัง GitHub Actions ได้',
+    });
   }
 }

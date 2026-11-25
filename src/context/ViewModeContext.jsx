@@ -1,17 +1,25 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, Suspense } from 'react';
+import React, { createContext, useContext, useEffect, useCallback, useSyncExternalStore, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 const ViewModeContext = createContext(null);
 
+function subscribeToResize(onResize) {
+  window.addEventListener('resize', onResize);
+  return () => window.removeEventListener('resize', onResize);
+}
+
+const getMobileViewport = () => window.innerWidth < 768;
+const getServerViewport = () => null;
+
 function ViewModeProviderInternal({ children }) {
   const searchParams = useSearchParams();
-
-  // 'auto' | 'desktop' | 'mobile'
-  const [overrideMode, setOverrideMode] = useState('auto');
-  const [isClientMobile, setIsClientMobile] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const appParam = searchParams.get('app');
+  const isClientMobile = useSyncExternalStore(subscribeToResize, getMobileViewport, getServerViewport);
+  const mounted = isClientMobile !== null;
+  const overrideMode = appParam === 'desktop' ? 'desktop'
+    : appParam === 'm' || appParam === 'mobile' ? 'mobile' : 'auto';
 
   // Clear any legacy poisoned localStorage
   useEffect(() => {
@@ -20,33 +28,7 @@ function ViewModeProviderInternal({ children }) {
     } catch {}
   }, []);
 
-  // Sync screen width dynamically
-  useEffect(() => {
-    setMounted(true);
-    const checkWidth = () => {
-      setIsClientMobile(window.innerWidth < 768);
-    };
-
-    checkWidth();
-    window.addEventListener('resize', checkWidth);
-    return () => window.removeEventListener('resize', checkWidth);
-  }, []);
-
-  // Read URL param: ONLY override if explicitly specified in query
-  useEffect(() => {
-    const appParam = searchParams.get('app');
-    if (appParam === 'desktop') {
-      setOverrideMode('desktop');
-    } else if (appParam === 'm' || appParam === 'mobile') {
-      setOverrideMode('mobile');
-    } else {
-      // No param = Natural Auto mode (respects screen width)
-      setOverrideMode('auto');
-    }
-  }, [searchParams]);
-
-  // Effective mode calculation
-  const isMobile = overrideMode === 'mobile' || (overrideMode === 'auto' && isClientMobile);
+  const isMobile = overrideMode === 'mobile' || (overrideMode === 'auto' && isClientMobile === true);
   const isDesktop = !isMobile;
   const activeMode = overrideMode !== 'auto' ? overrideMode : (isClientMobile ? 'mobile' : 'desktop');
 
@@ -55,20 +37,15 @@ function ViewModeProviderInternal({ children }) {
     const params = new URLSearchParams(window.location.search);
 
     if (target === 'desktop') {
-      setOverrideMode('desktop');
       params.set('app', 'desktop');
     } else if (target === 'mobile' || target === 'm') {
-      setOverrideMode('mobile');
       params.set('app', 'm');
     } else {
-      // Auto: remove query param, revert to screen-width detection
-      setOverrideMode('auto');
       params.delete('app');
     }
 
     const query = params.toString() ? `?${params.toString()}` : '';
-    const newUrl = `${window.location.pathname}${query}`;
-    // Use replaceState (no re-render, no router re-run) — just update URL bar
+    const newUrl = `${window.location.pathname}${query}${window.location.hash}`;
     window.history.replaceState({}, '', newUrl);
   }, []);
 

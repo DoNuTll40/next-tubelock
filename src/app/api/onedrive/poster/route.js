@@ -1,16 +1,15 @@
+import { getSessionUserId, isAdmin } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { isMatureVideo, RESTRICTED_POSTER } from '@/lib/videoUtils';
-import { cookies } from 'next/headers';
+import { canViewVideo } from '@/lib/videoVisibility';
 
 export async function GET(request) {
     try {
         // 1. ตรวจสอบ Session ก่อนอนุญาตให้ดึงรูป
-        const cookieStore = await cookies();
-        const sessionToken =
-            cookieStore.get('tubelock_session')?.value ||
-            request.headers.get('x-tubelock-session');
+        const sql = getDb();
+        const userId = await getSessionUserId(sql);
 
-        if (!sessionToken) {
+        if (userId == null) {
             return new Response('Unauthorized', { status: 401 });
         }
 
@@ -24,14 +23,16 @@ export async function GET(request) {
         if (!/^[a-z0-9_-]+$/i.test(folderName)) {
             return new Response('Invalid folder', { status: 400 });
         }
-        const sql = getDb();
         const [video] = await sql`
-            SELECT category, content_rating FROM videos
+            SELECT category, content_rating, visibility, user_id FROM videos
             WHERE 'stream_vid_' || id::text = ${folderName.toLowerCase()}
                OR split_part(master_playlist_path, '/', 3) = ${folderName}
             ORDER BY ('stream_vid_' || id::text = ${folderName.toLowerCase()}) DESC NULLS LAST
             LIMIT 1
         `;
+        if (video && !canViewVideo(video, userId, isAdmin(userId))) {
+            return new Response('Forbidden', { status: 403 });
+        }
         if (!video || isMatureVideo(video)) {
             return Response.redirect(new URL(RESTRICTED_POSTER, request.url), 307);
         }
@@ -69,7 +70,7 @@ export async function GET(request) {
             return new Response('Image not found', { status: 404 });
         }
 
-        // 4. ส่งรูปภาพกลับไปให้เบราว์เซอร์ พร้อมแคชไว้ในเครื่อง Client (1 วัน)
+        // 4. ส่งรูปภาพกลับไปให้เบราว์เซอร์
         const imageBlob = await imageRes.blob();
         return new Response(imageBlob, {
             headers: {

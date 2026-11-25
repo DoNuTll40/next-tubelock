@@ -1,0 +1,26 @@
+ALTER TABLE videos
+  ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'general',
+  ADD COLUMN IF NOT EXISTS source_language VARCHAR(20) DEFAULT '',
+  ADD COLUMN IF NOT EXISTS audio_status VARCHAR(50) DEFAULT 'waiting',
+  ADD COLUMN IF NOT EXISTS subtitle_status VARCHAR(50) DEFAULT 'waiting',
+  ADD COLUMN IF NOT EXISTS subtitle_srt TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS subtitle_vtt TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS subtitle_model VARCHAR(100) DEFAULT '',
+  ADD COLUMN IF NOT EXISTS subtitle_job_id TEXT,
+  ADD COLUMN IF NOT EXISTS sprite_status VARCHAR(50) DEFAULT 'waiting',
+  ADD COLUMN IF NOT EXISTS sprite_preview_url TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS content_rating VARCHAR(50) DEFAULT 'all',
+  ADD COLUMN IF NOT EXISTS user_selected_rating VARCHAR(50) DEFAULT 'all',
+  ADD COLUMN IF NOT EXISTS ai_suggested_rating VARCHAR(50) DEFAULT '',
+  ADD COLUMN IF NOT EXISTS rating_check_status VARCHAR(50) DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS vision_analysis JSONB,
+  ADD COLUMN IF NOT EXISTS thumbnail_status VARCHAR(50) DEFAULT 'waiting',
+  ADD COLUMN IF NOT EXISTS thumbnail_options JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS worker_logs JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS rating_dispatch_id UUID,
+  ADD COLUMN IF NOT EXISTS rating_dispatched_at TIMESTAMPTZ;
+
+ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);
+
+ALTER TABLE IF EXISTS video_versions
+  ADD COLUMN IF NOT EXISTS worker_logs JSONB DEFAULT '[]'::jsonb;

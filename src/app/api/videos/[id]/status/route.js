@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
@@ -220,10 +221,6 @@ export async function GET(request, context) {
       },
     });
   } catch (err) {
-    console.error('[API_VIDEO_STATUS_ERROR]:', err);
-    return NextResponse.json(
-      { success: false, error: err.message },
-      { status: 500 }
-    );
+    return apiError(err, { context: 'GET /api/videos/[id]/status' });
   }
 }

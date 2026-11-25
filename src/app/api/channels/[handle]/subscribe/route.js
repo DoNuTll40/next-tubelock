@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCachedServerSession, accessError } from '@/lib/access';
+import { apiError } from '@/lib/apiError';
 import { normalizeHandleInput } from '@/lib/channelHandle';
+import { rateLimitResponse } from '@/lib/rateLimit';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +17,8 @@ export async function POST(request, context) {
     const session = await getCachedServerSession();
     const subscriberId = session?.id ?? null;
     if (subscriberId == null) return accessError(401);
+    const limited = await rateLimitResponse(sql, 'channelSubscribe', subscriberId);
+    if (limited) return limited;
 
     const { handle: rawHandle } = await context.params;
     const cleanHandle = normalizeHandleInput(rawHandle);
@@ -68,7 +72,6 @@ export async function POST(request, context) {
       subscriberCount: Number(countRows[0]?.cnt || 0),
     });
   } catch (err) {
-    console.error('[API_CHANNEL_SUBSCRIBE_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'POST /api/channels/[handle]/subscribe' });
   }
 }

@@ -59,13 +59,6 @@ export default function PlayerStatsModal({
   const networkActivityTimeoutRef = useRef(null);
   const currentNetworkKBRef = useRef(0);
 
-  // Initialize unique session sCPN once
-  if (!scpnRef.current) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    const chunk = (len) => Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    scpnRef.current = `${chunk(4)} ${chunk(4)} ${chunk(4)} ${chunk(4)}`;
-  }
-
   // 1. ISOLATED FPS TELEMETRY (Only re-renders PlayerStatsModal, ZERO VideoPlayer re-renders!)
   useEffect(() => {
     const v = video?.current;
@@ -189,6 +182,12 @@ export default function PlayerStatsModal({
   // 3. ISOLATED TELEMETRY POLLING INTERVAL (1s)
   useEffect(() => {
     if (!showStats) return;
+
+    if (!scpnRef.current) {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      const chunk = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+      scpnRef.current = `${chunk()} ${chunk()} ${chunk()} ${chunk()}`;
+    }
 
     const interval = setInterval(() => {
       const v = video?.current;

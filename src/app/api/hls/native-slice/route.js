@@ -1,4 +1,5 @@
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
+import { apiErrorBody } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
@@ -216,10 +217,9 @@ export async function POST(request) {
           folderName: uploadResult.folderName,
         });
       } catch (err) {
-        console.error('[Native Slice Error]:', err);
-        sendEvent({
-          error: err.message || 'เกิดข้อผิดพลาดในการประมวลผล HLS',
-        });
+        sendEvent(apiErrorBody(err, {
+          context: 'POST /api/hls/native-slice', message: 'เกิดข้อผิดพลาดในการประมวลผล HLS',
+        }));
       } finally {
         // Clean up temporary files on disk
         if (tempDir && fs.existsSync(tempDir)) {

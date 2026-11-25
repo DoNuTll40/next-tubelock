@@ -1,5 +1,7 @@
 'use client';
 
+import BrowserMediaImage from '@/components/BrowserMediaImage';
+
 export default function PlayerScrubber({
   seekTrackRef,
   scrubPreviewRef,
@@ -61,7 +63,7 @@ export default function PlayerScrubber({
             style={{ aspectRatio: videoRatio || 16 / 9 }}
           >
             {poster && (
-              <img
+              <BrowserMediaImage
                 src={poster}
                 alt="Thumbnail Preview"
                 loading="lazy"

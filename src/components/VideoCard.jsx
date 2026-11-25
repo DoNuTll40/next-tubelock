@@ -1,5 +1,6 @@
 'use client';
 
+import BrowserMediaImage from '@/components/BrowserMediaImage';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -437,7 +438,7 @@ function VideoCard({
           className={`relative isolate aspect-video w-[204px] xl:w-[290px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${canRevealPoster ? 'z-20' : ''}`}
         >
           {effectiveThumbnail && !imgError ? (
-            <img
+            <BrowserMediaImage
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
@@ -482,7 +483,7 @@ function VideoCard({
           {/* 2. Channel info (อยู่ติดกับ Title) */}
           <div className="relative z-20 flex items-center gap-1.5 mt-1 cursor-default">
             {video.author_picture && (
-              <img
+              <BrowserMediaImage
                 src={video.author_picture}
                 alt={video.author_name || 'Channel'}
                 className="w-4 h-4 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
@@ -560,7 +561,7 @@ function VideoCard({
           className={`relative isolate aspect-video w-[144px] sm:w-[168px] rounded-xl bg-zinc-900 overflow-hidden shrink-0 shadow-2xs group-hover:opacity-95 transition-opacity ${canRevealPoster ? 'z-20' : ''}`}
         >
           {effectiveThumbnail && !imgError ? (
-            <img
+            <BrowserMediaImage
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
@@ -601,7 +602,7 @@ function VideoCard({
           </h4>
           <div className="relative z-20 flex items-center gap-1.5 mt-1 cursor-default">
             {video.author_picture && (
-              <img
+              <BrowserMediaImage
                 src={video.author_picture}
                 alt={video.author_name || 'Channel'}
                 className="w-4 h-4 rounded-full object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/10"
@@ -685,7 +686,7 @@ function VideoCard({
       <div className={`relative isolate aspect-video w-full rounded-2xl bg-[#1E1B18] overflow-hidden border border-[#EFECE6] dark:border-white/10 shadow-xs ${canRevealPoster ? 'z-20' : ''}`}>
         {effectiveThumbnail && !imgError ? (
           <>
-            <img
+            <BrowserMediaImage
               src={effectiveThumbnail}
               alt=""
               aria-hidden="true"
@@ -695,7 +696,7 @@ function VideoCard({
               loading="lazy"
               decoding="async"
             />
-            <img
+            <BrowserMediaImage
               ref={imgRef}
               src={effectiveThumbnail}
               alt={video.title}
@@ -763,7 +764,7 @@ function VideoCard({
           {video.author_handle ? (
             <Link href={`/@${encodeURIComponent(video.author_handle)}`} onClick={(e) => e.stopPropagation()}>
               {video.author_picture ? (
-                <img
+                <BrowserMediaImage
                   src={video.author_picture}
                   alt={video.author_name || 'Channel'}
                   className="w-9 h-9 rounded-full object-cover shadow-xs ring-1 ring-black/10 dark:ring-white/10"
@@ -780,7 +781,7 @@ function VideoCard({
               )}
             </Link>
           ) : video.author_picture ? (
-            <img
+            <BrowserMediaImage
               src={video.author_picture}
               alt={video.author_name || 'Channel'}
               className="w-9 h-9 rounded-full object-cover shadow-xs ring-1 ring-black/10 dark:ring-white/10"

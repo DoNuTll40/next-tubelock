@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
@@ -56,7 +57,7 @@ export async function GET(_request, context) {
       },
     });
   } catch (err) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'GET /api/videos/[id]/versions/[versionId]' });
   }
 }
 
@@ -168,8 +169,7 @@ export async function PATCH(request, context) {
       version: formatVersionSummary(updated[0]),
     });
   } catch (err) {
-    console.error('[PATCH_VIDEO_VERSION_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'PATCH /api/videos/[id]/versions/[versionId]' });
   }
 }
 
@@ -268,7 +268,6 @@ export async function DELETE(_request, context) {
       remainingVersions: remaining.map(formatVersionSummary),
     });
   } catch (err) {
-    console.error('[DELETE_VIDEO_VERSION_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'DELETE /api/videos/[id]/versions/[versionId]' });
   }
 }

@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
@@ -27,7 +28,6 @@ export async function POST(_request, { params }) {
       subtitleStatus: latest.subtitle_status,
     });
   } catch (error) {
-    console.error('[Cancel subtitles]', error);
-    return NextResponse.json({ error: error.message || 'ยกเลิกงานซับไม่สำเร็จ' }, { status: 502 });
+    return apiError(error, { context: 'POST /api/videos/[id]/cancel-subtitles', status: 502, message: 'ยกเลิกงานซับไม่สำเร็จ' });
   }
 }

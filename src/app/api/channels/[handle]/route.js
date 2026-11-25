@@ -1,3 +1,4 @@
+import { apiError } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCachedServerSession } from '@/lib/access';
@@ -144,7 +145,6 @@ export async function GET(request, context) {
       })),
     });
   } catch (err) {
-    console.error('[API_CHANNEL_GET_ERROR]:', err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return apiError(err, { context: 'GET /api/channels/[handle]' });
   }
 }

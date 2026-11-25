@@ -26,6 +26,14 @@ Set `TUBELOCK_ADMIN_USER_IDS` to a comma-separated list of Neon `users.id` value
 
 Administrators can change shared settings, manage all video jobs, and use the legacy HLS upload endpoints. Signed-in users can use the standard upload flow and manage their own video jobs. Library entries without an owner require an administrator for management.
 
+## Database migrations
+
+Apply the numbered SQL files to an existing TubeLock database before deploying code that depends on them. Test on an isolated Neon branch first. Set `DATABASE_URL_UNPOOLED` to the branch's direct connection string and run `npm run db:migrate` with Node.js 22 or newer.
+
+The script applies pending migrations in order, records them in `schema_migrations`, and rolls back the batch on failure. Restart active development instances after applying schema changes. Set `CRON_SECRET` on Vercel for the daily cleanup of expired view, rate-limit, and upload reservation records.
+
+The standard upload flow defaults to 10 GiB per file and 100 GiB per uploader. Set `TUBELOCK_MAX_UPLOAD_GIB` and `TUBELOCK_USER_STORAGE_GIB` to override those limits.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

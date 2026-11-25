@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { accessError, getSessionUserId, isAdmin } from '@/lib/access';
 import { getDb } from '@/lib/db';
 import { getGraphToken, getUserDriveId } from '@/lib/onedriveServer';
 import { decompressSourceCache } from '@/lib/videoSourceService';
@@ -7,6 +8,15 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export async function GET(request) {
+  let sql;
+  try {
+    sql = getDb();
+    if (!isAdmin(await getSessionUserId(sql))) return accessError(403);
+  } catch (err) {
+    console.error('[benchmark] Session validation failed:', err);
+    return NextResponse.json({ error: 'Session validation unavailable' }, { status: 503 });
+  }
+
   const { searchParams } = new URL(request.url);
   const testType = searchParams.get('test') || 'all';
 
@@ -14,8 +24,6 @@ export async function GET(request) {
     timestamp: new Date().toISOString(),
     tests: {},
   };
-
-  const sql = getDb();
 
   // 1. Database Benchmark (Latency & Payload comparison)
   if (testType === 'all' || testType === 'db') {
@@ -69,7 +77,8 @@ export async function GET(request) {
         status: 'SUCCESS',
       };
     } catch (err) {
-      results.tests.db = { status: 'FAILED', error: err.message };
+      console.error('[benchmark] Database test failed:', err);
+      results.tests.db = { status: 'FAILED', error: 'Database benchmark failed' };
     }
   }
 
@@ -84,19 +93,19 @@ export async function GET(request) {
       const driveId = await getUserDriveId(token);
       const tDrive1 = performance.now();
 
-      // Test a sample item download URL from latest cached video
+      // Report the name of a sample item from the latest cached video.
       const sampleVid = await sql`
         SELECT id, title,
           (to_jsonb(v)->>'source_cache_br') AS source_cache_br,
           (
-            SELECT jsonb_build_object('name', item->>'name', 'downloadUrl', item->>'downloadUrl')
+            SELECT item->>'name'
             FROM jsonb_array_elements(
               CASE WHEN jsonb_typeof(source_cache->'items') = 'array'
                 THEN source_cache->'items' ELSE '[]'::jsonb END
             ) AS items(item)
             WHERE lower(item->>'name') LIKE '%.ts' OR lower(item->>'name') LIKE '%.m3u8'
             LIMIT 1
-          ) AS chunk
+          ) AS chunk_name
         FROM videos v
         WHERE (to_jsonb(v)->>'source_cache_br') IS NOT NULL OR source_cache IS NOT NULL
         ORDER BY id DESC
@@ -104,23 +113,20 @@ export async function GET(request) {
       `;
 
       let sampleChunk = null;
-      let chunk = sampleVid[0]?.chunk;
-      if (!chunk && sampleVid[0]?.source_cache_br) {
-        const parsed = decompressSourceCache(sampleVid[0].source_cache_br);
-        const found = parsed?.items?.find((i) => {
+      const [sample] = sampleVid;
+      let fileName = sample?.chunk_name;
+      if (!fileName && sample?.source_cache_br) {
+        const parsed = decompressSourceCache(sample.source_cache_br);
+        fileName = parsed?.items?.find((i) => {
           const n = String(i?.name || '').toLowerCase();
           return n.endsWith('.ts') || n.endsWith('.m3u8');
-        });
-        if (found) {
-          chunk = { name: found.name, downloadUrl: found.downloadUrl };
-        }
+        })?.name;
       }
-      if (chunk) {
+      if (fileName) {
         sampleChunk = {
-          videoId: sampleVid[0].id,
-          videoTitle: sampleVid[0].title,
-          fileName: chunk.name,
-          downloadUrl: chunk.downloadUrl,
+          videoId: sample.id,
+          videoTitle: sample.title,
+          fileName,
         };
       }
 
@@ -132,7 +138,8 @@ export async function GET(request) {
         status: 'SUCCESS',
       };
     } catch (err) {
-      results.tests.storage = { status: 'FAILED', error: err.message };
+      console.error('[benchmark] Storage test failed:', err);
+      results.tests.storage = { status: 'FAILED', error: 'Storage benchmark failed' };
     }
   }
 
@@ -161,7 +168,8 @@ export async function GET(request) {
         status: 'SUCCESS',
       };
     } catch (err) {
-      results.tests.system = { status: 'FAILED', error: err.message };
+      console.error('[benchmark] System test failed:', err);
+      results.tests.system = { status: 'FAILED', error: 'System benchmark failed' };
     }
   }
 

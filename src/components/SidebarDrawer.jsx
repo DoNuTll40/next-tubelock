@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import React, { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -93,9 +94,12 @@ export default function SidebarDrawer() {
             onClick={closeDrawer}
             className="flex items-center gap-2 active:scale-95 transition"
           >
-            <img
+            <Image
               src="/images/TubeLock.png"
               alt="TubeLock Logo"
+              width={28}
+              height={28}
+              loading="eager"
               className="w-7 h-7 rounded-lg object-contain shadow-[0_2px_8px_rgba(255,122,0,0.3)] shrink-0"
             />
             <div className="flex items-start gap-1">

@@ -1,5 +1,6 @@
 'use client';
 
+import BrowserMediaImage from '@/components/BrowserMediaImage';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -172,8 +173,7 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
         className="relative aspect-video w-[140px] sm:w-[200px] md:w-[240px] shrink-0 rounded-xl overflow-hidden bg-zinc-900 shadow-2xs group-hover:opacity-95 transition"
       >
         {effectiveThumbnail ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <BrowserMediaImage
             ref={imgRef}
             src={effectiveThumbnail}
             alt={item.title}
@@ -225,7 +225,7 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
         {/* Channel Name */}
         <div className="flex items-center gap-1.5 text-xs text-[#606060] dark:text-[#AAAAAA] mt-1.5">
           {item.author_picture ? (
-            <img
+            <BrowserMediaImage
               src={item.author_picture}
               alt={item.author_name || 'Channel'}
               className="w-4 h-4 rounded-full object-cover shrink-0"
@@ -269,7 +269,7 @@ function HistoryVideoItem({ item, onDelete, isDeleting }) {
   );
 }
 
-export default function HistoryClient({ initialHistory = [], initialUser, initialIsPaused = false }) {
+export default function HistoryClient({ initialHistory = [], initialIsPaused = false }) {
   const router = useRouter();
   const [history, setHistory] = useState(initialHistory);
   const [searchQuery, setSearchQuery] = useState('');

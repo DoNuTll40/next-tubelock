@@ -338,6 +338,7 @@ export async function uploadVideoFile(file, options = {}) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       fileName: file.name,
+      fileSize: file.size,
       targetFolder,
     }),
   });
