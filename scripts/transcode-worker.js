@@ -1481,7 +1481,12 @@ function runFFmpeg(args, onProgress, stepLabel = '', durationSec = 0, options = 
 }
 
 function buildMasterM3U8(qualities) {
-    const sorted = [...qualities].sort((a, b) => a.bitrate - b.bitrate);
+    const sorted = [...qualities].sort(
+        (a, b) =>
+            (Number(a.height) - Number(b.height)) ||
+            (Number(Boolean(a.is_hdr)) - Number(Boolean(b.is_hdr))) ||
+            (Number(a.bitrate) - Number(b.bitrate))
+    );
     const hasHdr = sorted.some((q) => q.is_hdr);
     const hasFmp4 = hasHdr || sorted.some((q) => q.is_fmp4);
     const audioSample = sorted.find((q) => q.audio_channels != null) || null;
@@ -1596,6 +1601,7 @@ async function runHighQualityPass({
     lanePctStart,
     lanePctEnd,
     stagePrefix,
+    forceMode = null, // 'sdr' | 'hdr' | null
 }) {
     const {
         duration,
@@ -1612,12 +1618,18 @@ async function runHighQualityPass({
         audioLabel,
     } = meta;
     const audioArgs = buildAudioEncodeArgs(meta);
-    // YouTube-style Smart Dual-Range Tiering:
-    // - 1080p / 1440p / 2160p on HDR source (or 720p when source itself < 1080p) -> True HEVC 10-bit HDR10 (hvc1 Main10 + MDCV/CLL)
-    // - 720p on >= 1080p HDR source -> Hable Tone-Mapped H.264 8-bit SDR in fMP4 (0% drop-frame smooth fallback for SDR monitors / older devices!)
-    const encodeAsHdr = Boolean(isHdr && (height >= 1080 || meta.srcHeight < 1080));
+    // YouTube-style Dual-Range Tiering:
+    // - On HDR sources: each high-res lane (1080p / 2K / 4K) encodes SDR H.264 first (fast universal unlock),
+    //   then encodes True HEVC 10-bit HDR10 (hvc1 Main10 + MDCV/CLL) alongside it in master.m3u8!
+    // - 144p–720p on HDR sources -> Hable Tone-Mapped H.264 8-bit SDR in fMP4.
+    const encodeAsHdr =
+        forceMode === 'hdr'
+            ? Boolean(isHdr)
+            : forceMode === 'sdr'
+                ? false
+                : Boolean(isHdr && (height >= 1080 || meta.srcHeight < 1080));
     const useFmp4 = Boolean(isHdr);
-    const hevcPreset = height >= 2160 ? 'faster' : 'fast';
+    const hevcPreset = height >= 1440 ? 'veryfast' : 'faster';
     const x265Params = encodeAsHdr ? buildX265HdrParams(meta, maxrateK, bufsizeK) : null;
     const toneMapSuffix = isHdr && !encodeAsHdr ? `,${buildHdrToSdrToneMapChain(meta)}` : '';
 
@@ -1711,7 +1723,12 @@ async function runHighQualityPass({
 
     const passFiles = fs
         .readdirSync(hlsOutputDir)
-        .filter((f) => f.includes(qualityName) && f !== 'master.m3u8');
+        .filter(
+            (f) =>
+                f === `${qualityName}.m3u8` ||
+                f === `init_${qualityName}.mp4` ||
+                f.startsWith(`stream_${qualityName}_`)
+        );
 
     await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, passFiles, true, passLabel);
 
@@ -2262,7 +2279,7 @@ async function runLaneHd({
         return;
     }
 
-    await runHighQualityPass({
+    await runDualRangeLanePass({
         lane: 'hd',
         passLabel: 'Pass 4: 720p HD',
         qualityName: '720p',
@@ -2280,14 +2297,49 @@ async function runLaneHd({
         streamFolderName,
         masterPlaylistPath,
         meta,
-        lanePctStart: 10,
-        lanePctEnd: 100,
         stagePrefix: '⚡ กำลังหั่น 720p HD (คมชัด)',
     });
 }
 
 /**
- * LANE 3 (`fhd`): Dedicated 1080p Full HD Runner (Pass 5)
+ * Dual-Range Lane Helper:
+ * - SDR source: encodes 1 pass (H.264 SDR) from 10% -> 100%.
+ * - HDR source: encodes Pass A (H.264 SDR Tone-Map, 10% -> 45%) for instant universal playback at full resolution,
+ *   then Pass B (HEVC 10-bit hvc1 HDR10, 45% -> 100%) so every high-res tier has BOTH SDR & HDR codecs!
+ */
+async function runDualRangeLanePass(params) {
+    if (!params.meta.isHdr) {
+        await runHighQualityPass({
+            ...params,
+            forceMode: 'sdr',
+            lanePctStart: 10,
+            lanePctEnd: 100,
+        });
+        return;
+    }
+
+    // Pass A: Universal SDR H.264 (fast unlock for PC/SDR/non-HEVC browsers)
+    await runHighQualityPass({
+        ...params,
+        passLabel: `${params.passLabel} [SDR]`,
+        forceMode: 'sdr',
+        lanePctStart: 10,
+        lanePctEnd: 45,
+    });
+
+    // Pass B: True HDR10 HEVC 10-bit (hvc1 Main10)
+    await runHighQualityPass({
+        ...params,
+        qualityName: `${params.qualityName}_hdr`,
+        passLabel: `${params.passLabel} [HDR10]`,
+        forceMode: 'hdr',
+        lanePctStart: 45,
+        lanePctEnd: 100,
+    });
+}
+
+/**
+ * LANE 3 (`fhd`): Dedicated 1080p Full HD Runner (Pass 5 — SDR + HDR10 on HDR sources)
  */
 async function runLaneFhd({
     driveId,
@@ -2311,7 +2363,7 @@ async function runLaneFhd({
         return;
     }
 
-    await runHighQualityPass({
+    await runDualRangeLanePass({
         lane: 'fhd',
         passLabel: 'Pass 5: 1080p Full HD',
         qualityName: '1080p',
@@ -2329,14 +2381,12 @@ async function runLaneFhd({
         streamFolderName,
         masterPlaylistPath,
         meta,
-        lanePctStart: 10,
-        lanePctEnd: 100,
         stagePrefix: '⚡ กำลังหั่น 1080p Full HD (คมชัด)',
     });
 }
 
 /**
- * LANE 4 (`qhd`): Dedicated 1440p 2K Runner (Pass 6)
+ * LANE 4 (`qhd`): Dedicated 1440p 2K Runner (Pass 6 — SDR + HDR10 on HDR sources)
  */
 async function runLaneQhd({
     driveId,
@@ -2360,7 +2410,7 @@ async function runLaneQhd({
         return;
     }
 
-    await runHighQualityPass({
+    await runDualRangeLanePass({
         lane: 'qhd',
         passLabel: 'Pass 6: 1440p 2K',
         qualityName: '1440p',
@@ -2378,14 +2428,12 @@ async function runLaneQhd({
         streamFolderName,
         masterPlaylistPath,
         meta,
-        lanePctStart: 10,
-        lanePctEnd: 100,
         stagePrefix: '⚡ กำลังหั่น 2K Quad HD (1440p)',
     });
 }
 
 /**
- * LANE 5 (`uhd`): Dedicated 2160p 4K UHD Runner (Pass 7 — Full 4 Cores / 16GB RAM exclusively for 4K!)
+ * LANE 5 (`uhd`): Dedicated 2160p 4K UHD Runner (Pass 7 — SDR + HDR10 on HDR sources)
  */
 async function runLaneUhd({
     driveId,
@@ -2409,7 +2457,7 @@ async function runLaneUhd({
         return;
     }
 
-    await runHighQualityPass({
+    await runDualRangeLanePass({
         lane: 'uhd',
         passLabel: 'Pass 7: 2160p 4K',
         qualityName: '2160p',
@@ -2427,8 +2475,6 @@ async function runLaneUhd({
         streamFolderName,
         masterPlaylistPath,
         meta,
-        lanePctStart: 10,
-        lanePctEnd: 100,
         stagePrefix: '⚡ กำลังหั่น 4K UHD (2160p)',
     });
 }
@@ -2682,7 +2728,7 @@ async function main() {
 
         const meta = parseProbeMeta(probeData);
         const hdrTag = meta.isHdr
-            ? ` | 🌈 True HDR (${meta.hdrType} • ${meta.pixFmt}${meta.hdrMaxNits ? ` • ${meta.hdrMaxNits}nit / MaxCLL ${meta.hdrMaxCll}` : ''}) -> 144p–720p H.264 SDR + 1080p–4K HEVC 10-bit (hvc1) HDR10 fMP4`
+            ? ` | 🌈 Dual-Range HDR (${meta.hdrType} • ${meta.pixFmt}${meta.hdrMaxNits ? ` • ${meta.hdrMaxNits}nit / MaxCLL ${meta.hdrMaxCll}` : ''}) -> 144p–4K H.264 SDR + 720p–4K HEVC 10-bit (hvc1) HDR10 fMP4`
             : ` | SDR (${meta.pixFmt}) -> H.264`;
         const hiResTag = meta.hiResEligible
             ? ` + 🎧 Hi-Res ${meta.hiResBitDepth}-bit/${(meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1)}kHz ${meta.hiResFormat.toUpperCase()}${meta.hiResFallbackReason ? ' (Auto-FLAC >1.5GB)' : ''}`
