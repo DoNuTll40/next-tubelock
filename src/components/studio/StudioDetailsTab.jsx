@@ -19,7 +19,11 @@ import Select from '@/components/ui/Select';
 import PlaylistPicker from '@/components/playlist/PlaylistPicker';
 import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 import { isRatingEvaluated } from '@/lib/ratingStatus';
-import { VISIBILITY_OPTIONS } from '@/lib/videoVisibility';
+import {
+  VISIBILITY_OPTIONS,
+  normalizeVideoVisibility,
+  getVisibilityMeta,
+} from '@/lib/videoVisibility';
 import {
   UPLOAD_CATEGORIES,
   SUGGESTED_TAGS,
@@ -423,53 +427,50 @@ export default function StudioDetailsTab({
       </section>
 
       {/* 3.5 Visibility Card */}
-      {setVisibility && (
-        <section className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div>
-            <h3 className="text-xs sm:text-sm font-bold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-1.5">
-              <Globe className="w-4 h-4 text-[#FF7A00]" />
-              <span>ระดับการแสดงผล (Visibility)</span>
-            </h3>
-            <p className="text-[11px] text-[#6C655D] dark:text-[#9A9A9A] mt-0.5">
-              เลือกว่าใครสามารถค้นหาและรับชมวิดีโอนี้ได้บ้าง
-            </p>
-          </div>
+      {setVisibility && (() => {
+        const currentVisibility = normalizeVideoVisibility(visibility);
+        const currentMeta = getVisibilityMeta(currentVisibility);
+        const VisibilityIcon =
+          currentVisibility === 'private' ? Lock : currentVisibility === 'unlisted' ? Link2 : Globe;
+        const visibilitySelectOptions = VISIBILITY_OPTIONS.map((opt) => ({
+          value: opt.value,
+          label: opt.label,
+          desc: opt.description,
+          icon: opt.value === 'private' ? Lock : opt.value === 'unlisted' ? Link2 : Globe,
+        }));
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-            {VISIBILITY_OPTIONS.map((opt) => {
-              const isSelected = visibility === opt.id;
-              const Icon = opt.id === 'private' ? Lock : opt.id === 'unlisted' ? Link2 : Globe;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  disabled={isSaving}
-                  aria-pressed={isSelected}
-                  onClick={() => setVisibility(opt.id)}
-                  className={`p-3.5 rounded-xl border text-left transition enabled:cursor-pointer ${
-                    isSelected
-                      ? 'bg-[#FF7A00]/10 border-[#FF7A00]'
-                      : 'bg-[#F4F0E8] dark:bg-[#222222] border-[#EFECE6] dark:border-white/10 enabled:hover:border-[#D5CFC5] dark:enabled:hover:border-white/20'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-xs sm:text-sm font-bold text-[#212529] dark:text-[#F1F1F1] inline-flex items-center gap-1.5">
-                      <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-[#FF7A00]' : 'text-[#6C655D] dark:text-[#AAAAAA]'}`} />
-                      {opt.label}
-                    </span>
-                    {isSelected && (
-                      <Check className="w-3.5 h-3.5 text-[#FF7A00] shrink-0" />
-                    )}
-                  </div>
-                  <p className="text-[11px] text-[#6C655D] dark:text-[#9A9A9A] leading-relaxed">
-                    {opt.desc}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
+        return (
+          <section className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-5 sm:p-6 shadow-xs space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-xs sm:text-sm font-bold text-[#212529] dark:text-[#F1F1F1] flex items-center gap-1.5">
+                  <VisibilityIcon className="w-4 h-4 text-[#FF7A00]" />
+                  <span>ระดับการแสดงผล (Visibility)</span>
+                </h3>
+                <p className="text-[11px] text-[#6C655D] dark:text-[#9A9A9A] mt-0.5">
+                  เลือกว่าใครสามารถค้นหาและรับชมวิดีโอนี้ได้บ้าง
+                </p>
+              </div>
+              <span className="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-[#FF7A00]/10 text-[#FF7A00] shrink-0">
+                {currentMeta.label}
+              </span>
+            </div>
+
+            <Select
+              options={visibilitySelectOptions}
+              value={currentVisibility}
+              onChange={(val) => setVisibility(val)}
+              placeholder="เลือกระดับการแสดงผล..."
+              disabled={isSaving}
+              className="w-full"
+            />
+
+            <p className="text-[11px] text-[#6C655D] dark:text-[#9A9A9A] leading-relaxed">
+              {currentMeta.description}
+            </p>
+          </section>
+        );
+      })()}
 
       {/* 4. Audience / Content Rating Card */}
       <section className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
