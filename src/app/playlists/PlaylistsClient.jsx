@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { ListVideo, Loader2, Plus, X } from 'lucide-react';
+import { AnimatedTabs, AnimatedTabPanel } from '@/components/ui/AnimatedTabs';
 import Select from '@/components/ui/Select';
 import PlaylistCard from '@/components/playlist/PlaylistCard';
 import PlaylistFormModal, { PlaylistDeleteModal } from '@/components/playlist/PlaylistFormModal';
@@ -14,9 +15,9 @@ const sortOptions = [
 ];
 
 const filterOptions = [
-  { value: 'all', label: 'ทั้งหมด' },
-  { value: 'normal', label: 'เพลย์ลิสต์ของฉัน' },
-  { value: 'system', label: 'ดูภายหลังและที่ชอบ' },
+  { id: 'all', label: 'ทั้งหมด' },
+  { id: 'normal', label: 'เพลย์ลิสต์ของฉัน' },
+  { id: 'system', label: 'ดูภายหลังและที่ชอบ' },
 ];
 
 const titleOrder = new Intl.Collator('th', { numeric: true, sensitivity: 'base' });
@@ -100,51 +101,45 @@ export default function PlaylistsClient({ initialPlaylists }) {
         <>
           <div className="mt-5 flex flex-wrap items-center gap-2">
             <Select options={sortOptions} value={sort} onChange={setSort} />
-            <div role="group" aria-label="กรองเพลย์ลิสต์" className="flex max-w-full items-center gap-1.5 overflow-x-auto overscroll-x-contain py-1">
-              {filterOptions.map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={filter === value}
-                  onClick={() => setFilter(value)}
-                  className={`shrink-0 cursor-pointer rounded-full px-3 py-2 text-xs font-semibold transition ${
-                    filter === value
-                      ? 'bg-[#0F0F0F] text-white dark:bg-[#F1F1F1] dark:text-[#0F0F0F]'
-                      : 'bg-black/[.04] text-[#212529] hover:bg-black/[.07] dark:bg-white/10 dark:text-[#F1F1F1] dark:hover:bg-white/15'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <AnimatedTabs
+              label="กรองเพลย์ลิสต์"
+              tabs={filterOptions}
+              value={filter}
+              onChange={setFilter}
+              behavior="filter"
+              variant="pill"
+              className="max-w-full py-1"
+            />
           </div>
 
-          {visiblePlaylists.length > 0 ? (
-            <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {visiblePlaylists.map((playlist) => (
-                <PlaylistCard
-                  key={playlist.id}
-                  playlist={playlist}
-                  onCopyLink={copyPlaylistLink}
-                  onEdit={() => setDialog({ mode: 'form', playlist })}
-                  onDelete={() => setDialog({ mode: 'delete', playlist })}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-[#EFECE6] bg-white p-8 text-center dark:border-white/10 dark:bg-[#181818]">
-              <ListVideo className="size-8 text-[#FF7A00]" aria-hidden="true" />
-              <p className="font-semibold">
-                {filter === 'normal' ? 'ยังไม่มีเพลย์ลิสต์ที่คุณสร้าง' : 'ยังไม่มีเพลย์ลิสต์'}
-              </p>
-              {filter !== 'system' && (
-                <button type="button" onClick={openCreateDialog} className={createButtonClass}>
-                  <Plus className="size-4" aria-hidden="true" />
-                  สร้างเพลย์ลิสต์แรกของคุณ
-                </button>
-              )}
-            </div>
-          )}
+          <AnimatedTabPanel value={filter} behavior="filter">
+            {visiblePlaylists.length > 0 ? (
+              <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {visiblePlaylists.map((playlist) => (
+                  <PlaylistCard
+                    key={playlist.id}
+                    playlist={playlist}
+                    onCopyLink={copyPlaylistLink}
+                    onEdit={() => setDialog({ mode: 'form', playlist })}
+                    onDelete={() => setDialog({ mode: 'delete', playlist })}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-[#EFECE6] bg-white p-8 text-center dark:border-white/10 dark:bg-[#181818]">
+                <ListVideo className="size-8 text-[#FF7A00]" aria-hidden="true" />
+                <p className="font-semibold">
+                  {filter === 'normal' ? 'ยังไม่มีเพลย์ลิสต์ที่คุณสร้าง' : 'ยังไม่มีเพลย์ลิสต์'}
+                </p>
+                {filter !== 'system' && (
+                  <button type="button" onClick={openCreateDialog} className={createButtonClass}>
+                    <Plus className="size-4" aria-hidden="true" />
+                    สร้างเพลย์ลิสต์แรกของคุณ
+                  </button>
+                )}
+              </div>
+            )}
+          </AnimatedTabPanel>
         </>
       ) : (
         <div className="mt-6 rounded-2xl border border-[#EFECE6] bg-white p-5 dark:border-white/10 dark:bg-[#181818]">

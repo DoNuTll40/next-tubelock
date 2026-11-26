@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } fr
 import { motion, AnimatePresence } from 'framer-motion';
 import VideoCard from '@/components/VideoCard';
 import CategoryChips from '@/components/CategoryChips';
+import { AnimatedTabPanel } from '@/components/ui/AnimatedTabs';
 import FeedSkeleton from '@/components/FeedSkeleton';
 import { Film, Loader2 } from 'lucide-react';
 import { formatResolutionBadge } from '@/lib/videoUtils';
@@ -249,7 +250,7 @@ export default function FeedPage() {
       </AnimatePresence>
 
       {/* Main Grid View */}
-      <div className="px-1 sm:px-6 py-2 flex-1">
+      <AnimatedTabPanel value={activeCategory} behavior="filter" className="px-1 sm:px-6 py-2 flex-1">
         {loading ? (
           /* SKELETON LOADING GRID with GSAP Shimmer Wave */
           <FeedSkeleton count={8} />
@@ -282,7 +283,7 @@ export default function FeedPage() {
             ))}
           </div>
         )}
-      </div>
+      </AnimatedTabPanel>
     </div>
   );
 }

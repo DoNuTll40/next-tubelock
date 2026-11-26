@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useId, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import {
   Film,
@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
 import VideoCard from '@/components/VideoCard';
+import { AnimatedTabPanel, AnimatedTabs } from '@/components/ui/AnimatedTabs';
 import { getVisibilityMeta } from '@/lib/videoVisibility';
 import { useSession } from '@/context/SessionContext';
 import { usePosterPreference } from '@/lib/usePosterPreference';
@@ -514,6 +515,7 @@ function StudioVideoRow({
 
 export default function StudioContentPage() {
   const session = useSession();
+  const filterTabsId = useId();
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
@@ -760,39 +762,22 @@ export default function StudioContentPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-            {[
-              { id: 'all', label: 'วิดีโอทั้งหมด', count: counts.all },
-              { id: 'ready', label: 'พร้อมรับชม', count: counts.ready },
-              { id: 'processing', label: 'กำลังประมวลผล', count: counts.processing },
-              { id: 'failed', label: 'ล้มเหลว', count: counts.failed },
-              { id: 'subtitled', label: 'มีซับไตเติล', count: counts.subtitled },
-              { id: 'mature', label: 'จำกัดอายุ 18+', count: counts.mature },
-            ].map((tab) => {
-              const active = filterTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setFilterTab(tab.id)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap inline-flex items-center gap-1.5 border transition cursor-pointer ${
-                    active
-                      ? 'bg-[#FF7A00] text-white border-[#FF7A00]'
-                      : 'bg-[#F4F0E8] dark:bg-[#222222] text-[#6C655D] dark:text-[#CCCCCC] border-[#EFECE6] dark:border-white/10 hover:border-[#D5CFC5] dark:hover:border-white/25'
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                      active ? 'bg-white/20 text-white' : 'bg-black/5 dark:bg-white/10'
-                    }`}
-                  >
-                    {tab.count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <AnimatedTabs
+            id={filterTabsId}
+            tabs={[
+              { id: 'all', label: 'วิดีโอทั้งหมด', badge: counts.all },
+              { id: 'ready', label: 'พร้อมรับชม', badge: counts.ready },
+              { id: 'processing', label: 'กำลังประมวลผล', badge: counts.processing },
+              { id: 'failed', label: 'ล้มเหลว', badge: counts.failed },
+              { id: 'subtitled', label: 'มีซับไตเติล', badge: counts.subtitled },
+              { id: 'mature', label: 'จำกัดอายุ 18+', badge: counts.mature },
+            ]}
+            value={filterTab}
+            onChange={setFilterTab}
+            label="ตัวกรองวิดีโอ"
+            variant="pill"
+            behavior="filter"
+          />
         </div>
 
         {/* Content Body */}
@@ -803,79 +788,81 @@ export default function StudioContentPage() {
           </div>
         )}
 
-        {loading && videos.length === 0 ? (
-          <div className="py-20 flex flex-col items-center justify-center gap-3 text-[#6C655D] dark:text-[#9A9A9A]">
-            <Loader2 className="w-7 h-7 animate-spin text-[#FF7A00]" />
-            <span className="text-sm font-medium">กำลังโหลดคลังวิดีโอของคุณ...</span>
-          </div>
-        ) : filteredVideos.length === 0 ? (
-          <div className="rounded-3xl bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-12 text-center space-y-3">
-            <Film className="w-10 h-10 mx-auto text-[#8C857B] dark:text-[#71717A] opacity-60" />
-            <h2 className="text-base font-bold">
-              {videos.length === 0 ? 'ยังไม่มีวิดีโอในคลังของคุณ' : 'ไม่พบวิดีโอตามตัวกรองที่เลือก'}
-            </h2>
-            <p className="text-xs sm:text-sm text-[#6C655D] dark:text-[#9A9A9A]">
-              {videos.length === 0
-                ? 'เริ่มต้นอัปโหลดวิดีโอแรกเพื่อประมวลผลสตรีม HLS และซับไตเติล AI'
-                : 'ลองล้างคำค้นหาหรือเปลี่ยนแถบตัวกรองด้านบน'}
-            </p>
-            {videos.length === 0 ? (
-              <Link
-                href="/upload"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#FF7A00] hover:bg-[#E66E00] text-white text-xs font-semibold transition"
-              >
-                <Plus className="w-4 h-4" />
-                <span>อัปโหลดวิดีโอ</span>
-              </Link>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery('');
-                  setFilterTab('all');
-                }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F4F0E8] dark:bg-[#222222] text-xs font-semibold hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] transition cursor-pointer"
-              >
-                <span>แสดงทั้งหมด</span>
-              </button>
-            )}
-          </div>
-        ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-y-4 -mx-2">
-            {filteredVideos.map((video) => (
-              <StudioVideoCard
-                key={video.id}
-                video={video}
-                session={session}
-                openMenuId={openMenuId}
-                setOpenMenuId={setOpenMenuId}
-                copiedId={copiedId}
-                onCopyLink={handleCopyLink}
-                onRequestDelete={(target) => {
-                  setDeleteError('');
-                  setDeleteTarget(target);
-                }}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredVideos.map((video) => (
-              <StudioVideoRow
-                key={video.id}
-                video={video}
-                openMenuId={openMenuId}
-                setOpenMenuId={setOpenMenuId}
-                copiedId={copiedId}
-                onCopyLink={handleCopyLink}
-                onRequestDelete={(target) => {
-                  setDeleteError('');
-                  setDeleteTarget(target);
-                }}
-              />
-            ))}
-          </div>
-        )}
+        <AnimatedTabPanel id={filterTabsId} value={filterTab} behavior="filter">
+          {loading && videos.length === 0 ? (
+            <div className="py-20 flex flex-col items-center justify-center gap-3 text-[#6C655D] dark:text-[#9A9A9A]">
+              <Loader2 className="w-7 h-7 animate-spin text-[#FF7A00]" />
+              <span className="text-sm font-medium">กำลังโหลดคลังวิดีโอของคุณ...</span>
+            </div>
+          ) : filteredVideos.length === 0 ? (
+            <div className="rounded-3xl bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 p-12 text-center space-y-3">
+              <Film className="w-10 h-10 mx-auto text-[#8C857B] dark:text-[#71717A] opacity-60" />
+              <h2 className="text-base font-bold">
+                {videos.length === 0 ? 'ยังไม่มีวิดีโอในคลังของคุณ' : 'ไม่พบวิดีโอตามตัวกรองที่เลือก'}
+              </h2>
+              <p className="text-xs sm:text-sm text-[#6C655D] dark:text-[#9A9A9A]">
+                {videos.length === 0
+                  ? 'เริ่มต้นอัปโหลดวิดีโอแรกเพื่อประมวลผลสตรีม HLS และซับไตเติล AI'
+                  : 'ลองล้างคำค้นหาหรือเปลี่ยนแถบตัวกรองด้านบน'}
+              </p>
+              {videos.length === 0 ? (
+                <Link
+                  href="/upload"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#FF7A00] hover:bg-[#E66E00] text-white text-xs font-semibold transition"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>อัปโหลดวิดีโอ</span>
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setFilterTab('all');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#F4F0E8] dark:bg-[#222222] text-xs font-semibold hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] transition cursor-pointer"
+                >
+                  <span>แสดงทั้งหมด</span>
+                </button>
+              )}
+            </div>
+          ) : viewMode === 'grid' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-y-4 -mx-2">
+              {filteredVideos.map((video) => (
+                <StudioVideoCard
+                  key={video.id}
+                  video={video}
+                  session={session}
+                  openMenuId={openMenuId}
+                  setOpenMenuId={setOpenMenuId}
+                  copiedId={copiedId}
+                  onCopyLink={handleCopyLink}
+                  onRequestDelete={(target) => {
+                    setDeleteError('');
+                    setDeleteTarget(target);
+                  }}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredVideos.map((video) => (
+                <StudioVideoRow
+                  key={video.id}
+                  video={video}
+                  openMenuId={openMenuId}
+                  setOpenMenuId={setOpenMenuId}
+                  copiedId={copiedId}
+                  onCopyLink={handleCopyLink}
+                  onRequestDelete={(target) => {
+                    setDeleteError('');
+                    setDeleteTarget(target);
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </AnimatedTabPanel>
       </div>
 
       <DeleteVideoModal

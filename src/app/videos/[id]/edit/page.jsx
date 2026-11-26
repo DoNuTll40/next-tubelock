@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useState, useEffect, useId, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -29,6 +29,7 @@ import StudioDetailsTab from '@/components/studio/StudioDetailsTab';
 import StudioSubtitlesTab from '@/components/studio/StudioSubtitlesTab';
 import StudioTechTab from '@/components/studio/StudioTechTab';
 import StudioVersionsTab from '@/components/studio/StudioVersionsTab';
+import { AnimatedTabPanel, AnimatedTabs } from '@/components/ui/AnimatedTabs';
 import DeleteVideoModal from '@/components/DeleteVideoModal';
 import { requestPlaylistJson } from '@/components/playlist/PlaylistPicker';
 import { invalidateClientVideoCache } from '@/lib/playbackResolver';
@@ -114,6 +115,7 @@ function StudioEditorInner() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const tabsId = useId();
   const rawId = Array.isArray(params?.id) ? params.id[0] : params?.id;
 
   const initialTabParam = searchParams?.get('tab') || '';
@@ -821,53 +823,30 @@ function StudioEditorInner() {
           </div>
 
           {/* Studio Editor Tabs */}
-          <nav className="flex lg:flex-col gap-1.5 overflow-x-auto pb-1 lg:pb-0">
-            {[
-              { id: 'details', label: 'รายละเอียด', icon: Pencil },
+          <AnimatedTabs
+            id={tabsId}
+            tabs={[
+              { id: 'details', label: 'รายละเอียด', icon: <Pencil aria-hidden="true" className="size-4 shrink-0" /> },
               {
                 id: 'subtitles',
                 label: 'คำบรรยาย',
-                icon: Captions,
-                badge: subtitleTracks.length > 0 ? String(subtitleTracks.length) : null,
+                icon: <Captions aria-hidden="true" className="size-4 shrink-0" />,
+                badge: subtitleTracks.length || undefined,
               },
               {
                 id: 'versions',
                 label: 'เวอร์ชัน',
-                icon: Layers,
-                badge: versions.length > 0 ? String(versions.length) : null,
+                icon: <Layers aria-hidden="true" className="size-4 shrink-0" />,
+                badge: versions.length || undefined,
               },
-              { id: 'tech', label: 'ข้อมูลเทคนิค & คิวงาน', icon: Cpu },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => handleSelectTab(tab.id)}
-                  className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${isActive
-                      ? 'bg-[#FF7A00]/12 text-[#FF7A00] border border-[#FF7A00]/30'
-                      : 'text-[#6C655D] dark:text-[#CCCCCC] hover:bg-[#F4F0E8] dark:hover:bg-white/5 border border-transparent'
-                    }`}
-                >
-                  <span className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span>{tab.label}</span>
-                  </span>
-                  {tab.badge && (
-                    <span
-                      className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${isActive
-                          ? 'bg-[#FF7A00] text-white'
-                          : 'bg-[#F4F0E8] dark:bg-[#242424] text-[#6C655D] dark:text-[#AAAAAA]'
-                        }`}
-                    >
-                      {tab.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+              { id: 'tech', label: 'ข้อมูลเทคนิค & คิวงาน', icon: <Cpu aria-hidden="true" className="size-4 shrink-0" /> },
+            ]}
+            value={activeTab}
+            onChange={handleSelectTab}
+            label="แก้ไขวิดีโอ"
+            variant="pill"
+            orientation="responsive"
+          />
 
           {/* Secondary Utility Links */}
           <div className="hidden lg:flex flex-col gap-1.5 pt-3 border-t border-[#EFECE6] dark:border-white/10 text-xs">
@@ -1004,7 +983,7 @@ function StudioEditorInner() {
           {/* Split Editor + Right Summary Card */}
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
             {/* Active Tab Form */}
-            <div className="min-w-0">
+            <AnimatedTabPanel id={tabsId} value={activeTab} className="min-w-0">
               {activeTab === 'details' && (
                 <StudioDetailsTab
                   title={title}
@@ -1081,7 +1060,7 @@ function StudioEditorInner() {
                   onDispatchTranscode={handleDispatchTranscode}
                 />
               )}
-            </div>
+            </AnimatedTabPanel>
 
             {/* Right YouTube Studio Summary Sidebar */}
             <aside className="xl:sticky xl:top-36 space-y-4">

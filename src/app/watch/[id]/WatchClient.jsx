@@ -15,6 +15,7 @@ import Link from 'next/link';
 import VideoCard from '@/components/VideoCard';
 import DescriptionBox from '@/components/watch/DescriptionBox';
 import WatchPlaylistPanel from '@/components/playlist/WatchPlaylistPanel';
+import { AnimatedTabPanel, AnimatedTabs } from '@/components/ui/AnimatedTabs';
 import {
   DESKTOP_PLAYER_MAX_HEIGHT,
   useGlobalPlayer,
@@ -35,6 +36,13 @@ import {
 import { formatResolutionBadge } from '@/lib/videoUtils';
 
 const SaveToPlaylistModal = dynamic(() => import('@/components/playlist/SaveToPlaylistModal'), { ssr: false });
+
+const RELATED_FILTERS = [
+  { id: 'all', label: 'ทั้งหมด' },
+  { id: 'cloud', label: 'จาก OneDrive' },
+  { id: '4k', label: 'ความละเอียด 4K' },
+  { id: 'related', label: 'ที่เกี่ยวข้อง' },
+];
 
 function formatDuration(seconds) {
   if (!seconds || isNaN(seconds)) return '0:00';
@@ -495,67 +503,58 @@ export default function WatchClient({
             }}
             className="sticky z-20 -mx-3.5 px-3.5 py-2.5 bg-[#FBF9F5] dark:bg-[#0F0F0F] border-b border-[#EFECE6]/80 dark:border-white/10 sm:mx-0 sm:px-0 md:static md:py-0.5 md:border-none md:bg-transparent md:dark:bg-transparent"
           >
-            <div className="flex items-center gap-1.5 overflow-x-auto overscroll-x-contain scrollbar-none py-0.5 select-none">
-              {[
-                { id: 'all', label: 'ทั้งหมด' },
-                { id: 'cloud', label: 'จาก OneDrive' },
-                { id: '4k', label: 'ความละเอียด 4K' },
-                { id: 'related', label: 'ที่เกี่ยวข้อง' },
-              ].map((chip) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => setActiveFilter(chip.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition active:scale-95 shrink-0 cursor-pointer ${activeFilter === chip.id
-                    ? 'bg-[#0F0F0F] dark:bg-[#F1F1F1] text-white dark:text-[#0F0F0F] shadow-xs'
-                    : 'bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000012] dark:hover:bg-white/15 text-[#0F0F0F] dark:text-[#F1F1F1]'
-                    }`}
-                >
-                  {chip.label}
-                </button>
-              ))}
-            </div>
+            <AnimatedTabs
+              tabs={RELATED_FILTERS}
+              value={activeFilter}
+              onChange={setActiveFilter}
+              label="กรองวิดีโอแนะนำ"
+              variant="pill"
+              behavior="filter"
+              className="py-0.5"
+            />
           </div>
 
-          {filteredRelated.length === 0 ? (
-            <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-6 text-center shadow-xs flex flex-col items-center gap-3.5 mt-1">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#FF7A00]/15 to-[#FF9E40]/25 flex items-center justify-center text-[#FF7A00]">
-                <Film className="w-6 h-6 stroke-[1.8]" />
+          <AnimatedTabPanel value={activeFilter} behavior="filter">
+            {filteredRelated.length === 0 ? (
+              <div className="bg-white dark:bg-[#181818] border border-[#EFECE6] dark:border-white/10 rounded-2xl p-6 text-center shadow-xs flex flex-col items-center gap-3.5 mt-1">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#FF7A00]/15 to-[#FF9E40]/25 flex items-center justify-center text-[#FF7A00]">
+                  <Film className="w-6 h-6 stroke-[1.8]" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-sm font-bold text-[#0F0F0F] dark:text-[#F1F1F1]">
+                    ยังไม่มีวิดีโอแนะนำอื่น
+                  </h3>
+                  <p className="text-xs text-[#606060] dark:text-[#AAAAAA] leading-relaxed max-w-[240px]">
+                    อัปโหลดวิดีโอเข้าคลาวด์ OneDrive เพื่อรับชมแบบ Private ABR สตรีมมิ่ง
+                  </p>
+                </div>
+                <Link
+                  href="/upload"
+                  className="px-4 py-2 bg-[#FF7A00] hover:bg-[#E56E00] text-white text-xs font-bold rounded-xl shadow-xs transition active:scale-95 flex items-center gap-1.5"
+                >
+                  <UploadCloud className="w-4 h-4" />
+                  <span>อัปโหลดวิดีโอใหม่</span>
+                </Link>
               </div>
-              <div className="flex flex-col gap-1">
-                <h3 className="text-sm font-bold text-[#0F0F0F] dark:text-[#F1F1F1]">
-                  ยังไม่มีวิดีโอแนะนำอื่น
-                </h3>
-                <p className="text-xs text-[#606060] dark:text-[#AAAAAA] leading-relaxed max-w-[240px]">
-                  อัปโหลดวิดีโอเข้าคลาวด์ OneDrive เพื่อรับชมแบบ Private ABR สตรีมมิ่ง
-                </p>
+            ) : isDesktopLg === false ? (
+              <div className="isolate grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {filteredRelated.map((item) => (
+                  <VideoCard key={`mob-${item.id}`} video={item} replace={true} compact={false} />
+                ))}
               </div>
-              <Link
-                href="/upload"
-                className="px-4 py-2 bg-[#FF7A00] hover:bg-[#E56E00] text-white text-xs font-bold rounded-xl shadow-xs transition active:scale-95 flex items-center gap-1.5"
-              >
-                <UploadCloud className="w-4 h-4" />
-                <span>อัปโหลดวิดีโอใหม่</span>
-              </Link>
-            </div>
-          ) : isDesktopLg === false ? (
-            <div className="isolate grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {filteredRelated.map((item) => (
-                <VideoCard key={`mob-${item.id}`} video={item} replace={true} compact={false} />
-              ))}
-            </div>
-          ) : (
-            <div className={`isolate ${isDesktopLg === null ? 'hidden lg:flex' : 'flex'} flex-col gap-2.5`}>
-              {filteredRelated.map((item) => (
-                <VideoCard
-                  key={`desk-${item.id}`}
-                  video={item}
-                  replace={true}
-                  half={true}
-                />
-              ))}
-            </div>
-          )}
+            ) : (
+              <div className={`isolate ${isDesktopLg === null ? 'hidden lg:flex' : 'flex'} flex-col gap-2.5`}>
+                {filteredRelated.map((item) => (
+                  <VideoCard
+                    key={`desk-${item.id}`}
+                    video={item}
+                    replace={true}
+                    half={true}
+                  />
+                ))}
+              </div>
+            )}
+          </AnimatedTabPanel>
         </div>
       </div>
     </div>

@@ -13,6 +13,7 @@ export default function SystemSection({
   setAllow18Plus,
   handleClearHistory,
   handleFactoryReset,
+  showHeading = true,
 }) {
   const isLoggedIn = Boolean(useSession());
 
@@ -41,12 +42,12 @@ export default function SystemSection({
 
   return (
     <div className="flex flex-col gap-6 animate-fadeIn px-4">
-      <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
+      {showHeading && <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
         <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">ความเป็นส่วนตัวและความปลอดภัย</h2>
         <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
           ควบคุมการแสดงผลเนื้อหาจำกัดอายุ 18+ จัดการประวัติการรับชม และข้อมูลแคชในเครื่อง
         </p>
-      </div>
+      </div>}
 
       {/* Content Safety & 18+ Filter Card */}
       <SettingCard

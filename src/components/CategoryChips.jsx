@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { AnimatedTabs } from '@/components/ui/AnimatedTabs';
 
 const CATEGORIES = [
   { id: 'all', label: 'ทั้งหมด' },
@@ -21,19 +22,30 @@ const CATEGORIES = [
 export default function CategoryChips({ activeCategory = 'all', onSelectCategory }) {
   const scrollRef = useRef(null);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
-  const [showRightArrow, setShowRightArrow] = useState(true);
+  const [showRightArrow, setShowRightArrow] = useState(false);
 
-  const handleScroll = () => {
+  const updateArrows = useCallback(() => {
     if (!scrollRef.current) return;
     const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
     setShowLeftArrow(scrollLeft > 10);
     setShowRightArrow(scrollLeft < scrollWidth - clientWidth - 10);
-  };
+  }, []);
+
+  useLayoutEffect(() => {
+    const rail = scrollRef.current;
+    if (!rail) return;
+
+    const observer = new ResizeObserver(updateArrows);
+    observer.observe(rail);
+    for (const chip of rail.children) observer.observe(chip);
+    return () => observer.disconnect();
+  }, [updateArrows]);
 
   const scroll = (direction) => {
     if (!scrollRef.current) return;
     const offset = direction === 'left' ? -200 : 200;
-    scrollRef.current.scrollBy({ left: offset, behavior: 'smooth' });
+    const behavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    scrollRef.current.scrollBy({ left: offset, behavior });
   };
 
   return (
@@ -44,48 +56,37 @@ export default function CategoryChips({ activeCategory = 'all', onSelectCategory
           <div className="hidden sm:flex absolute left-0 top-0 bottom-0 items-center pr-4 bg-gradient-to-r from-[#FBF9F5] via-[#FBF9F5] dark:from-[#0F0F0F] dark:via-[#0F0F0F] to-transparent z-10">
             <button
               type="button"
+              aria-label="เลื่อนหมวดหมู่ไปทางซ้าย"
               onClick={() => scroll('left')}
               className="w-8 h-8 rounded-full bg-white dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 shadow-md flex items-center justify-center hover:bg-[#F5F2EB] dark:hover:bg-[#2e2e2e] active:scale-95 transition text-[#212529] dark:text-[#F1F1F1] cursor-pointer"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft aria-hidden="true" className="w-4 h-4" />
             </button>
           </div>
         )}
 
-        {/* Scrollable Chips List */}
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="flex items-center gap-2 overflow-x-auto scrollbar-none scroll-smooth w-full no-scrollbar px-1 py-0.5"
-          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-        >
-          {CATEGORIES.map((cat) => {
-            const isActive = activeCategory === cat.id;
-            return (
-              <button
-                key={cat.id}
-                type="button"
-                onClick={() => onSelectCategory(cat.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all duration-150 cursor-pointer ${isActive
-                  ? 'bg-[#212529] dark:bg-[#F1F1F1] text-white dark:text-[#0F0F0F] shadow-xs'
-                  : 'bg-[#F0EDE6] dark:bg-[#222222] hover:bg-[#E5E0D8] dark:hover:bg-[#2e2e2e] text-[#212529] dark:text-[#F1F1F1]'
-                  }`}
-              >
-                {cat.label}
-              </button>
-            );
-          })}
-        </div>
+        <AnimatedTabs
+          scrollRef={scrollRef}
+          onScroll={updateArrows}
+          tabs={CATEGORIES}
+          value={activeCategory}
+          onChange={onSelectCategory}
+          label="หมวดหมู่วิดีโอ"
+          variant="pill"
+          behavior="filter"
+          className="w-full px-1 py-0.5"
+        />
 
         {/* Right Arrow (Desktop) */}
         {showRightArrow && (
           <div className="hidden sm:flex absolute right-0 top-0 bottom-0 items-center pl-4 bg-gradient-to-l from-[#FBF9F5] via-[#FBF9F5] dark:from-[#0F0F0F] dark:via-[#0F0F0F] to-transparent z-10">
             <button
               type="button"
+              aria-label="เลื่อนหมวดหมู่ไปทางขวา"
               onClick={() => scroll('right')}
               className="w-8 h-8 rounded-full bg-white dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 shadow-md flex items-center justify-center hover:bg-[#F5F2EB] dark:hover:bg-[#2e2e2e] active:scale-95 transition text-[#212529] dark:text-[#F1F1F1] cursor-pointer"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight aria-hidden="true" className="w-4 h-4" />
             </button>
           </div>
         )}

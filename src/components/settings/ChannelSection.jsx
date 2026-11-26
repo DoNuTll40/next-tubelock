@@ -4,15 +4,12 @@ import Link from 'next/link';
 import { AtSign } from 'lucide-react';
 import ChannelHandleCard from '@/components/settings/ChannelHandleCard';
 
-export default function ChannelSection({ session }) {
+export default function ChannelSection({ session, showHeading = true }) {
   return (
     <div className="flex flex-col gap-6 animate-fadeIn px-4">
-      <div className="pb-2 border-b border-[#EFECE6] dark:border-white/10">
-        <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">ช่องของฉัน (@handle)</h2>
-        <p className="text-xs text-[#8C857B] dark:text-[#AAAAAA] mt-1">
-          ปรับแต่งชื่อ @handle ประจำช่อง คำอธิบายช่อง และภาพแบนเนอร์ที่แสดงบนหน้าช่องสาธารณะ
-        </p>
-      </div>
+      {showHeading && (
+        <h2 className="text-xl font-bold text-[#212529] dark:text-[#F1F1F1]">ช่องของฉัน</h2>
+      )}
 
       {!session ? (
         <div className="bg-[#F5F2EB] dark:bg-white/5 border border-dashed border-[#D5CFC5] dark:border-white/15 rounded-2xl p-6 flex flex-col items-center gap-3 text-center">
@@ -33,7 +30,7 @@ export default function ChannelSection({ session }) {
           </Link>
         </div>
       ) : (
-        <ChannelHandleCard session={session} />
+        <ChannelHandleCard key={session.id} session={session} />
       )}
     </div>
   );

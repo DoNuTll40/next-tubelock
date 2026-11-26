@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { extractDominantColor } from '@/lib/colorExtractor';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   ArrowDown, ArrowUp, GripVertical, ListVideo, Pencil, Play,
   Share2, Shuffle, Trash2, UserRound,
@@ -13,6 +13,7 @@ import VideoCard from '@/components/VideoCard';
 import { PlaylistCover, PlaylistVisibility } from '@/components/playlist/PlaylistCard';
 import PlaylistFormModal, { PlaylistDeleteModal } from '@/components/playlist/PlaylistFormModal';
 import { requestPlaylistJson } from '@/components/playlist/PlaylistPicker';
+import { AnimatedTabs, AnimatedTabPanel } from '@/components/ui/AnimatedTabs';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { isMatureVideo, protectVideoPoster } from '@/lib/videoUtils';
 
@@ -26,6 +27,11 @@ const statusLabels = {
 const primaryAction = 'inline-flex min-h-10 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-[#FF7A00] px-4 text-sm font-semibold text-white hover:bg-[#E56E00] dark:hover:bg-[#FF8C1A]';
 const secondaryAction = 'inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-full bg-[#0000000a] px-4 text-sm font-medium hover:bg-[#00000012] dark:bg-white/10 dark:hover:bg-white/15';
 const disabledAction = 'disabled:cursor-default disabled:opacity-40';
+const PLAYLIST_TABS = [
+  { id: 'all', label: 'ทั้งหมด' },
+  { id: 'videos', label: 'วิดีโอ' },
+  { id: 'shorts', label: 'Shorts' },
+];
 
 function isPlayable(item) {
   return item.status == null || item.status === 'READY';
@@ -45,6 +51,7 @@ function formatTotalDuration(duration) {
 
 export default function PlaylistDetailClient({ initialPlaylist, initialItems }) {
   const router = useRouter();
+  const tabsId = useId();
   const [playlist, setPlaylist] = useState(initialPlaylist);
   const [coverColor, setCoverColor] = useState(null);
   const [items, setItems] = useState(initialItems);
@@ -421,128 +428,116 @@ export default function PlaylistDetailClient({ initialPlaylist, initialItems }) 
           return (
             <>
               {hasShorts && (
-                <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-0.5">
-                  {[
-                    { id: 'all', label: 'ทั้งหมด' },
-                    { id: 'videos', label: 'วิดีโอ' },
-                    { id: 'shorts', label: 'Shorts' },
-                  ].map((tab) => {
-                    const isActive = effectiveTab === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`rounded-lg px-3 py-1.5 text-xs sm:text-sm font-semibold transition cursor-pointer shrink-0 ${
-                          isActive
-                            ? 'bg-[#212529] text-white dark:bg-[#F1F1F1] dark:text-[#0F0F0F]'
-                            : 'bg-black/[0.06] text-[#212529] hover:bg-black/[0.1] dark:bg-white/10 dark:text-[#F1F1F1] dark:hover:bg-white/15'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <AnimatedTabs
+                  id={tabsId}
+                  label="หมวดวิดีโอในเพลย์ลิสต์"
+                  tabs={PLAYLIST_TABS}
+                  value={effectiveTab}
+                  onChange={setActiveTab}
+                  variant="pill"
+                  className="mb-3"
+                />
               )}
 
-              {displayedEntries.length ? (
-                <ol aria-label="วิดีโอในเพลย์ลิสต์" className="space-y-1.5">
-                  {displayedEntries.map(({ item, originalIndex }) => {
-                    const indicator = allowReorder && dropTarget?.id === item.id;
-                    const playable = isPlayable(item);
-                    const statusBadge = !playable ? (
-                      <span
-                        className={`inline-block rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
-                          item.status === 'FAILED'
-                            ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
-                            : 'bg-[#FFF4EB] text-[#9C4900] dark:bg-[#FF7A00]/15 dark:text-[#FF9E40]'
-                        }`}
-                      >
-                        {statusLabels[item.status] || 'ยังไม่พร้อมเล่น'}
-                      </span>
-                    ) : null;
+              <AnimatedTabPanel id={hasShorts ? tabsId : undefined} value={effectiveTab}>
+                {displayedEntries.length ? (
+                  <ol aria-label="วิดีโอในเพลย์ลิสต์" className="space-y-1.5">
+                    {displayedEntries.map(({ item, originalIndex }) => {
+                      const indicator = allowReorder && dropTarget?.id === item.id;
+                      const playable = isPlayable(item);
+                      const statusBadge = !playable ? (
+                        <span
+                          className={`inline-block rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
+                            item.status === 'FAILED'
+                              ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300'
+                              : 'bg-[#FFF4EB] text-[#9C4900] dark:bg-[#FF7A00]/15 dark:text-[#FF9E40]'
+                          }`}
+                        >
+                          {statusLabels[item.status] || 'ยังไม่พร้อมเล่น'}
+                        </span>
+                      ) : null;
 
-                    const extraMenuItems = playlist.can_manage
-                      ? [
-                          ...(allowReorder
-                            ? [
-                                {
-                                  label: 'เลื่อนขึ้น',
-                                  icon: ArrowUp,
-                                  disabled: controlsDisabled || originalIndex === 0,
-                                  onClick: () => moveBy(item.id, -1),
-                                },
-                                {
-                                  label: 'เลื่อนลง',
-                                  icon: ArrowDown,
-                                  disabled: controlsDisabled || originalIndex === items.length - 1,
-                                  onClick: () => moveBy(item.id, 1),
-                                },
-                              ]
-                            : []),
-                          {
-                            label: `นำออกจาก ${playlist.title}`,
-                            icon: Trash2,
-                            danger: true,
-                            disabled: controlsDisabled,
-                            onClick: () => void removeItem(item),
-                          },
-                        ]
-                      : null;
+                      const extraMenuItems = playlist.can_manage
+                        ? [
+                            ...(allowReorder
+                              ? [
+                                  {
+                                    label: 'เลื่อนขึ้น',
+                                    icon: ArrowUp,
+                                    disabled: controlsDisabled || originalIndex === 0,
+                                    onClick: () => moveBy(item.id, -1),
+                                  },
+                                  {
+                                    label: 'เลื่อนลง',
+                                    icon: ArrowDown,
+                                    disabled: controlsDisabled || originalIndex === items.length - 1,
+                                    onClick: () => moveBy(item.id, 1),
+                                  },
+                                ]
+                              : []),
+                            {
+                              label: `นำออกจาก ${playlist.title}`,
+                              icon: Trash2,
+                              danger: true,
+                              disabled: controlsDisabled,
+                              onClick: () => void removeItem(item),
+                            },
+                          ]
+                        : null;
 
-                    return (
-                      <li
-                        key={item.id}
-                        onDragOver={allowReorder ? (event) => dragOver(event, item.id) : undefined}
-                        onDrop={allowReorder ? (event) => dropOn(event, item.id) : undefined}
-                        className="relative flex items-center gap-1 sm:gap-2"
-                      >
-                        {indicator && (
+                      return (
+                        <li
+                          key={item.id}
+                          onDragOver={allowReorder ? (event) => dragOver(event, item.id) : undefined}
+                          onDrop={allowReorder ? (event) => dropOn(event, item.id) : undefined}
+                          className="relative flex items-center gap-1 sm:gap-2"
+                        >
+                          {indicator && (
+                            <span
+                              aria-hidden="true"
+                              className={`pointer-events-none absolute inset-x-0 z-10 border-t-2 border-[#FF7A00] ${
+                                dropTarget.after ? '-bottom-1' : '-top-1'
+                              }`}
+                            />
+                          )}
+                          {allowReorder && (
+                            <span
+                              draggable={!controlsDisabled}
+                              onDragStart={(event) => startDrag(event, item.id)}
+                              onDragEnd={finishDrag}
+                              title="ลากเพื่อจัดลำดับ"
+                              className="hidden size-6 shrink-0 select-none items-center justify-center text-black/45 dark:text-white/45 lg:flex lg:cursor-grab lg:active:cursor-grabbing"
+                            >
+                              <GripVertical aria-hidden="true" className="size-4" />
+                            </span>
+                          )}
                           <span
                             aria-hidden="true"
-                            className={`pointer-events-none absolute inset-x-0 z-10 border-t-2 border-[#FF7A00] ${
-                              dropTarget.after ? '-bottom-1' : '-top-1'
-                            }`}
-                          />
-                        )}
-                        {allowReorder && (
-                          <span
-                            draggable={!controlsDisabled}
-                            onDragStart={(event) => startDrag(event, item.id)}
-                            onDragEnd={finishDrag}
-                            title="ลากเพื่อจัดลำดับ"
-                            className="hidden size-6 shrink-0 select-none items-center justify-center text-black/45 dark:text-white/45 lg:flex lg:cursor-grab lg:active:cursor-grabbing"
+                            className="w-5 shrink-0 text-center text-xs tabular-nums text-black/50 dark:text-white/50 sm:w-6"
                           >
-                            <GripVertical aria-hidden="true" className="size-4" />
+                            {originalIndex + 1}
                           </span>
-                        )}
-                        <span
-                          aria-hidden="true"
-                          className="w-5 shrink-0 text-center text-xs tabular-nums text-black/50 dark:text-white/50 sm:w-6"
-                        >
-                          {originalIndex + 1}
-                        </span>
-                        <VideoCard
-                          video={item}
-                          compact
-                          href={watchUrl(item, originalIndex, routeKey)}
-                          disabledLink={!playable}
-                          statusBadge={statusBadge}
-                          extraMenuItems={extraMenuItems}
-                          showNotInterested={false}
-                          className="flex-1 min-w-0"
-                        />
-                      </li>
-                    );
-                  })}
-                </ol>
-              ) : (
-                <div className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[#EFECE6] text-sm text-black/60 dark:border-white/10 dark:text-white/60">
-                  <ListVideo aria-hidden="true" className="size-8 text-[#FF7A00]" />
-                  {items.length ? 'ไม่มีวิดีโอในหมวดนี้' : 'ยังไม่มีวิดีโอในเพลย์ลิสต์นี้'}
-                </div>
-              )}
+                          <VideoCard
+                            video={item}
+                            compact
+                            href={watchUrl(item, originalIndex, routeKey)}
+                            disabledLink={!playable}
+                            statusBadge={statusBadge}
+                            extraMenuItems={extraMenuItems}
+                            showNotInterested={false}
+                            className="flex-1 min-w-0"
+                          />
+                        </li>
+                      );
+                    })}
+                  </ol>
+                ) : (
+                  <div className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-[#EFECE6] text-sm text-black/60 dark:border-white/10 dark:text-white/60">
+                    <ListVideo aria-hidden="true" className="size-8 text-[#FF7A00]" />
+                    {items.length ? 'ไม่มีวิดีโอในหมวดนี้' : 'ยังไม่มีวิดีโอในเพลย์ลิสต์นี้'}
+                  </div>
+                )}
+              </AnimatedTabPanel>
             </>
           );
         })()}

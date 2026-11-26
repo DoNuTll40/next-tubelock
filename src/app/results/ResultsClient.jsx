@@ -1,6 +1,7 @@
 'use client';
 
 import BrowserMediaImage from '@/components/BrowserMediaImage';
+import { AnimatedTabs, AnimatedTabPanel } from '@/components/ui/AnimatedTabs';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -286,25 +287,15 @@ export default function ResultsClient({ initialQuery = '' }) {
       {/* 🧭 Top Filter Chips & Filter Toggle Bar */}
       <div className="sticky top-14 z-30 bg-[#FBF9F5]/98 dark:bg-[#0F0F0F]/98 backdrop-blur-md border-b border-[#EFECE6]/80 dark:border-white/10 px-4 md:px-6 py-2.5 transition-colors">
         <div className="max-w-[1190px] mx-auto flex items-center justify-between gap-3">
-          {/* Left: Chips scroll container */}
-          <div className="flex items-center gap-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden py-0.5">
-            {FILTER_CHIPS.map((chip) => {
-              const isActive = activeChip === chip.id;
-              return (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => setActiveChip(chip.id)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-150 cursor-pointer ${isActive
-                    ? 'bg-[#0F0F0F] text-white dark:bg-[#F1F1F1] dark:text-[#0F0F0F] shadow-xs'
-                    : 'bg-black/5 dark:bg-white/10 text-[#0F0F0F] dark:text-[#F1F1F1] hover:bg-black/10 dark:hover:bg-white/20'
-                    }`}
-                >
-                  {chip.label}
-                </button>
-              );
-            })}
-          </div>
+          <AnimatedTabs
+            label="ประเภทผลการค้นหา"
+            tabs={FILTER_CHIPS}
+            value={activeChip}
+            onChange={setActiveChip}
+            behavior="filter"
+            variant="pill"
+            className="py-0.5"
+          />
 
           {/* Right: Filter options button (ตัวกรอง) */}
           <button
@@ -416,7 +407,7 @@ export default function ResultsClient({ initialQuery = '' }) {
       </div>
 
       {/* 🎬 Search Results List (YouTube Desktop Horizontal Format) */}
-      <div className="mx-auto px-4 md:px-6 pt-5">
+      <AnimatedTabPanel value={activeChip} behavior="filter" className="mx-auto px-4 md:px-6 pt-5">
         {loading ? (
           // Skeleton Loader
           <div className="flex flex-col gap-4">
@@ -471,7 +462,7 @@ export default function ResultsClient({ initialQuery = '' }) {
             )}
           </div>
         )}
-      </div>
+      </AnimatedTabPanel>
     </div>
   );
 }

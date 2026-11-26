@@ -1,10 +1,10 @@
 'use client';
 
 import { savePosterPreference, syncPosterPreferenceCookie } from '@/lib/posterPreference';
-import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, useId, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  ArrowLeft, ChevronRight, PlayCircle, Folder,
+  AlertCircle, ArrowLeft, ChevronRight, PlayCircle, Folder,
   ShieldCheck, CheckCircle, Loader2,
   Sliders, LifeBuoy, AtSign, User
 } from 'lucide-react';
@@ -19,6 +19,7 @@ import StorageSection from '@/components/settings/StorageSection';
 import SystemSection from '@/components/settings/SystemSection';
 import SupportSection from '@/components/settings/SupportSection';
 import ActionSheetModal from '@/components/settings/ActionSheetModal';
+import { AnimatedTabPanel } from '@/components/ui/AnimatedTabs';
 
 const VALID_TABS = ['account', 'channel', 'general', 'player', 'system', 'onedrive', 'support'];
 
@@ -33,7 +34,25 @@ function parseTabFromParams(searchParams) {
 }
 
 // ─── Subtle Auto-Save Status Pill ────────────────────────────────────────────
-function AutoSaveIndicator({ saveStatus }) {
+function AutoSaveIndicator({ saveStatus, compact = false }) {
+  if (compact) {
+    const saving = saveStatus === 'saving';
+    const failed = saveStatus === 'error';
+    const message = saving ? 'กำลังบันทึก' : failed ? 'ซิงก์ฐานข้อมูลไม่สำเร็จ' : 'บันทึกอัตโนมัติแล้ว';
+    const Icon = saving ? Loader2 : failed ? AlertCircle : CheckCircle;
+    return (
+      <span role="status" className="flex size-8 shrink-0 items-center justify-center">
+        {['saving', 'saved', 'error'].includes(saveStatus) && (
+          <span title={message} className={`grid size-7 place-items-center rounded-full ${saving
+            ? 'bg-[#FF7A00]/10 text-[#A84400] dark:text-[#FFA24D]'
+            : failed ? 'bg-rose-500/15 text-rose-700 dark:text-rose-400' : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'}`}>
+            <Icon aria-hidden="true" className={`size-4 ${saving ? 'animate-spin' : ''}`} />
+            <span className="sr-only">{message}</span>
+          </span>
+        )}
+      </span>
+    );
+  }
   if (saveStatus === 'saving') {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#FF7A00]/10 text-[#FF7A00] text-[11px] font-semibold select-none">
@@ -66,6 +85,7 @@ function SettingsContent() {
   const searchParams = useSearchParams();
   const { isDesktop, isMobile } = useViewMode();
   const { setTheme } = useTheme();
+  const settingsTabsId = useId();
 
   // Tab derived directly from URL query parameters (single source of truth)
   const urlTab = parseTabFromParams(searchParams);
@@ -301,11 +321,11 @@ function SettingsContent() {
   const renderCurrentSection = (tabKey) => {
     switch (tabKey) {
       case 'general':
-        return <GeneralSection onThemeChange={handleThemeSync} />;
+        return <GeneralSection onThemeChange={handleThemeSync} showHeading={!isMobile} />;
       case 'account':
         return <AccountSection session={session} />;
       case 'channel':
-        return <ChannelSection session={session} />;
+        return <ChannelSection session={session} showHeading={!isMobile} />;
       case 'player':
         return (
           <PlayerSection
@@ -329,6 +349,7 @@ function SettingsContent() {
       case 'system':
         return (
           <SystemSection
+            showHeading={!isMobile}
             allow18Plus={allow18Plus}
             setAllow18Plus={handleToggle18Plus}
             handleClearHistory={handleClearHistory}
@@ -338,7 +359,7 @@ function SettingsContent() {
       case 'support':
         return <SupportSection />;
       default:
-        return <GeneralSection onThemeChange={handleThemeSync} />;
+        return <GeneralSection onThemeChange={handleThemeSync} showHeading={!isMobile} />;
     }
   };
 
@@ -370,7 +391,7 @@ function SettingsContent() {
         <div className="flex gap-10 items-start">
           {/* Left Sidebar + Auto-save status */}
           <div className="sticky top-22 w-64 shrink-0 flex flex-col gap-3">
-            <SettingsSidebar activeTab={desktopTab} onSelectTab={handleDesktopTabChange} />
+            <SettingsSidebar id={settingsTabsId} activeTab={desktopTab} onSelectTab={handleDesktopTabChange} />
             {saveStatus !== 'idle' && (
               <div className="px-3 mt-1">
                 <AutoSaveIndicator saveStatus={saveStatus} />
@@ -379,9 +400,9 @@ function SettingsContent() {
           </div>
 
           {/* Content */}
-          <div className="flex-1 min-w-0">
+          <AnimatedTabPanel value={desktopTab} behavior="filter" className="flex-1 min-w-0 [&>.animate-fadeIn]:animate-none!">
             {renderCurrentSection(desktopTab)}
-          </div>
+          </AnimatedTabPanel>
         </div>
       )}
 
@@ -557,28 +578,32 @@ function SettingsContent() {
             </div>
           ) : (
             /* Mobile sub-page */
-            <div className="flex flex-col gap-4">
-              <div className="sticky top-0 z-10 h-14 flex items-center justify-between py-2 px-4 bg-white dark:bg-[#181818] border-b border-[#EFECE6] dark:border-white/10">
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleMobileBack}
-                    className="p-1.5 -ml-1.5 rounded-full hover:bg-[#EFECE6] dark:hover:bg-white/10 active:scale-90 transition text-[#212529] dark:text-[#F1F1F1] cursor-pointer"
-                  >
-                    <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
-                  </button>
-                  <h2 className="text-base font-bold text-[#212529] dark:text-[#F1F1F1]">
+            <div className="flex flex-col gap-4 motion-reduce:[&>.animate-fadeIn]:animate-none!">
+              <header className="sticky top-0 z-10 grid h-14 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-1 border-b border-[#EFECE6] bg-white px-3 dark:border-white/10 dark:bg-[#181818]">
+                <button
+                  type="button"
+                  aria-label="กลับไปหน้าตั้งค่า"
+                  onClick={handleMobileBack}
+                  className="grid size-11 cursor-pointer place-items-center rounded-full text-[#212529] transition hover:bg-[#EFECE6] focus-visible:outline-2 focus-visible:outline-[#FF7A00] active:scale-90 dark:text-[#F1F1F1] dark:hover:bg-white/10"
+                >
+                  <ArrowLeft aria-hidden="true" className="size-5 stroke-[2.2]" />
+                </button>
+                <h2 aria-label={subPage === 'system' ? 'ความเป็นส่วนตัวและความปลอดภัย' : undefined} className="min-w-0 truncate text-center text-sm font-bold text-[#212529] dark:text-[#F1F1F1]">
                     {subPage === 'account' && 'บัญชีและความปลอดภัย'}
-                    {subPage === 'channel' && 'ช่องของฉัน (@handle)'}
+                    {subPage === 'channel' && 'ช่องของฉัน'}
                     {subPage === 'general' && 'การแสดงผลและธีม'}
                     {subPage === 'player' && 'การเล่นและตัวเล่น'}
-                    {subPage === 'system' && 'ความเป็นส่วนตัวและความปลอดภัย'}
+                    {subPage === 'system' && 'ความเป็นส่วนตัว'}
                     {subPage === 'onedrive' && 'พื้นที่จัดเก็บ OneDrive'}
                     {subPage === 'support' && 'เกี่ยวกับและช่วยเหลือ'}
-                  </h2>
+                </h2>
+                <div className="flex justify-center">
+                  <AutoSaveIndicator saveStatus={saveStatus} compact />
                 </div>
-                <AutoSaveIndicator saveStatus={saveStatus} />
-              </div>
+              </header>
+              {saveStatus === 'error' && (
+                <p className="-mt-2 px-4 text-xs text-rose-700 dark:text-rose-400">ซิงก์ฐานข้อมูลไม่สำเร็จ</p>
+              )}
               {renderCurrentSection(subPage)}
             </div>
           )}

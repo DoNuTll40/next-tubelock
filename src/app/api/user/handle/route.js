@@ -25,7 +25,11 @@ export async function GET(request) {
 
     if (rawHandle === null) {
       const rows = await sql`
-        SELECT id, name, picture, handle, bio, banner_url
+        SELECT id, name, picture, handle, bio, banner_url,
+          (SELECT COUNT(*)::int FROM subscriptions WHERE channel_id = users.id) AS subscriber_count,
+          (SELECT LEAST(COUNT(*), 120)::int FROM videos
+            WHERE user_id = users.id AND (status = 'READY' OR status IS NULL)
+              AND COALESCE(visibility, 'public') = 'public') AS video_count
         FROM users
         WHERE id = ${userId}
         LIMIT 1;
@@ -41,6 +45,8 @@ export async function GET(request) {
               handle: profile.handle || '',
               bio: profile.bio || '',
               bannerUrl: profile.banner_url || '',
+              subscriberCount: profile.subscriber_count,
+              videoCount: profile.video_count,
             }
           : null,
       });

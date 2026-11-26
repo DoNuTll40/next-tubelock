@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useDeferredValue, useEffect, useState, useRef, useMemo } from 'react';
+import { Fragment, useDeferredValue, useEffect, useId, useState, useRef, useMemo } from 'react';
 import {
   Captions,
   Plus,
@@ -22,6 +22,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import SubtitleGenerationCard from '@/components/SubtitleGenerationCard';
+import { AnimatedTabs, AnimatedTabPanel } from '@/components/ui/AnimatedTabs';
 import {
   parseSrtCues,
   parseSrtTimestampToMs,
@@ -200,6 +201,7 @@ export default function StudioSubtitlesTab({
 }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [viewMode, setViewMode] = useState('editor'); // 'editor' | 'timeline'
+  const editorTabsId = useId();
   const [timelineSearch, setTimelineSearch] = useState('');
   const deferredSearch = useDeferredValue(timelineSearch);
   const [timelinePage, setTimelinePage] = useState({ key: '', index: 0 });
@@ -752,36 +754,24 @@ export default function StudioSubtitlesTab({
 
             {/* Editor Toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="inline-flex p-0.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 gap-0.5">
-                <button
-                  type="button"
-                  onClick={() => {
+              <AnimatedTabs
+                id={editorTabsId}
+                tabs={[
+                  { id: 'editor', label: 'แก้ไขข้อความ SRT', icon: <Code2 aria-hidden="true" className="size-3.5" /> },
+                  { id: 'timeline', label: `แก้ไขไทม์ไลน์ (${parsedCues.length})`, icon: <List aria-hidden="true" className="size-3.5" /> },
+                ]}
+                value={viewMode}
+                onChange={(nextView) => {
+                  if (nextView === 'editor') {
                     setEditingCue(null);
                     setNewCueComposer(null);
-                    setViewMode('editor');
-                  }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition ${
-                    viewMode === 'editor'
-                      ? 'bg-white dark:bg-[#181818] text-[#212529] dark:text-[#F1F1F1] shadow-2xs'
-                      : 'text-[#6C655D] dark:text-[#9A9A9A]'
-                  }`}
-                >
-                  <Code2 className="w-3.5 h-3.5" />
-                  <span>แก้ไขข้อความ SRT</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('timeline')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition ${
-                    viewMode === 'timeline'
-                      ? 'bg-white dark:bg-[#181818] text-[#212529] dark:text-[#F1F1F1] shadow-2xs'
-                      : 'text-[#6C655D] dark:text-[#9A9A9A]'
-                  }`}
-                >
-                  <List className="w-3.5 h-3.5" />
-                  <span>แก้ไขไทม์ไลน์ ({parsedCues.length})</span>
-                </button>
-              </div>
+                  }
+                  setViewMode(nextView);
+                }}
+                label="รูปแบบแก้ไขซับไตเติล"
+                variant="pill"
+                className="max-w-full"
+              />
 
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
@@ -841,8 +831,8 @@ export default function StudioSubtitlesTab({
               </div>
             </div>
 
-            {viewMode === 'editor' ? (
-              <div className="space-y-1.5">
+            <AnimatedTabPanel id={editorTabsId} value={viewMode} className={viewMode === 'editor' ? 'space-y-1.5' : 'space-y-2'}>
+              {viewMode === 'editor' ? <>
                 <textarea
                   rows={15}
                   value={activeTrack.srt || ''}
@@ -862,9 +852,7 @@ export default function StudioSubtitlesTab({
                     ตรวจพบ {parsedCues.length} ประโยค
                   </span>
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-2">
+              </> : <>
                 <div className="rounded-xl border border-[#EFECE6] dark:border-white/10 bg-[#F4F0E8]/60 dark:bg-[#121212] overflow-hidden">
                   {/* Timeline Control Bar */}
                   <div className="px-3 py-2 border-b border-[#EFECE6] dark:border-white/10 bg-white/70 dark:bg-[#161616] flex flex-wrap items-center justify-between gap-2">
@@ -1098,8 +1086,8 @@ export default function StudioSubtitlesTab({
                 <p className="text-[11px] text-[#8C857B] dark:text-[#9A9A9A]">
                   คลิกข้อความเพื่อแก้ในแถว · Enter ยืนยัน · Shift+Enter ขึ้นบรรทัดใหม่ · Esc ยกเลิก · กด &quot;บันทึก&quot; ด้านบนเพื่อบันทึกลงระบบ
                 </p>
-              </div>
-            )}
+              </>}
+            </AnimatedTabPanel>
           </div>
         )}
       </section>
