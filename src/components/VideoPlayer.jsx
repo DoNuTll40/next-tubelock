@@ -3467,8 +3467,19 @@ export default function VideoPlayer({
                   title="ขยายกลับหน้าดูเต็ม (i)"
                   aria-label="ขยายกลับหน้าดูเต็ม"
                 >
-                  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
-                    <path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="2" y="4" width="20" height="16" rx="2.5" />
+                    <path d="M11 8H7v4m0-4 4.5 4.5" />
+                    <rect x="14" y="12.5" width="5.5" height="5" rx="1" fill="currentColor" stroke="none" />
                   </svg>
                 </button>
                 <button
