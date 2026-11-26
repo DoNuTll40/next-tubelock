@@ -49,8 +49,10 @@ export async function GET(request) {
       try {
         let inputFilePath = '';
         let fileSize = 0;
+        const localFileExists = localPath && fs.existsSync(localPath);
+        const jobData = !localFileExists && jobId ? global.__tubelock_jobs.get(jobId) : null;
 
-        if (localPath && fs.existsSync(localPath)) {
+        if (localFileExists) {
           // Direct PC path
           inputFilePath = localPath;
           fileSize = fs.statSync(localPath).size;
@@ -59,9 +61,9 @@ export async function GET(request) {
             percent: 5,
             text: `ตรวจพบไฟล์ในเครื่อง: "${path.basename(localPath)}" (${(fileSize / (1024 * 1024)).toFixed(1)} MB)`,
           });
-        } else if (jobId && global.__tubelock_jobs.get(jobId)?.isComplete !== false && global.__tubelock_jobs.has(jobId)) {
+        } else if (jobData && jobData.isComplete !== false) {
           // From uploaded temp
-          const jobData = global.__tubelock_jobs.get(jobId);
+          global.__tubelock_jobs.delete(jobId);
           inputFilePath = jobData.tempFilePath;
           cleanupDir = jobData.tempDir;
           fileSize = jobData.fileSize;
@@ -95,8 +97,8 @@ export async function GET(request) {
         // -------------------------------------------------------------
         // Step 2: Slice into HLS with native FFmpeg
         // -------------------------------------------------------------
-        const workDir = cleanupDir || path.join(os.tmpdir(), `tubelock_out_${Date.now()}`);
-        const hlsOutputDir = path.join(workDir, 'hls_out');
+        cleanupDir ??= fs.mkdtempSync(path.join(os.tmpdir(), 'tubelock_out_'));
+        const hlsOutputDir = path.join(cleanupDir, 'hls_out');
         fs.mkdirSync(hlsOutputDir, { recursive: true });
 
         // Capture thumbnail
@@ -218,10 +220,7 @@ export async function GET(request) {
           context: 'GET /api/hls/process-stream', message: 'เกิดข้อผิดพลาดในการประมวลผล HLS',
         }));
       } finally {
-        if (jobId && cleanupDir) {
-          global.__tubelock_jobs.delete(jobId);
-        }
-        if (cleanupDir && fs.existsSync(cleanupDir)) {
+        if (cleanupDir) {
           try {
             fs.rmSync(cleanupDir, { recursive: true, force: true });
           } catch (_) {}

@@ -1,4 +1,4 @@
-import { spawn, exec } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
@@ -7,15 +7,16 @@ import { createHlsFolder, uploadHlsFileDirect, createHlsFileUploadSession } from
 import { getDb } from './db';
 import { classifyResolution } from './videoUtils';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * Run ffprobe to get comprehensive video metadata
  */
 export async function probeVideoNative(filePath) {
   try {
-    const cmd = `ffprobe -v quiet -print_format json -show_format -show_streams "${filePath}"`;
-    const { stdout } = await execAsync(cmd, { maxBuffer: 10 * 1024 * 1024 });
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'quiet', '-print_format', 'json', '-show_format', '-show_streams', '-i', filePath,
+    ], { maxBuffer: 10 * 1024 * 1024 });
     const data = JSON.parse(stdout);
 
     const videoStream = data.streams?.find((s) => s.codec_type === 'video') || {};
@@ -67,8 +68,10 @@ export async function probeVideoNative(filePath) {
  */
 export async function extractThumbnailNative(filePath, outputPath, timeOffsetSec = 1) {
   try {
-    const cmd = `ffmpeg -ss ${timeOffsetSec} -i "${filePath}" -frames:v 1 -vf "scale=640:-2" -q:v 2 "${outputPath}" -y`;
-    await execAsync(cmd);
+    await execFileAsync('ffmpeg', [
+      '-ss', String(timeOffsetSec), '-i', filePath, '-frames:v', '1',
+      '-vf', 'scale=640:-2', '-q:v', '2', outputPath, '-y',
+    ]);
     return true;
   } catch (err) {
     console.warn('[extractThumbnailNative error]:', err.message);

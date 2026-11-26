@@ -5,7 +5,7 @@ import { useState, useRef, useCallback, useEffect, useEffectEvent, useLayoutEffe
 import dynamic from 'next/dynamic';
 import { Play, Pause, Volume2, VolumeX, X, SkipBack, SkipForward } from 'lucide-react';
 import { formatResolutionBadge, formatQualityLevel, watchTimeThreshold } from '@/lib/videoUtils';
-import { getSavedQualityLevel, supportsHdrDisplay } from '@/lib/playerQuality.mjs';
+import { getHlsVideoRange, getSavedQualityLevel, getSdrFallbackLevel, isHdrLevel, supportsHdrDisplay } from '@/lib/playerQuality.mjs';
 import { preloadHlsModule } from '@/lib/playbackResolver';
 import { useSession } from '@/context/SessionContext';
 import {
@@ -126,6 +126,7 @@ export default function VideoPlayer({
   const seekTrackRef = useRef(null);
   const hlsInstanceRef = useRef(null);
   const hlsRetryCountRef = useRef(0);
+  const recoverHdrPlaybackRef = useRef(null);
   const isTransitioningStreamRef = useRef(false);
   const isSwitchingVideoRef = useRef(isSwitchingVideo);
   useLayoutEffect(() => {
@@ -1175,6 +1176,7 @@ export default function VideoPlayer({
     attemptAutoPlay,
     checkAndUpdateRatio,
     fps,
+    isPlaying,
     onHdrStateChange,
     onRefreshStream,
     restoreAudioAfterTransition,
@@ -1304,6 +1306,64 @@ export default function VideoPlayer({
           hls.attachMedia(v);
           hlsInstanceRef.current = hls;
 
+          const describeLevels = (playlistLevels, fps) => playlistLevels.map((level, index) => {
+            const levelFps = level.attrs?.['FRAME-RATE'] ? parseFloat(level.attrs['FRAME-RATE']) : Number(fps) || 0;
+            const isHdr = isHdrLevel(level);
+            const { label, badge, fullLabel } = formatQualityLevel(level.height, levelFps, isHdr);
+            return {
+              index, height: level.height, width: level.width, bitrate: level.bitrate,
+              isHdr, videoRange: getHlsVideoRange(level), label, badge, fullLabel,
+            };
+          });
+
+          let hdrFallbackUsed = false;
+          let resettingToSdr = false;
+          let resumeAfterHdrFallback = false;
+          const recoverHdrPlayback = (reportedLevel = hls.currentLevel) => {
+            if (resettingToSdr) return true;
+            if (!isMounted || hdrFallbackUsed || hlsInstanceRef.current !== hls) return false;
+
+            const failedIndex = [reportedLevel, hls.loadLevel, hls.currentLevel, hls.startLevel]
+              .find((index) => hls.levels[index]);
+            const fallback = getSdrFallbackLevel(hls.levels, failedIndex);
+            if (!fallback) return false;
+
+            const { fps, isPlaying, onHdrStateChange } = getPlaybackOptions();
+            const resumeAt = v.currentTime > 0 ? v.currentTime : (v.readyState === 0 ? targetInitialTime : 0);
+            const wasAuto = hls.autoLevelEnabled;
+            resumeAfterHdrFallback = !isUserPausedRef.current && (isPlaying || !v.paused);
+            hdrFallbackUsed = true;
+            resettingToSdr = true;
+            setHlsError(null);
+            setIsBuffering(true);
+            isTransitioningStreamRef.current = true;
+            lastTickTimeRef.current = null;
+
+            // Reset the decoder for the codec change and keep Auto from selecting HDR again.
+            hls.stopLoad();
+            for (let index = hls.levels.length - 1; index >= 0; index--) {
+              if (isHdrLevel(hls.levels[index])) hls.removeLevel(index);
+            }
+            const fallbackIndex = hls.levels.indexOf(fallback);
+            const remaining = describeLevels(hls.levels, fps);
+            autoCapLevelIndexRef.current = -1;
+            hls.autoLevelCapping = -1;
+            hls.startLevel = fallbackIndex;
+            hls.loadLevel = wasAuto ? -1 : fallbackIndex;
+            setLevels(remaining);
+            setCurrentLevelIndex(wasAuto ? -1 : fallbackIndex);
+            setActiveLevelLabel(remaining[fallbackIndex].label);
+            setIsCurrentLevelHdr(false);
+            onHdrStateChange?.(false);
+            hlsRetryCountRef.current = 0;
+            hls.recoverMediaError();
+            if (wasAuto) hls.nextAutoLevel = fallbackIndex;
+            hls.startLoad(resumeAt);
+            queueMicrotask(() => { resettingToSdr = false; });
+            return true;
+          };
+          recoverHdrPlaybackRef.current = recoverHdrPlayback;
+
           hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
             const { attemptAutoPlay, fps, onHdrStateChange, updateRatio } = getPlaybackOptions();
             setIsBuffering(false);
@@ -1319,24 +1379,7 @@ export default function VideoPlayer({
             lastReportedSecondRef.current = Math.floor(startSec);
             initialSeekDoneRef.current = true;
             if (data.levels && data.levels.length > 0) {
-              const videoFps = Number(fps) || 0;
-              const parsed = data.levels.map((lvl, index) => {
-                const lvlFps = lvl.attrs?.['FRAME-RATE'] ? parseFloat(lvl.attrs['FRAME-RATE']) : videoFps;
-                const videoRange = String(lvl.attrs?.['VIDEO-RANGE'] || lvl.videoRange || '').toUpperCase();
-                const isLevelHdr = videoRange === 'PQ' || videoRange === 'HLG';
-                const formatted = formatQualityLevel(lvl.height, lvlFps, isLevelHdr);
-                return {
-                  index,
-                  height: lvl.height,
-                  width: lvl.width,
-                  bitrate: lvl.bitrate,
-                  isHdr: isLevelHdr,
-                  videoRange: videoRange || 'SDR',
-                  label: formatted.label,
-                  badge: formatted.badge,
-                  fullLabel: formatted.fullLabel,
-                };
-              });
+              const parsed = describeLevels(data.levels, fps);
               setLevels(parsed);
 
               // ✨ Quality Persistence vs YouTube-style Fast-Start ABR
@@ -1414,8 +1457,7 @@ export default function VideoPlayer({
             const lvl = hls.levels[data.level];
             if (lvl) {
               const lvlFps = lvl.attrs?.['FRAME-RATE'] ? parseFloat(lvl.attrs['FRAME-RATE']) : Number(fps) || 0;
-              const videoRange = String(lvl.attrs?.['VIDEO-RANGE'] || lvl.videoRange || '').toUpperCase();
-              const isLevelHdr = videoRange === 'PQ' || videoRange === 'HLG';
+              const isLevelHdr = isHdrLevel(lvl);
               const formatted = formatQualityLevel(lvl.height, lvlFps, isLevelHdr);
               setActiveLevelLabel(formatted.label);
               setIsCurrentLevelHdr(isLevelHdr);
@@ -1436,9 +1478,13 @@ export default function VideoPlayer({
             checkAndUpdateRatio();
           });
 
-          hls.on(Hls.Events.FRAG_BUFFERED, () => {
+          hls.on(Hls.Events.FRAG_BUFFERED, (event, data) => {
             const { attemptAutoPlay, checkAndUpdateRatio } = getPlaybackOptions();
             checkAndUpdateRatio();
+            if (resumeAfterHdrFallback && data.frag?.type === 'main') {
+              resumeAfterHdrFallback = false;
+              if (!shouldAutoplay && isActiveRef.current && !isUserPausedRef.current) v.play().catch(() => {});
+            }
             attemptAutoPlay();
           });
 
@@ -1452,6 +1498,7 @@ export default function VideoPlayer({
           });
 
           hls.on(Hls.Events.ERROR, (event, data) => {
+            if (resettingToSdr) return;
             if (data.fatal) {
               const { onRefreshStream } = getPlaybackOptions();
               switch (data.type) {
@@ -1477,6 +1524,7 @@ export default function VideoPlayer({
                   }
                   break;
                 case Hls.ErrorTypes.MEDIA_ERROR:
+                  if (recoverHdrPlayback(data.frag?.type === 'main' ? data.frag.level : data.level)) break;
                   hlsRetryCountRef.current += 1;
                   if (hlsRetryCountRef.current > 4) {
                     setHlsError(`ไฟล์วิดีโอมีปัญหา: ${data.details}`);
@@ -1556,6 +1604,7 @@ export default function VideoPlayer({
 
     return () => {
       isMounted = false;
+      recoverHdrPlaybackRef.current = null;
       if (hlsInstanceRef.current) {
         hlsInstanceRef.current.destroy();
         hlsInstanceRef.current = null;
@@ -3173,6 +3222,7 @@ export default function VideoPlayer({
         }}
         onError={(e) => {
           const err = e.target.error;
+          if ((err?.code === 3 || err?.code === 4) && recoverHdrPlaybackRef.current?.()) return;
           const msg = err ? `ข้อผิดพลาดในการเล่น (${err.code}): ${err.message || ''}` : 'Native video error';
           setHlsError(msg);
           setIsBuffering(false);

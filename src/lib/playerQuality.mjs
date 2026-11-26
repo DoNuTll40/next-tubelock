@@ -5,6 +5,27 @@ export function supportsHdrDisplay(matchMedia = globalThis.matchMedia?.bind(glob
   );
 }
 
+export function getHlsVideoRange(level) {
+  return String(level.attrs?.['VIDEO-RANGE'] || level.videoRange || 'SDR').toUpperCase();
+}
+
+export function isHdrLevel(level) {
+  const range = getHlsVideoRange(level);
+  return range === 'PQ' || range === 'HLG';
+}
+
+export function getSdrFallbackLevel(levels, failedLevelIndex) {
+  const failed = levels[failedLevelIndex];
+  if (!failed || !isHdrLevel(failed)) return null;
+
+  const sdr = levels.filter((level) => getHlsVideoRange(level) === 'SDR');
+  const sameHeight = sdr.find((level) => level.height === failed.height);
+  if (sameHeight) return sameHeight;
+
+  sdr.sort((a, b) => a.height - b.height);
+  return sdr.findLast((level) => level.height < failed.height) ?? sdr[0] ?? null;
+}
+
 export function getVisibleQualityLevels(levels, preferHdr) {
   const byHeight = new Map();
   for (const level of levels) {

@@ -1,6 +1,5 @@
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { apiErrorBody } from '@/lib/apiError';
-import { NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -46,12 +45,10 @@ export async function POST(request) {
 
         if (!file && !localPath) {
           sendEvent({ error: 'กรุณาเลือกไฟล์วิดีโอ หรือระบุ Local Path' });
-          controller.close();
           return;
         }
 
-        tempDir = path.join(os.tmpdir(), `tubelock_hls_${Date.now()}`);
-        fs.mkdirSync(tempDir, { recursive: true });
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tubelock_hls_'));
 
         let inputFilePath = '';
         let fileSize = 0;
@@ -74,9 +71,9 @@ export async function POST(request) {
             text: `กำลังเตรียมไฟล์บนเซิร์ฟเวอร์... (${(fileSize / (1024 * 1024)).toFixed(1)} MB)`,
           });
 
-          inputFilePath = path.join(tempDir, file.name);
+          inputFilePath = path.join(tempDir, 'video');
           const arrayBuffer = await file.arrayBuffer();
-          fs.writeFileSync(inputFilePath, Buffer.from(arrayBuffer));
+          fs.writeFileSync(inputFilePath, Buffer.from(arrayBuffer), { flag: 'wx' });
         }
 
         // -------------------------------------------------------------
@@ -222,7 +219,7 @@ export async function POST(request) {
         }));
       } finally {
         // Clean up temporary files on disk
-        if (tempDir && fs.existsSync(tempDir)) {
+        if (tempDir) {
           try {
             fs.rmSync(tempDir, { recursive: true, force: true });
           } catch (_) {}
