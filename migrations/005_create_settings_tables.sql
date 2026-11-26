@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS app_settings (
+  key VARCHAR(100) PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

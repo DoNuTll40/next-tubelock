@@ -32,6 +32,8 @@ Apply the numbered SQL files to an existing TubeLock database before deploying c
 
 The script applies pending migrations in order, records them in `schema_migrations`, and rolls back the batch on failure. Restart active development instances after applying schema changes. Set `CRON_SECRET` on Vercel for the daily cleanup of expired view, rate-limit, and upload reservation records.
 
+Apply '005_create_settings_tables.sql' before releasing settings API changes. This migration creates missing tables only; existing settings and preferences are retained.
+
 The standard upload flow defaults to 10 GiB per file and 100 GiB per uploader. Set `TUBELOCK_MAX_UPLOAD_GIB` and `TUBELOCK_USER_STORAGE_GIB` to override those limits.
 
 ## Learn More

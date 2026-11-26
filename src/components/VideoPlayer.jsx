@@ -5,6 +5,7 @@ import { useState, useRef, useCallback, useEffect, useEffectEvent, useLayoutEffe
 import dynamic from 'next/dynamic';
 import { Play, Pause, Volume2, VolumeX, X, SkipBack, SkipForward } from 'lucide-react';
 import { formatResolutionBadge, formatQualityLevel, watchTimeThreshold } from '@/lib/videoUtils';
+import { getSavedQualityLevel, supportsHdrDisplay } from '@/lib/playerQuality.mjs';
 import { preloadHlsModule } from '@/lib/playbackResolver';
 import { useSession } from '@/context/SessionContext';
 import {
@@ -1340,12 +1341,7 @@ export default function VideoPlayer({
 
               // ✨ Quality Persistence vs YouTube-style Fast-Start ABR
               let appliedSaved = false;
-              const displaySupportsHdr =
-                typeof window !== 'undefined' &&
-                Boolean(
-                  window.matchMedia?.('(video-dynamic-range: high)')?.matches ||
-                    window.matchMedia?.('(dynamic-range: high)')?.matches
-                );
+              const displaySupportsHdr = supportsHdrDisplay();
               const screenPhysHeight =
                 typeof window !== 'undefined'
                   ? Math.round((window.screen?.height || 1080) * (window.devicePixelRatio || 1))
@@ -1363,16 +1359,17 @@ export default function VideoPlayer({
               autoCapLevelIndexRef.current = computedAutoCap;
 
               if (savedStartLevel > 0) {
-                const matchIdx = parsed.findIndex((l) => l.height === savedStartLevel);
-                if (matchIdx !== -1) {
+                const savedLevel = getSavedQualityLevel(parsed, savedStartLevel, displaySupportsHdr);
+                if (savedLevel) {
+                  const matchIdx = savedLevel.index;
                   hls.autoLevelCapping = -1;
                   hls.startLevel = matchIdx;
                   hls.currentLevel = matchIdx;
                   hls.nextLevel = matchIdx;
                   setCurrentLevelIndex(matchIdx);
-                  setActiveLevelLabel(parsed[matchIdx].label);
-                  setIsCurrentLevelHdr(Boolean(parsed[matchIdx].isHdr));
-                  onHdrStateChange?.(Boolean(parsed[matchIdx].isHdr));
+                  setActiveLevelLabel(savedLevel.label);
+                  setIsCurrentLevelHdr(Boolean(savedLevel.isHdr));
+                  onHdrStateChange?.(Boolean(savedLevel.isHdr));
                   appliedSaved = true;
                 }
               }

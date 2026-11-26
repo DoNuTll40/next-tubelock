@@ -66,33 +66,6 @@ function sanitizeUserPreferences(input) {
   return out;
 }
 
-let appSettingsTableReady = false;
-let userSettingsTableReady = false;
-
-async function ensureAppSettingsTable(sql) {
-  if (appSettingsTableReady) return;
-  await sql`
-    CREATE TABLE IF NOT EXISTS app_settings (
-      key VARCHAR(100) PRIMARY KEY,
-      value JSONB NOT NULL,
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `;
-  appSettingsTableReady = true;
-}
-
-async function ensureUserSettingsTable(sql) {
-  if (userSettingsTableReady) return;
-  await sql`
-    CREATE TABLE IF NOT EXISTS user_settings (
-      user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-      preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `;
-  userSettingsTableReady = true;
-}
-
 /**
  * GET /api/settings
  * Retrieves global app settings + signed-in user's personal preferences
@@ -101,8 +74,6 @@ export async function GET() {
   try {
     const sql = getDbClient();
 
-    // Auto-create tables once per server instance (no DDL on every request)
-    await ensureAppSettingsTable(sql);
 
     const [rows, actor] = await Promise.all([
       sql`SELECT key, value FROM app_settings WHERE key = ANY(${PUBLIC_SETTINGS_KEYS}::text[]);`,
@@ -119,7 +90,6 @@ export async function GET() {
 
     let userPreferences = null;
     if (actor != null) {
-      await ensureUserSettingsTable(sql);
       const userRows = await sql`
         SELECT preferences FROM user_settings WHERE user_id = ${actor} LIMIT 1;
       `;
@@ -162,7 +132,6 @@ export async function PATCH(request) {
     }
 
     const sql = getDbClient();
-    await ensureUserSettingsTable(sql);
 
     const jsonPatch = JSON.stringify(patch);
     const rows = await sql`
@@ -213,7 +182,6 @@ export async function POST(request) {
 
     const sql = getDbClient();
 
-    await ensureAppSettingsTable(sql);
 
     // Neon handles json serialization when passing value directly or stringified with ::jsonb
     const jsonValue = typeof value === 'string' ? value : JSON.stringify(value);

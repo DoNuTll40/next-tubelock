@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * AmbientLight.jsx (Zero-Clipping True Gaussian Halo)
@@ -28,7 +28,7 @@ export default function AmbientLight({
   const canUseDirectVideoRef = useRef(true);
   const corsCheckedRef = useRef(false);
 
-  const resolveTile = (sec, effectivePoster) => {
+  const resolveTile = useCallback((sec, effectivePoster) => {
     const safeSec = Math.max(0, sec || 0);
     const cues = storyboard?.cuesSD || storyboard?.cues || [];
     const spriteMap = storyboard?.spriteMap || {};
@@ -97,7 +97,7 @@ export default function AmbientLight({
     }
 
     return null;
-  };
+  }, [storyboard]);
 
   const loadImage = (url) => {
     if (imageCacheRef.current.has(url)) {
@@ -267,7 +267,7 @@ export default function AmbientLight({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [isEnabled, videoRef, storyboard, poster, preferStoryboardOnly]);
+  }, [isEnabled, videoRef, storyboard, resolveTile, poster, preferStoryboardOnly]);
 
   if (!isEnabled) return null;
 

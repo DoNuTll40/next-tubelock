@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { getVisibleQualityLevels, supportsHdrDisplay } from '@/lib/playerQuality.mjs';
 import {
   animate, AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform,
 } from 'framer-motion';
@@ -152,34 +153,7 @@ export default function PlayerSettingsModal({
   // YouTube-style quality list: one clean entry per resolution height
   // - HDR-capable display -> prefer HDR when both HDR & SDR exist at the same height
   // - SDR display -> prefer SDR when both exist (still shows single-variant tiers like legacy HDR-only or in-progress SDR)
-  const visibleLevels = (() => {
-    const displaySupportsHdr =
-      typeof window !== 'undefined' &&
-      Boolean(
-        window.matchMedia?.('(video-dynamic-range: high)')?.matches ||
-          window.matchMedia?.('(dynamic-range: high)')?.matches
-      );
-    const byHeight = new Map();
-    for (const lvl of levels) {
-      const key = Number(lvl.height) || lvl.index;
-      const existing = byHeight.get(key);
-      if (!existing) {
-        byHeight.set(key, lvl);
-        continue;
-      }
-      const preferNew = displaySupportsHdr
-        ? Boolean(lvl.isHdr) && !existing.isHdr
-        : !lvl.isHdr && Boolean(existing.isHdr);
-      if (preferNew) {
-        byHeight.set(key, lvl);
-      }
-    }
-    return Array.from(byHeight.values()).sort(
-      (a, b) =>
-        ((b.height || 0) - (a.height || 0)) ||
-        (Number(Boolean(b.isHdr)) - Number(Boolean(a.isHdr)))
-    );
-  })();
+  const visibleLevels = getVisibleQualityLevels(levels, supportsHdrDisplay());
 
   useEffect(() => {
     const timer = setTimeout(() => {
