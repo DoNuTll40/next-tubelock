@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { compileFunction } from 'node:vm';
 import fs from 'node:fs/promises';
-import { serializeDescriptionDocument, parseDescriptionDocument, parseRichDescription, validateSavedDescription, DESCRIPTION_PREFIX, DESCRIPTION_FILE_LIMIT } from '../src/lib/descriptionDocument.mjs';
+import { serializeDescriptionDocument, parseDescriptionDocument, parseRichDescription, validateSavedDescription, DESCRIPTION_PREFIX, DESCRIPTION_ALBUM_IMAGE_LIMIT } from '../src/lib/descriptionDocument.mjs';
 import { parseDescriptionImages, appendDescriptionImage, removeDescriptionImage } from '../src/lib/descriptionImages.mjs';
-import { stageDescriptionImages } from '../src/lib/descriptionImageUpload.mjs';
+import { stageDescriptionImages, uploadDescriptionImage } from '../src/lib/descriptionImageUpload.mjs';
 import { createDescriptionImageHandlers } from '../src/lib/descriptionImageService.mjs';
 import { canViewVideo } from '../src/lib/videoVisibility.js';
 import { splitDescriptionTimestamps } from '../src/lib/descriptionTimestamps.mjs';
@@ -83,9 +83,25 @@ test('staging uploads files once on retry, preserves external images, and only r
   assert.equal(calls, 1, 'preflight rejects before any upload');
 });
 
-function service({ userId = 7, visibility = 'private', status = 'READY', description = serializeDescriptionDocument(fixtureDescription()), upstreamStatus = 200 } = {}) {
+test('allows 50 images in each album and rejects the 51st before uploading', async () => {
+  const input = fixtureDescription();
+  for (const album of input.albums) {
+    album.images = Array.from({ length: DESCRIPTION_ALBUM_IMAGE_LIMIT }, (_, index) => ({
+      src: 'https://fixture.invalid/' + index + '.jpg',
+    }));
+  }
+  const saved = serializeDescriptionDocument(input, { videoId: 25 });
+  assert.deepEqual(parseRichDescription(saved).albums.map(album => album.images.length), [50, 50]);
+  input.albums[1].images.push({ src: 'https://fixture.invalid/overflow.jpg' });
+  assert.throws(() => serializeDescriptionDocument(input), /up to 50/);
+  await assert.rejects(stageDescriptionImages({
+    videoId: 25, ...input, upload: async () => assert.fail('An oversized album must fail before transfer'),
+  }), /up to 50/);
+});
+
+function service({ userId = 7, visibility = 'private', status = 'READY', description = serializeDescriptionDocument(fixtureDescription()), upstreamStatus = 200, storedSize = jpeg.length, storedBytes = jpeg } = {}) {
   const calls = [];
-  const objects = new Map();
+  const sessions = [];
   let tokens = 0;
   const handlers = createDescriptionImageHandlers({
     getDb: () => async strings => { assert.match(strings.join('?'), /^SELECT/); return [{ id: 25, user_id: 7, visibility, status, description }]; },
@@ -94,50 +110,103 @@ function service({ userId = 7, visibility = 'private', status = 'READY', descrip
     canViewVideo,
     getGraphToken: async () => { tokens++; return 'fixture-token'; },
     getUserDriveId: async () => 'fixture-drive',
-    ensureFolderExists: async (_, __, path) => { assert.equal(path, '/description-images/video_25'); return 'fixture-folder'; },
+    createUploadSession: async (name, folder) => {
+      sessions.push({ name, folder });
+      return { uploadUrl: 'https://fixture.invalid/session' };
+    },
     rateLimitResponse: async () => null,
     fetch: async (url, options) => {
       calls.push({ url, ...options });
-      if (options.method === 'PUT') objects.set(url, Buffer.from(options.body));
-      return new Response(jpeg, { status: upstreamStatus });
+      if (url.endsWith('?$select=size,file')) return Response.json({ size: storedSize, file: {} }, { status: upstreamStatus });
+      return new Response(storedBytes, { status: upstreamStatus });
     },
   });
-  return { ...handlers, calls, objects, tokens: () => tokens };
+  return { ...handlers, calls, sessions, tokens: () => tokens };
 }
 const context = (extra = {}) => ({ params: Promise.resolve({ id: '25', ...extra }) });
-function uploadRequest(bytes = jpeg, type = 'image/jpeg') {
-  const form = new FormData();
-  form.set('file', new File([bytes], 'fixture.jpg', { type }));
-  return new Request('https://fixture.invalid/api/videos/25/description-images', { method: 'POST', body: form });
+function uploadRequest(body = {}) {
+  return new Request('https://fixture.invalid/api/videos/25/description-images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'session', size: jpeg.length, type: 'image/jpeg', name: 'fixture.jpg', ...body }),
+  });
 }
 
-test('image POST enforces owner/admin and validates bytes before any media request', async () => {
+test('only the owner or an admin can create an image session, including files above 4 MiB', async () => {
   for (const [userId, expected] of [[null, 401], [8, 404], [7, 200], [1, 200]]) {
     const mock = service({ userId });
-    const response = await mock.POST(uploadRequest(), context());
+    const response = await mock.POST(uploadRequest({ size: 20 * 1024 * 1024 }), context());
     assert.equal(response.status, expected);
-    assert.equal(mock.calls.length, expected === 200 ? 1 : 0);
+    assert.equal(mock.sessions.length, expected === 200 ? 1 : 0);
     if (expected === 200) {
-      assert.equal((await response.json()).image.src, src);
-      assert.ok(mock.calls[0].url.endsWith(`${assetId}:/content`));
-      assert.deepEqual([...mock.objects.values()][0], jpeg);
+      const { assetId, uploadUrl } = await response.json();
+      assert.match(assetId, /^[a-f0-9]{64}\.jpg$/);
+      assert.equal(uploadUrl, 'https://fixture.invalid/session');
+      assert.deepEqual(mock.sessions[0], { name: assetId, folder: '/description-images/video_25' });
     }
   }
-  for (const request of [uploadRequest(Buffer.from('<svg onload="alert(1)"/>'), 'image/jpeg'), uploadRequest(jpeg, 'image/png'), uploadRequest(Buffer.alloc(DESCRIPTION_FILE_LIMIT + 1))]) {
-    const mock = service();
-    assert.ok((await mock.POST(request, context())).status >= 400);
-    assert.equal(mock.tokens(), 0);
+  const mock = service();
+  for (const body of [{ type: 'image/svg+xml' }, { size: 0 }]) {
+    assert.equal((await mock.POST(uploadRequest(body), context())).status, 400);
   }
-  const failed = service({ upstreamStatus: 503 });
-  assert.equal((await failed.POST(uploadRequest(), context())).status, 502);
+  assert.equal(mock.sessions.length, 0);
 });
 
-test('reuploading identical files uses the same per-video object and durable URL', async () => {
+test('completion checks the stored size and file signature in the video folder', async () => {
+  const request = body => uploadRequest({ action: 'complete', assetId, ...body });
   const mock = service();
-  const first = await (await mock.POST(uploadRequest(), context())).json();
-  const second = await (await mock.POST(uploadRequest(), context())).json();
-  assert.equal(first.image.src, second.image.src);
-  assert.equal(mock.objects.size, 1);
+  const response = await mock.POST(request(), context());
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).image, { src, assetId, name: 'fixture.jpg', size: jpeg.length });
+  assert.ok(mock.calls[0].url.endsWith('/video_25/' + assetId + ':?$select=size,file'));
+  assert.equal((await mock.POST(request({ size: jpeg.length + 1 }), context())).status, 409);
+  assert.equal((await mock.POST(request({ assetId: '../video_26/a.jpg' }), context())).status, 400);
+  assert.equal((await service({ userId: 8 }).POST(request(), context())).status, 404);
+  assert.equal((await service({ upstreamStatus: 404 }).POST(request(), context())).status, 409);
+  assert.equal((await service({ upstreamStatus: 503 }).POST(request(), context())).status, 502);
+  assert.equal((await service({ storedBytes: Buffer.from('not JPEG') }).POST(request(), context())).status, 400);
+});
+
+test('the client sends only metadata to TubeLock and retries verification without sending a large file twice', async t => {
+  const chunkSize = 10 * 1024 * 1024;
+  const file = new File([jpeg, new Uint8Array(chunkSize)], 'large.jpg', { type: 'image/jpeg' });
+  const actions = [];
+  const chunks = [];
+  globalThis.XMLHttpRequest = class {
+    open(method, url) {
+      assert.equal(method, 'PUT');
+      assert.equal(url, 'https://fixture.invalid/session');
+    }
+    setRequestHeader(name, value) {
+      assert.equal(name, 'Content-Range');
+      this.range = value;
+    }
+    send(body) {
+      chunks.push({ range: this.range, bytes: body.byteLength });
+      this.status = chunks.length === 1 ? 202 : 201;
+      this.responseText = '{}';
+      this.onload();
+    }
+  };
+  t.after(() => { delete globalThis.XMLHttpRequest; });
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/videos/25/description-images');
+    assert.equal(options.headers['Content-Type'], 'application/json');
+    const body = JSON.parse(options.body);
+    actions.push(body.action);
+    assert.equal(body.size, file.size);
+    if (body.action === 'session') return Response.json({ assetId, uploadUrl: 'https://fixture.invalid/session' });
+    assert.equal(body.assetId, assetId);
+    if (actions.length === 2) return Response.json({ error: 'Retry verification' }, { status: 502 });
+    return Response.json({ image: { src, assetId, size: file.size } });
+  });
+  await assert.rejects(uploadDescriptionImage(25, file), /Retry verification/);
+  assert.equal((await uploadDescriptionImage(25, file)).src, src);
+  assert.deepEqual(chunks, [
+    { range: 'bytes 0-' + (chunkSize - 1) + '/' + file.size, bytes: chunkSize },
+    { range: 'bytes ' + chunkSize + '-' + (file.size - 1) + '/' + file.size, bytes: jpeg.length },
+  ]);
+  assert.deepEqual(actions, ['session', 'complete', 'complete']);
 });
 
 test('image GET follows visibility, unpublished/staged and removed attachment rules; streams without redirects', async () => {

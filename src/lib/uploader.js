@@ -1,4 +1,4 @@
-import { classifyResolution } from './videoUtils';
+import { classifyResolution } from './videoUtils.js';
 
 /**
  * Multiple of 320 KiB required by Microsoft Graph createUploadSession

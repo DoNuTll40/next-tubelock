@@ -5,8 +5,7 @@ import { parseDescriptionImages as parseLegacyImages } from './descriptionImages
 export const DESCRIPTION_PREFIX = 'tubelock-description:v1\n';
 export const DESCRIPTION_MAX_BYTES = 262144;
 export const DESCRIPTION_TEXT_LIMIT = 50000;
-export const DESCRIPTION_IMAGE_LIMIT = 12;
-export const DESCRIPTION_FILE_LIMIT = 4 * 1024 * 1024;
+export const DESCRIPTION_ALBUM_IMAGE_LIMIT = 50;
 export const DESCRIPTION_ASSET_PATTERN = /^\/api\/videos\/([1-9]\d*)\/description-images\/([a-f0-9]{64}\.(?:jpg|png|webp|gif))$/;
 
 function fail(message) { throw new Error(message); }
@@ -31,13 +30,12 @@ export function descriptionDocumentText(document) {
 
 export function normalizeDescriptionDocument(value, { videoId } = {}) {
   if (!value || value.document?.type !== 'doc' || !Array.isArray(value.albums)) fail('Invalid description document');
-  let imageCount = 0;
   const albumIds = new Set();
   const albums = value.albums.map(album => {
     if (!album || typeof album.id !== 'string' || !/^[\w-]{1,80}$/.test(album.id) || albumIds.has(album.id) || !Array.isArray(album.images)) fail('Invalid description album');
+    if (album.images.length > DESCRIPTION_ALBUM_IMAGE_LIMIT) fail('An album can contain up to 50 images');
     albumIds.add(album.id);
     const images = album.images.map(image => {
-      if (++imageCount > DESCRIPTION_IMAGE_LIMIT) fail('Too many description images');
       const src = safeDescriptionImageSource(image?.src);
       if (!src || image.file) fail('Upload description images before saving');
       const asset = DESCRIPTION_ASSET_PATTERN.exec(src);

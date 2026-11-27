@@ -1,4 +1,4 @@
-export const DESCRIPTION_IMAGE_LIMIT = 12;
+export const DESCRIPTION_IMAGE_LIMIT = 50;
 
 const imageLinePattern = /^[ \t]{0,3}!\[((?:\\.|[^\[\]\\])*)\]\([ \t]*(?:<([^<>\s]+)>|([^<>\s]+))[ \t]*\)[ \t]*$/;
 

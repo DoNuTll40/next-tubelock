@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Check, CornerDownLeft, Eye, GripVertical, Image 
 import BrowserMediaImage from '@/components/BrowserMediaImage';
 import { AnimatedTabs } from '@/components/ui/AnimatedTabs';
 import DescriptionRichTextEditor from '@/components/ui/DescriptionRichTextEditor';
+import { DESCRIPTION_ALBUM_IMAGE_LIMIT } from '@/lib/descriptionDocument.mjs';
 import { appendDescriptionImage, parseDescriptionImages } from '@/lib/descriptionImages.mjs';
 import UploadDescriptionPreview from './UploadDescriptionPreview';
 import styles from './UploadDescriptionEditor.module.css';
@@ -23,7 +24,7 @@ function Photo({ photo, index, count, onRemove, onMove, onCaption, onDragStart, 
   </li>;
 }
 
-export default function UploadDescriptionEditor({ value, onSave, title, tags = [], previewMeta, draftNote, attachmentLimit, fileOptions, includeTimestamp }) {
+export default function UploadDescriptionEditor({ value, onSave, title, tags = [], previewMeta, draftNote, fileOptions, includeTimestamp }) {
   const [edit, setEdit] = useState(null);
   const { text: description, document: richDocument, albums } = edit ?? value;
   const [view, setView] = useState('edit');
@@ -55,7 +56,6 @@ export default function UploadDescriptionEditor({ value, onSave, title, tags = [
   const dialogHelpId = useId();
   const reduceMotion = useReducedMotion();
   const total = albums.reduce((sum, album) => sum + album.images.length, 0);
-  const atLimit = Boolean(attachmentLimit && total >= attachmentLimit);
   const singleCount = albums.filter(album => album.images.length === 1).length;
   const albumCount = albums.filter(album => album.images.length > 1).length;
   const attachmentSummary = [albumCount ? `${albumCount} อัลบั้ม` : '', singleCount ? `${singleCount} ภาพเดี่ยว` : '', albumCount ? `${total} รูป` : ''].filter(Boolean).join(' · ') || 'ยังไม่มีภาพแนบ';
@@ -172,8 +172,9 @@ export default function UploadDescriptionEditor({ value, onSave, title, tags = [
 
   async function addFiles(files, id = null) {
     if (!files.length || addingFiles.current || closing.current) return;
-    if (atLimit) {
-      setError(`แนบได้สูงสุด ${attachmentLimit} รูป`);
+    const existingCount = albums.find(album => album.id === id)?.images.length ?? 0;
+    if (existingCount >= DESCRIPTION_ALBUM_IMAGE_LIMIT) {
+      setError(`อัลบั้มหนึ่งมีได้สูงสุด ${DESCRIPTION_ALBUM_IMAGE_LIMIT} รูป`);
       return;
     }
     addingFiles.current = true;
@@ -181,12 +182,14 @@ export default function UploadDescriptionEditor({ value, onSave, title, tags = [
     const photos = [];
     const failed = [];
     for (const file of files) {
-      if (attachmentLimit && total + photos.length >= attachmentLimit) break;
-      const supported = fileOptions ? fileOptions.types.includes(file.type) && file.size <= fileOptions.maxBytes : file.type.startsWith('image/');
+      if (existingCount + photos.length >= DESCRIPTION_ALBUM_IMAGE_LIMIT) break;
+      const supported = fileOptions ? fileOptions.types.includes(file.type) && file.size > 0 : file.type.startsWith('image/');
       if (!supported) { failed.push(file.name); continue; }
       const src = URL.createObjectURL(file);
       try {
-        const decoded = new Image(); decoded.src = src; await decoded.decode();
+        if (!fileOptions) {
+          const decoded = new Image(); decoded.src = src; await decoded.decode();
+        }
         if (!mounted.current) { URL.revokeObjectURL(src); continue; }
         objectUrls.current.add(src);
         photos.push({ id: crypto.randomUUID(), src, alt: '', name: file.name, ...(fileOptions && { file }) });
@@ -203,14 +206,14 @@ export default function UploadDescriptionEditor({ value, onSave, title, tags = [
       setAnnouncement(`เพิ่ม ${photos.length} ภาพแล้ว`);
     }
     if (failed.length) setError(`เพิ่มภาพไม่ได้ ${failed.length} ไฟล์ ${fileOptions?.help || 'กรุณาเลือกไฟล์ภาพที่เบราว์เซอร์รองรับ'}`);
-    if (photos.length + failed.length < files.length) setError(`แนบได้สูงสุด ${attachmentLimit} รูป เพิ่มภาพได้ ${photos.length} จาก ${files.length} ไฟล์`);
+    if (photos.length + failed.length < files.length) setError(`อัลบั้มหนึ่งมีได้สูงสุด ${DESCRIPTION_ALBUM_IMAGE_LIMIT} รูป เพิ่มภาพได้ ${photos.length} จาก ${files.length} ไฟล์`);
     addingFiles.current = false;
     setAdding(false);
   }
 
   function addImageLink(event) {
     event.preventDefault();
-    if (atLimit || addingFiles.current || closing.current) return;
+    if (addingFiles.current || closing.current) return;
     const fields = new FormData(event.currentTarget);
     const declaration = appendDescriptionImage('', { src: fields.get('src'), alt: fields.get('alt') });
     if (!declaration) {
@@ -283,30 +286,30 @@ export default function UploadDescriptionEditor({ value, onSave, title, tags = [
         <div data-upload-description="" onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => { if (event.dataTransfer.files.length) drop(event, null); }}>
           {edit && <DescriptionRichTextEditor ref={richEditor} id={descriptionId} initialDocument={richDocument} albums={albums} onChange={changeDocument} onFiles={files => void addFiles(files)} onManageAlbum={manageAlbum} />}
           <div data-upload-toolbar="">
-            <button type="button" disabled={adding || atLimit} onClick={() => selectFiles()}><ImagePlus size={16} />แนบภาพ</button>
-            <button type="button" disabled={atLimit} onClick={createAlbum}><Plus size={16} />สร้างอัลบั้ม</button>
-            {fileOptions && <button type="button" disabled={adding || atLimit} aria-expanded={imageLinkOpen} onClick={() => { setImageLinkOpen(open => !open); setImageLinkError(''); }}><Link2 size={16} />แนบภาพจากลิงก์</button>}
+            <button type="button" disabled={adding} onClick={() => selectFiles()}><ImagePlus size={16} />แนบภาพ</button>
+            <button type="button" onClick={createAlbum}><Plus size={16} />สร้างอัลบั้ม</button>
+            {fileOptions && <button type="button" disabled={adding} aria-expanded={imageLinkOpen} onClick={() => { setImageLinkOpen(open => !open); setImageLinkError(''); }}><Link2 size={16} />แนบภาพจากลิงก์</button>}
             {includeTimestamp && <button type="button" onClick={() => richEditor.current?.appendTimestamp()}><Plus size={16} />เพิ่มโครงร่างไทม์แสตมป์</button>}
             <span>{description.length.toLocaleString()} ตัวอักษร</span>
           </div>
           {imageLinkOpen && <form data-rich-link="" onSubmit={addImageLink}>
             <label><span className="sr-only">ลิงก์รูปภาพ</span><input name="src" type="url" aria-label="ลิงก์รูปภาพ" placeholder="https://…" maxLength={4096} required /></label>
             <label><span className="sr-only">คำบรรยายภาพจากลิงก์</span><input name="alt" placeholder="คำบรรยายภาพ (ไม่บังคับ)" maxLength={1000} /></label>
-            <button type="submit" disabled={adding || atLimit}>เพิ่มภาพ</button>
+            <button type="submit" disabled={adding}>เพิ่มภาพ</button>
             {imageLinkError && <p role="alert">{imageLinkError}</p>}
           </form>}
         </div>
         <input ref={picker} type="file" multiple accept={fileOptions?.types.join(',') || 'image/*'} hidden aria-label="เลือกภาพแนบคำอธิบาย" onChange={event => { void addFiles([...event.target.files], targetAlbum.current); event.target.value = ''; }} />
-        <div data-upload-albums-heading=""><h3>ภาพแนบ <span>{attachmentSummary}</span></h3><span>{attachmentLimit ? `${total}/${attachmentLimit} รูป` : 'ไม่จำกัดจำนวนรูป'}</span></div>
+        <div data-upload-albums-heading=""><h3>ภาพแนบ <span>{attachmentSummary}</span></h3><span>สูงสุด {DESCRIPTION_ALBUM_IMAGE_LIMIT} รูปต่ออัลบั้ม</span></div>
         <p className="sr-only" aria-live="polite">{announcement}</p>
         <div data-upload-albums=""><AnimatePresence initial={false}>
           {edit && albums.map((album, albumIndex) => <motion.section key={album.id} ref={element => {
             if (element) manageSections.current.set(album.id, element);
             else manageSections.current.delete(album.id);
           }} tabIndex={-1} aria-label={album.title.trim() || `ภาพแนบที่ ${albumIndex + 1}`} data-upload-album="" data-drag-over={dragOver === album.id || undefined} initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: reduceMotion ? 0 : 0.18 }} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDragOver(album.id); } }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragOver(null); }} onDrop={event => drop(event, album.id)}>
-            <div data-upload-album-heading="">{album.images.length === 1 ? <><ImageIcon size={17} aria-hidden="true" /><strong data-upload-single-title="">ภาพแนบ</strong></> : <><Images size={17} aria-hidden="true" /><input aria-label={`ชื่ออัลบั้มที่ ${albumIndex + 1}`} placeholder="ตั้งชื่ออัลบั้ม…" value={album.title} onChange={event => updateAlbum(album.id, current => ({ ...current, title: event.target.value }))} /></>}<span>{album.images.length} รูป</span><button type="button" data-upload-insert-album="" title="แทรกตรงเคอร์เซอร์" aria-label={`แทรก${album.images.length === 1 ? 'ภาพ' : 'อัลบั้ม'}ที่ ${albumIndex + 1} ในข้อความ`} onClick={() => richEditor.current?.insertAlbum(album.id)}><CornerDownLeft size={15} /></button><button type="button" disabled={adding} data-upload-delete-album="" aria-label={`ลบ${album.images.length === 1 ? 'ภาพแนบ' : 'อัลบั้ม'}ที่ ${albumIndex + 1}`} onClick={() => { richEditor.current?.removeAlbum(album.id); album.images.forEach(release); changeAlbums(current => current.filter(item => item.id !== album.id)); }}><Trash2 size={15} /></button></div>
+            <div data-upload-album-heading="">{album.images.length === 1 ? <><ImageIcon size={17} aria-hidden="true" /><strong data-upload-single-title="">ภาพแนบ</strong></> : <><Images size={17} aria-hidden="true" /><input aria-label={`ชื่ออัลบั้มที่ ${albumIndex + 1}`} placeholder="ตั้งชื่ออัลบั้ม…" value={album.title} onChange={event => updateAlbum(album.id, current => ({ ...current, title: event.target.value }))} /></>}<span>{album.images.length}/{DESCRIPTION_ALBUM_IMAGE_LIMIT} รูป</span><button type="button" data-upload-insert-album="" title="แทรกตรงเคอร์เซอร์" aria-label={`แทรก${album.images.length === 1 ? 'ภาพ' : 'อัลบั้ม'}ที่ ${albumIndex + 1} ในข้อความ`} onClick={() => richEditor.current?.insertAlbum(album.id)}><CornerDownLeft size={15} /></button><button type="button" disabled={adding} data-upload-delete-album="" aria-label={`ลบ${album.images.length === 1 ? 'ภาพแนบ' : 'อัลบั้ม'}ที่ ${albumIndex + 1}`} onClick={() => { richEditor.current?.removeAlbum(album.id); album.images.forEach(release); changeAlbums(current => current.filter(item => item.id !== album.id)); }}><Trash2 size={15} /></button></div>
             <ul data-upload-photo-grid="">{album.images.map((photo, index) => <Photo key={photo.id} photo={photo} index={index} count={album.images.length} onRemove={() => { release(photo); updateAlbum(album.id, current => ({ ...current, images: current.images.filter(item => item.id !== photo.id) })); }} onMove={offset => movePhoto(album.id, photo.id, offset)} onCaption={alt => updateAlbum(album.id, current => ({ ...current, images: current.images.map(item => item.id === photo.id ? { ...item, alt } : item) }))} onDragStart={event => { event.dataTransfer.setData('application/x-tubelock-photo', JSON.stringify({ albumId: album.id, photoId: photo.id })); event.dataTransfer.effectAllowed = 'move'; }} onDrop={event => drop(event, album.id, photo.id)} />)}</ul>
-            <button type="button" data-upload-add-photos="" disabled={adding || atLimit} onClick={() => selectFiles(album.id)}><ImagePlus size={16} />{album.images.length === 1 ? 'เพิ่มภาพเพื่อสร้างอัลบั้ม' : album.images.length ? 'เพิ่มภาพในอัลบั้ม' : 'เลือกภาพ หรือลากไฟล์มาวาง'}</button>
+            <button type="button" data-upload-add-photos="" disabled={adding || album.images.length >= DESCRIPTION_ALBUM_IMAGE_LIMIT} onClick={() => selectFiles(album.id)}><ImagePlus size={16} />{album.images.length === 1 ? 'เพิ่มภาพเพื่อสร้างอัลบั้ม' : album.images.length ? 'เพิ่มภาพในอัลบั้ม' : 'เลือกภาพ หรือลากไฟล์มาวาง'}</button>
           </motion.section>)}
         </AnimatePresence></div>
         {!albums.length && <button type="button" data-upload-empty="" onClick={() => selectFiles()}><ImagePlus size={25} /><strong>เพิ่มภาพให้เรื่องราวของคุณ</strong><span>เลือกหลายรูปเพื่อเริ่มอัลบั้มแรก</span></button>}

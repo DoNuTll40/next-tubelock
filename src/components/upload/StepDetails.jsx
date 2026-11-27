@@ -14,7 +14,7 @@ import Select from '@/components/ui/Select';
 import UploadDescriptionEditor from '@/components/upload/UploadDescriptionEditor';
 import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 import PlaylistPicker from '@/components/playlist/PlaylistPicker';
-import { DESCRIPTION_FILE_LIMIT, DESCRIPTION_IMAGE_LIMIT, parseDescriptionDocument } from '@/lib/descriptionDocument.mjs';
+import { parseDescriptionDocument } from '@/lib/descriptionDocument.mjs';
 import {
   UPLOAD_CATEGORIES,
   SUGGESTED_TAGS,
@@ -25,8 +25,7 @@ import {
 
 const descriptionFileOptions = {
   types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  maxBytes: DESCRIPTION_FILE_LIMIT,
-  help: 'เลือกรูป JPEG, PNG, WebP หรือ GIF ขนาดไม่เกิน 4 MB ต่อรูป',
+  help: 'เลือกรูป JPEG, PNG, WebP หรือ GIF',
 };
 
 export default function StepDetails({
@@ -201,7 +200,6 @@ export default function StepDetails({
         onSave={onSaveDescription}
         title={title}
         tags={tags}
-        attachmentLimit={DESCRIPTION_IMAGE_LIMIT}
         fileOptions={descriptionFileOptions}
         includeTimestamp
       />

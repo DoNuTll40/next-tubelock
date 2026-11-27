@@ -1,5 +1,5 @@
 const POLICIES = {
-  descriptionImage: { limit: 36, windowSeconds: 600 },
+  descriptionImage: { limit: 240, windowSeconds: 60 },
   uploadSession: { limit: 8, windowSeconds: 600 },
   channelSubscribe: { limit: 30, windowSeconds: 60 },
   videoFeedback: { limit: 60, windowSeconds: 60 },

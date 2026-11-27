@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
 import UploadDescriptionEditor from '@/components/upload/UploadDescriptionEditor';
-import { parseDescriptionDocument, parseRichDescription, serializeDescriptionDocument, DESCRIPTION_IMAGE_LIMIT, DESCRIPTION_FILE_LIMIT } from '@/lib/descriptionDocument.mjs';
+import { parseDescriptionDocument, parseRichDescription, serializeDescriptionDocument } from '@/lib/descriptionDocument.mjs';
 import { stageDescriptionImages } from '@/lib/descriptionImageUpload.mjs';
 import PlaylistPicker from '@/components/playlist/PlaylistPicker';
 import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
@@ -195,8 +195,7 @@ export default function StudioDetailsTab({
             value={parseDescriptionDocument(description)}
             title={title}
             tags={tags}
-            attachmentLimit={DESCRIPTION_IMAGE_LIMIT}
-            fileOptions={{ types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], maxBytes: DESCRIPTION_FILE_LIMIT, help: 'JPEG, PNG, WebP, GIF: 4 MB' }}
+            fileOptions={{ types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], help: 'JPEG, PNG, WebP, GIF' }}
             onSave={async (next) => {
               const staged = await stageDescriptionImages({ videoId, ...next });
               setDescription(serializeDescriptionDocument(staged));

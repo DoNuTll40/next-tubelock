@@ -23,7 +23,7 @@ test('parses standalone HTTPS images without changing ordinary description text'
   });
 });
 
-test('keeps invalid declarations as text and caps the gallery at twelve images', () => {
+test('keeps invalid declarations as text and caps the legacy gallery at fifty images', () => {
   const invalid = [
     '![caption](http://images.example/one.jpg)',
     '![caption](https://user:password@images.example/one.jpg)',

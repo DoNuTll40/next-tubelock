@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { DESCRIPTION_FILE_LIMIT, parseRichDescription } from './descriptionDocument.mjs';
+import { randomBytes } from 'node:crypto';
+import { parseRichDescription } from './descriptionDocument.mjs';
 
 export const descriptionImageFolder = id => `/description-images/video_${id}`;
 const assetPattern = /^[a-f0-9]{64}\.(jpg|png|webp|gif)$/;
@@ -15,9 +15,27 @@ export function detectDescriptionImage(bytes) {
   return null;
 }
 
+async function readImageSignature(body) {
+  const reader = body.getReader();
+  const prefix = Buffer.alloc(12);
+  let offset = 0;
+  try {
+    while (offset < prefix.length) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const length = Math.min(value.length, prefix.length - offset);
+      prefix.set(value.subarray(0, length), offset);
+      offset += length;
+    }
+    return detectDescriptionImage(prefix.subarray(0, offset));
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
 // Inject dependencies in tests: no database, token, or network is opened at module load.
 export function createDescriptionImageHandlers(deps) {
-  const { getDb, getSessionUserId, isAdmin, canViewVideo, getGraphToken, getUserDriveId, ensureFolderExists, rateLimitResponse, fetch: graphFetch = globalThis.fetch } = deps;
+  const { getDb, getSessionUserId, isAdmin, canViewVideo, getGraphToken, getUserDriveId, createUploadSession, rateLimitResponse, fetch: graphFetch = globalThis.fetch } = deps;
   async function load(context) {
     const { id, assetId } = await context.params;
     if (!/^[1-9]\d*$/.test(id) || Number(id) > 2147483647 || (assetId && !assetPattern.test(assetId))) return { response: error(400, 'Invalid image identifier') };
@@ -34,24 +52,41 @@ export function createDescriptionImageHandlers(deps) {
       const { id, sql, userId, video, owner } = state;
       if (userId == null) return error(401, 'Authentication required');
       if (!video || !owner) return error(404, 'Video not found');
-      if (Number(request.headers.get('content-length')) > DESCRIPTION_FILE_LIMIT + 65536) return error(413, 'Image exceeds 4 MB');
+      if (!request.headers.get('content-type')?.startsWith('application/json') || Number(request.headers.get('content-length')) > 8192) {
+        return error(400, 'Invalid image upload request');
+      }
+      const upload = await request.json().catch(() => null);
+      if (!Number.isSafeInteger(upload?.size) || upload.size < 1) return error(400, 'An image file is required');
+      const extension = Object.keys(mimeTypes).find(key => mimeTypes[key] === upload.type);
+      if (!extension) return error(400, 'Use a valid JPEG, PNG, WebP or GIF image');
+      const { assetId, action } = upload;
+      const creating = action === 'session';
+      if (!creating && (action !== 'complete' || typeof assetId !== 'string' || !assetPattern.test(assetId) || !assetId.endsWith('.' + extension))) {
+        return error(400, 'Invalid image upload request');
+      }
       const limited = await rateLimitResponse(sql, 'descriptionImage', userId);
       if (limited) return limited;
-      const form = await request.formData();
-      const file = form.get('file');
-      if (!file || typeof file.arrayBuffer !== 'function' || file.size < 1 || file.size > DESCRIPTION_FILE_LIMIT) return error(400, 'Use an image up to 4 MB');
-      const bytes = Buffer.from(await file.arrayBuffer());
-      const extension = detectDescriptionImage(bytes);
-      if (!extension || file.type !== mimeTypes[extension]) return error(400, 'Use a valid JPEG, PNG, WebP or GIF image');
-      const assetId = `${createHash('sha256').update(bytes).digest('hex')}.${extension}`;
+      if (creating) {
+        const assetId = randomBytes(32).toString('hex') + '.' + extension;
+        const session = await createUploadSession(assetId, descriptionImageFolder(id));
+        if (!session.uploadUrl) return error(502, 'Unable to create an image upload session');
+        return Response.json({ assetId, uploadUrl: session.uploadUrl }, { headers });
+      }
       const token = await getGraphToken();
       const driveId = await getUserDriveId(token);
-      const folderId = await ensureFolderExists(token, driveId, descriptionImageFolder(id));
-      const result = await graphFetch(`https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(folderId)}:/${assetId}:/content`, {
-        method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': file.type }, body: bytes,
-      });
-      if (!result.ok) return error(502, 'Unable to store description image');
-      return Response.json({ success: true, image: { src: `/api/videos/${id}/description-images/${assetId}`, assetId, name: String(file.name || '').slice(0, 255), size: bytes.length } }, { headers });
+      const itemUrl = 'https://graph.microsoft.com/v1.0/drives/' + encodeURIComponent(driveId) + '/root:' + descriptionImageFolder(id) + '/' + assetId + ':';
+      const options = { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' };
+      const stored = await graphFetch(itemUrl + '?$select=size,file', options);
+      if (stored.status === 404) return error(409, 'Image upload is incomplete');
+      if (!stored.ok) return error(502, 'Unable to verify description image');
+      const item = await stored.json();
+      if (!item.file || item.size !== upload.size) return error(409, 'Image upload is incomplete');
+      const content = await graphFetch(itemUrl + '/content', options);
+      if (!content.ok || !content.body) return error(502, 'Unable to verify description image');
+      if (await readImageSignature(content.body) !== extension) return error(400, 'Use a valid JPEG, PNG, WebP or GIF image');
+      const src = '/api/videos/' + id + '/description-images/' + assetId;
+      const name = String(upload.name || '').slice(0, 255);
+      return Response.json({ success: true, image: { src, assetId, name, size: item.size } }, { headers });
     } catch { return error(502, 'Unable to store description image'); }
   }
   async function GET(request, context) {
