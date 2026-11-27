@@ -45,6 +45,7 @@ export default async function DynamicDocPage({ params }) {
     <MarkdownDocViewer
       docSlug={doc.slug}
       docPath={doc.docPath}
+      markdown={doc.content}
       title={doc.title}
       category={doc.group}
       updatedAt={doc.updatedAt}

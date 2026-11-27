@@ -277,21 +277,21 @@ export default function AmbientLight({
   const canvasLayerStyle = (isActive) =>
     isBackdrop
       ? {
-          filter: 'blur(48px) saturate(1.9) brightness(0.75)',
-          transform: 'scale(1.18) translateZ(0)',
-          opacity: isActive ? 0.65 : 0,
-        }
+        filter: 'blur(80px) saturate(2.2) brightness(0.30)',
+        transform: 'scale(1.15) translateZ(0)',
+        opacity: isActive ? 0.65 : 0,
+      }
       : {
-          // 1. เพิ่ม blur เป็น 80px ให้แสงกระจายตัวออกไปไกลขึ้นและขอบนุ่มละมุน
-          // 2. ปรับ saturate(2.2) ให้สีสดชัดขึ้นเวลาแผ่ออกไปไกลๆ
-          filter: 'blur(80px) saturate(2.2) brightness(1)',
+        // 1. เพิ่ม blur เป็น 80px ให้แสงกระจายตัวออกไปไกลขึ้นและขอบนุ่มละมุน
+        // 2. ปรับ saturate(2.2) ให้สีสดชัดขึ้นเวลาแผ่ออกไปไกลๆ
+        filter: 'blur(80px) saturate(2.2) brightness(1)',
 
-          // 3. ขยายขนาดแสง: (กว้างซ้าย-ขวา 1.2 เท่า, พลิกแกน Y ให้สีขอบล่างวิดีโอฟุ้งลงด้านล่าง)
-          transform: 'scale(1.2, -1) translateZ(0)',
+        // 3. ขยายขนาดแสง: (กว้างซ้าย-ขวา 1.2 เท่า, พลิกแกน Y ให้สีขอบล่างวิดีโอฟุ้งลงด้านล่าง)
+        transform: 'scale(1.2, -1) translateZ(0)',
 
-          // 4. ความเข้มของแสง (0.60 - 0.70 กำลังสวยแบบโรงหนัง)
-          opacity: isActive ? 0.65 : 0,
-        };
+        // 4. ความเข้มของแสง (0.60 - 0.70 กำลังสวยแบบโรงหนัง)
+        opacity: isActive ? 0.65 : 0,
+      };
 
   const canvasClassName = isBackdrop
     ? 'absolute inset-0 h-full w-full transition-opacity duration-[1800ms] ease-in-out will-change-[opacity]'

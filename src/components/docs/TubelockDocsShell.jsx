@@ -185,7 +185,7 @@ export default function TubelockDocsShell({ nav = [], children }) {
         )}
 
         {/* 📖 Center Main Content */}
-        <main className="flex-1 min-w-0 px-6 sm:px-10 lg:px-12 py-8 sm:py-10">
+        <main className="flex-1 min-w-0 px-6 sm:px-10 lg:px-12 py-8 sm:py-6">
           {children}
         </main>
       </div>

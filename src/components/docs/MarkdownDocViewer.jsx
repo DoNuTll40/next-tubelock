@@ -1,7 +1,5 @@
 import React from 'react';
 import Link from 'next/link';
-import fs from 'fs/promises';
-import path from 'path';
 import { renderMarkdownDocument } from '@/lib/renderMarkdownDocument';
 import { Edit3, ChevronRight, ArrowLeft, ArrowRight, Clock } from 'lucide-react';
 import DocsTableOfContents from './DocsTableOfContents';
@@ -28,28 +26,14 @@ function formatThaiDate(dateInput) {
 export default async function MarkdownDocViewer({
   docSlug,        // e.g. 'policy'
   docPath,        // e.g. 'docs/policy.md'
+  markdown = '', // Content already loaded from docs/ by getDocBySlug
   title,          // e.g. 'Privacy Policy'
   category = 'Legal',
   updatedAt = null,
   prevPage = null,
   nextPage = null,
 }) {
-  const fullPath = path.join(process.cwd(), docPath);
-  let markdown = '';
-  let fileMtime = null;
-  try {
-    const [fileContent, fileStat] = await Promise.all([
-      fs.readFile(fullPath, 'utf-8'),
-      fs.stat(fullPath).catch(() => null),
-    ]);
-    markdown = fileContent;
-    fileMtime = fileStat?.mtime || null;
-  } catch (err) {
-    console.error('[MarkdownDocViewer] Could not read documentation:', err);
-    markdown = '# ไม่สามารถโหลดเอกสารได้';
-  }
-
-  const displayDate = formatThaiDate(updatedAt || fileMtime);
+  const displayDate = formatThaiDate(updatedAt);
   const { html: htmlContent, toc } = renderMarkdownDocument(markdown);
 
   const githubEditUrl = `https://github.com/DoNuTll40/next-tubelock/blob/main/${docPath}`;
@@ -84,7 +68,9 @@ export default async function MarkdownDocViewer({
             [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1.5 [&_ul]:my-3
             [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-1.5 [&_ol]:my-3
             [&_li]:my-1
-            [&_blockquote]:p-4 [&_blockquote]:rounded-lg [&_blockquote]:bg-black/[0.02] [&_blockquote]:dark:bg-white/[0.03] [&_blockquote]:border-l-2 [&_blockquote]:border-[#8C857B] [&_blockquote]:dark:border-[#666666] [&_blockquote]:my-4 [&_blockquote]:text-xs [&_blockquote]:sm:text-[13px]
+            [&_blockquote]:my-4 [&_blockquote]:rounded-r-lg [&_blockquote]:border-l-2 [&_blockquote]:border-[#FF7A00] [&_blockquote]:bg-[#FF7A00]/[0.07] [&_blockquote]:dark:bg-[#FF7A00]/[0.09]
+            [&_blockquote]:px-4 [&_blockquote]:py-3 [&_blockquote]:text-xs [&_blockquote]:sm:text-[13px] [&_blockquote>p:first-child]:mt-0 [&_blockquote>p:last-child]:mb-0
+            [&_blockquote_strong]:text-[#9C4300] [&_blockquote_strong]:dark:text-[#FF7A00]
             [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-black/5 [&_code]:dark:bg-white/10 [&_code]:font-mono [&_code]:text-[11px] [&_code]:text-[#1F1E1C] [&_code]:dark:text-[#F1F1F1]
             [&_hr]:border-[#EFECE6] [&_hr]:dark:border-white/10 [&_hr]:my-6
             [&_table]:w-full [&_table]:text-left [&_table]:text-xs [&_table]:border-collapse [&_table]:my-4 [&_table]:rounded-lg [&_table]:border [&_table]:border-[#EFECE6] [&_table]:dark:border-white/10

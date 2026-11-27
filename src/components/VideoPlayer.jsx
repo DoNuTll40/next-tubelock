@@ -768,6 +768,7 @@ export default function VideoPlayer({
   }, [videoId]);
 
   const isUserPausedRef = useRef(!shouldAutoplay);
+  const autoplayAttemptRef = useRef(null);
   const wakeLockSentinelRef = useRef(null);
   const isSeekingRef = useRef(false);
   const seekTimeRef = useRef(0);
@@ -1129,45 +1130,49 @@ export default function VideoPlayer({
   }, [video, defaultVolume]);
 
   // Reliable Autoplay with YouTube-style graceful unmuted -> muted fallback
-  const attemptAutoPlay = useCallback(() => {
+  const attemptAutoPlay = useCallback(async (startBeforeReady = false) => {
     const v = video.current;
     if (!v || !isActiveRef.current || !shouldAutoplay || isUserPausedRef.current) return;
-    if (isSwitchingVideoRef.current || v.readyState < 2) return;
+    if (isSwitchingVideoRef.current || autoplayAttemptRef.current || !v.paused) return;
+    if (!startBeforeReady && v.readyState < 2) return;
 
-    // Do NOT autoplay if video is ended or approaching the end (leaves playback stopped at end screen)
-    if (v.ended || (v.duration > 0 && v.currentTime >= v.duration - 0.5) || isEndedRef.current) {
+    const nearEnd = v.currentTime > 0 && v.duration > 0 && v.currentTime >= v.duration - 0.5;
+    if (isEndedRef.current || (v.readyState >= 2 && (v.ended || nearEnd))) {
+      setIsBuffering(false);
       return;
     }
-
-    if (!v.paused) return;
 
     if (isTransitioningStreamRef.current) {
       restoreAudioAfterTransition();
     }
 
-    const p = v.play();
-    if (p !== undefined) {
-      p.then(() => {
-        setIsPlaying(true);
-        isEndedRef.current = false;
-        setIsEnded(false);
-        setIsMobileEndScreenDismissed(false);
-      }).catch((err) => {
-        // Browser Autoplay Policy: if unmuted autoplay is blocked, mute and play immediately!
-        // Ignore AbortError caused by source switching or transient load interruptions.
-        if (v && err.name === 'NotAllowedError') {
-          v.muted = true;
-          setIsMuted(true);
-          v.play()
-            .then(() => {
-              setIsPlaying(true);
-              isEndedRef.current = false;
-              setIsEnded(false);
-              setIsMobileEndScreenDismissed(false);
-            })
-            .catch(() => { });
-        }
-      });
+    const attempt = {};
+    autoplayAttemptRef.current = attempt;
+    const isCurrent = () => autoplayAttemptRef.current === attempt &&
+      isActiveRef.current && !isSwitchingVideoRef.current && !isUserPausedRef.current;
+
+    try {
+      try {
+        await v.play();
+      } catch (error) {
+        if (!isCurrent()) return;
+        if (error?.name !== 'NotAllowedError') throw error;
+
+        v.muted = true;
+        setIsMuted(true);
+        await v.play();
+      }
+      // The playing event clears the loading state and fades out the poster.
+    } catch (error) {
+      // A load/seek can interrupt play() without a user pause. Let canplay retry.
+      if (error?.name === 'AbortError') return;
+      if (isCurrent() && v.paused) {
+        isUserPausedRef.current = true;
+        setIsPlaying(false);
+        setIsBuffering(false);
+      }
+    } finally {
+      if (autoplayAttemptRef.current === attempt) autoplayAttemptRef.current = null;
     }
   }, [shouldAutoplay, restoreAudioAfterTransition]);
 
@@ -1179,7 +1184,6 @@ export default function VideoPlayer({
     isPlaying,
     onHdrStateChange,
     onRefreshStream,
-    restoreAudioAfterTransition,
     targetInitialTime,
     updateRatio,
   }));
@@ -1216,9 +1220,9 @@ export default function VideoPlayer({
     async function initHls() {
       if (isHls) {
         const Hls = await preloadHlsModule();
-        if (!isMounted || !Hls) return;
+        if (!isMounted) return;
 
-        if (Hls.isSupported()) {
+        if (Hls?.isSupported()) {
           // ✨ Quality Persistence: อ่าน height ที่ผู้ใช้เคยเลือกไว้ → match กับ level index
           let savedStartLevel = -1; // default: Auto
           try {
@@ -1366,7 +1370,7 @@ export default function VideoPlayer({
 
           hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
             const { attemptAutoPlay, fps, onHdrStateChange, updateRatio } = getPlaybackOptions();
-            setIsBuffering(false);
+            if (!shouldAutoplay || isUserPausedRef.current) setIsBuffering(false);
             isEndedRef.current = false;
             setIsEnded(false);
             setIsMobileEndScreenDismissed(false);
@@ -1552,58 +1556,29 @@ export default function VideoPlayer({
               }
             }
           });
-        } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
-          // Native Safari Apple hardware acceleration
-          v.src = src;
-          if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
-            initialSeekDoneRef.current = true;
-            const applySeek = () => {
-              try {
-                v.currentTime = targetInitialTime;
-              } catch (_) { }
-              v.removeEventListener('loadedmetadata', applySeek);
-            };
-            if (v.readyState >= 1) {
-              applySeek();
-            } else {
-              v.addEventListener('loadedmetadata', applySeek);
-            }
-          }
+          return;
         }
-      } else {
-        // Direct MP4 - Clean Native Playback
-        v.src = src;
-        if (targetInitialTime > 0 && !initialSeekDoneRef.current) {
-          initialSeekDoneRef.current = true;
-          const applySeek = () => {
-            try {
-              v.currentTime = targetInitialTime;
-            } catch (_) { }
-            v.removeEventListener('loadedmetadata', applySeek);
-          };
-          if (v.readyState >= 1) {
-            applySeek();
-          } else {
-            v.addEventListener('loadedmetadata', applySeek);
-          }
-        }
-        if (isActiveRef.current && shouldAutoplay && !isUserPausedRef.current) {
-          getPlaybackOptions().restoreAudioAfterTransition();
-          v.play().then(() => setIsPlaying(true)).catch((err) => {
-            if (err?.name === 'NotAllowedError') {
-              v.muted = true;
-              setIsMuted(true);
-              v.play().then(() => setIsPlaying(true)).catch(() => { });
-            }
-          });
+        if (!v.canPlayType('application/vnd.apple.mpegurl')) {
+          setHlsError('เบราว์เซอร์นี้ไม่รองรับสตรีม HLS');
+          setIsBuffering(false);
+          return;
         }
       }
+
+      // Native HLS and direct files share the same startup path.
+      v.src = src;
+      getPlaybackOptions().attemptAutoPlay(true);
     }
 
-    initHls();
+    void initHls().catch(() => {
+      if (!isMounted) return;
+      setHlsError('เปิดสตรีมวิดีโอไม่สำเร็จ');
+      setIsBuffering(false);
+    });
 
     return () => {
       isMounted = false;
+      autoplayAttemptRef.current = null;
       recoverHdrPlaybackRef.current = null;
       if (hlsInstanceRef.current) {
         hlsInstanceRef.current.destroy();
@@ -1671,25 +1646,30 @@ export default function VideoPlayer({
 
   // Instant Play/Pause
   const togglePlay = useCallback(() => {
-    if (!video.current) return;
+    const v = video.current;
+    if (!v) return;
+    autoplayAttemptRef.current = null;
 
-    if (video.current.ended || isEnded || isEndedRef.current) {
+    if (v.ended || isEnded || isEndedRef.current) {
       replayVideo();
       return;
     }
 
-    if (video.current.paused) {
+    if (v.paused) {
+      const currentSource = prevSrcRef.current;
       isUserPausedRef.current = false;
       restoreAudioAfterTransition();
-      video.current.play()
-        .then(() => {
-          setIsPlaying(true);
-        })
-        .catch(() => setIsPlaying(false));
+      v.play().catch(() => {
+        if (isSwitchingVideoRef.current || prevSrcRef.current !== currentSource || !v.paused) return;
+        isUserPausedRef.current = true;
+        setIsPlaying(false);
+        setIsBuffering(false);
+      });
     } else {
       isUserPausedRef.current = true;
-      video.current.pause();
+      v.pause();
       setIsPlaying(false);
+      setIsBuffering(false);
     }
     resetControlsTimer();
   }, [video, isEnded, replayVideo, resetControlsTimer, restoreAudioAfterTransition]);
@@ -3044,6 +3024,15 @@ export default function VideoPlayer({
   const isMobileEndPromptOpen = Boolean(
     isMobileView && showEndScreen && !isMobileEndScreenDismissed && upNextVideo
   );
+  const isCropMode = aspectMode === 'crop';
+  const coverVideoFrame = isCropMode || aspectMode === 'fill';
+  const cropFrameScaleClass = isCropMode ? 'scale-[1.08]' : '';
+  const cropFrameTransform = isCropMode ? 'scale(1.08)' : undefined;
+  const scrubFrameRatio = Number(videoRatio) || 16 / 9;
+  const fullHeightFrameWidth = containerSize.height * scrubFrameRatio;
+  const scrubFrameWidth = coverVideoFrame
+    ? Math.max(containerSize.width, fullHeightFrameWidth)
+    : Math.min(containerSize.width, fullHeightFrameWidth);
   const subtitleLayout = useMemo(
     () => computeSubtitleBoxLayout({
       containerWidth: containerSize.width,
@@ -3319,7 +3308,9 @@ export default function VideoPlayer({
           attemptAutoPlay();
         }}
         onCanPlay={(event) => {
-          if (isMobileView && event.currentTarget.paused) setIsBuffering(false);
+          if (!isSwitchingVideoRef.current && event.currentTarget.paused && (!shouldAutoplay || isUserPausedRef.current)) {
+            setIsBuffering(false);
+          }
           checkAndUpdateRatio();
           attemptAutoPlay();
         }}
@@ -3328,6 +3319,7 @@ export default function VideoPlayer({
         }}
         onLoadedMetadata={(e) => {
           if (isSwitchingVideo) return;
+          if (!shouldAutoplay || isUserPausedRef.current) setIsBuffering(false);
           const { duration: dur } = e.target;
           checkAndUpdateRatio();
           if (dur) setDuration(dur);
@@ -3356,13 +3348,8 @@ export default function VideoPlayer({
 
           if (onLoadedMetadata) onLoadedMetadata(e);
         }}
-        className={`relative z-[1] w-full h-full pointer-events-none block ${aspectMode === 'crop'
-          ? 'object-cover scale-[1.08]' // ตัดแถบดำด้านบน-ล่างอย่างนุ่มนวล
-          : aspectMode === 'fill'
-            ? 'object-cover'
-            : 'object-contain'
-          }`}
-        style={aspectMode === 'crop' ? { transform: 'scale(1.08)' } : undefined}
+        className={`relative z-[1] w-full h-full pointer-events-none block ${coverVideoFrame ? 'object-cover' : 'object-contain'} ${cropFrameScaleClass}`}
+        style={{ transform: cropFrameTransform }}
       />
 
       {/* 🖼️ Instant Video Poster / Transition Backdrop (Shows new video's thumbnail immediately!) */}
@@ -3410,21 +3397,30 @@ export default function VideoPlayer({
             isScrubbing ? 'opacity-100' : 'opacity-0'
           }`}
         >
-          {poster && !keepScrubPreviewOnLoad && (
-            <BrowserMediaImage
-              src={poster}
-              alt=""
-              className="absolute inset-0 w-full h-full object-contain opacity-65"
+          <div
+            className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 overflow-hidden ${cropFrameScaleClass}`}
+            style={{
+              width: scrubFrameWidth || '100%',
+              aspectRatio: scrubFrameRatio,
+              transform: cropFrameTransform,
+            }}
+          >
+            {poster && !keepScrubPreviewOnLoad && (
+              <BrowserMediaImage
+                src={poster}
+                alt=""
+                className="absolute inset-0 w-full h-full object-contain opacity-65"
+              />
+            )}
+            <div
+              ref={scrubThumbSdRef}
+              className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0"
             />
-          )}
-          <div
-            ref={scrubThumbSdRef}
-            className="absolute inset-0 w-full h-full bg-no-repeat z-10 opacity-0"
-          />
-          <div
-            ref={scrubThumbHdRef}
-            className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-150"
-          />
+            <div
+              ref={scrubThumbHdRef}
+              className="absolute inset-0 w-full h-full bg-no-repeat z-20 opacity-0 transition-opacity duration-150"
+            />
+          </div>
         </div>
       )}
 

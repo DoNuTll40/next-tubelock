@@ -1,6 +1,5 @@
 import { apiError } from '@/lib/apiError';
 import { protectVideoPoster } from '@/lib/videoUtils';
-import { ensureVideoVersionsSchema } from '@/lib/videoVersions';
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { getDb } from '@/lib/db';
@@ -9,70 +8,17 @@ import { isMusicVideo } from '@/lib/videoUtils';
 import { buildUserTasteProfile, rankHomeFeedVideos } from '@/lib/recommendationEngine';
 import { POSTER_PREFERENCE } from '@/lib/posterPreference';
 
-let tableEnsured = false;
-
-async function ensureTable(sql) {
-  if (tableEnsured) return;
-  try {
-    // Auto-create videos table if not exists with all required columns
-    await sql`
-      CREATE TABLE IF NOT EXISTS videos (
-        id SERIAL PRIMARY KEY,
-        onedrive_item_id VARCHAR(255) UNIQUE,
-        onedrive_folder_id VARCHAR(255) UNIQUE,
-        source_type VARCHAR(50) NOT NULL DEFAULT 'hls',
-        title TEXT NOT NULL,
-        description TEXT DEFAULT '',
-        duration INTEGER DEFAULT 0,
-        file_size_bytes BIGINT DEFAULT 0,
-        resolution VARCHAR(50) DEFAULT '1080p',
-        fps INTEGER DEFAULT 30,
-        codec VARCHAR(50) DEFAULT 'h264',
-        thumbnail_url TEXT DEFAULT '',
-        tags TEXT[] DEFAULT '{}',
-        status VARCHAR(50) DEFAULT 'READY',
-        transcode_progress INTEGER DEFAULT 0,
-        stage_detail TEXT DEFAULT '',
-        error_message TEXT DEFAULT '',
-        raw_file_name TEXT DEFAULT '',
-        master_playlist_path TEXT DEFAULT '',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-    `;
-
-    // Ensure all required columns exist on older tables
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'READY';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS transcode_progress INTEGER DEFAULT 0;`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS stage_detail TEXT DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS raw_file_name TEXT DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS master_playlist_path TEXT DEFAULT '';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS category VARCHAR(100) DEFAULT 'general';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS content_rating VARCHAR(50) DEFAULT 'all';`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS subtitle_tracks JSONB DEFAULT '[]'::jsonb;`;
-    await sql`ALTER TABLE videos ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE SET NULL;`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_videos_user_id ON videos(user_id);`;
-    try {
-      await sql`ALTER TABLE videos ALTER COLUMN fps TYPE NUMERIC(7, 3);`;
-    } catch (_) {}
-    await ensureVideoVersionsSchema(sql);
-
-    tableEnsured = true;
-  } catch (err) {
-    console.warn('[DB Init Warning]:', err.message);
-  }
-}
-
 export async function GET(request) {
   try {
-    const sql = getDb();
     const { searchParams } = new URL(request.url);
-
-    // Optional manual table init trigger if needed
-    if (searchParams.get('init') === '1' && !tableEnsured) {
-      await ensureTable(sql);
+    // Schema changes belong in migrations, never in a public read endpoint.
+    if (searchParams.get('init') === '1') {
+      return NextResponse.json(
+        { success: false, error: 'Schema initialization is no longer available through this endpoint' },
+        { status: 410, headers: { 'Cache-Control': 'no-store' } }
+      );
     }
+    const sql = getDb();
 
     // Resolve user_id from session cookie
     const cookieStore = await cookies();
@@ -153,7 +99,6 @@ export async function GET(request) {
     }
 
     // ⚡ Ultra-fast Slim Projection with personalized watch_history + slim version badges
-    let rows;
     const fetchVideos = async () => {
       if (userId) {
         return sql`
@@ -235,16 +180,7 @@ export async function GET(request) {
       `;
     };
 
-    try {
-      rows = await fetchVideos();
-    } catch (queryErr) {
-      if (!tableEnsured) {
-        await ensureTable(sql);
-        rows = await fetchVideos();
-      } else {
-        throw queryErr;
-      }
-    }
+    const rows = await fetchVideos();
 
     const headers = noCacheHeaders;
 
