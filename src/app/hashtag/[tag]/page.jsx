@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { parseDescriptionImages } from '@/lib/descriptionImages.mjs';
 import { getDb } from '@/lib/db';
 import { getCachedServerSession } from '@/lib/access';
 import { encodeVideoSlug, isMusicVideo, protectVideoPoster } from '@/lib/videoUtils';
@@ -18,7 +19,7 @@ function normalizeTagParam(rawTag) {
 }
 
 function extractHashtagTokens(text = '') {
-  const matches = String(text || '').match(/#([a-zA-Z0-9_\u0E00-\u0E7F]+)/g) || [];
+  const matches = parseDescriptionImages(text).text.match(/#([a-zA-Z0-9_\u0E00-\u0E7F]+)/g) || [];
   return matches.map((m) => m.slice(1).toLowerCase());
 }
 

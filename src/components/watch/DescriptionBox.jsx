@@ -2,7 +2,16 @@
 
 import { memo, useState, useMemo } from 'react';
 import Link from 'next/link';
-import { ChevronDown, ChevronUp, ExternalLink, Clock, Cpu, Film, HardDrive } from 'lucide-react';
+import { ChevronDown, ChevronUp, Cpu, Film, HardDrive, Images } from 'lucide-react';
+import { parseDescriptionImages } from '@/lib/descriptionImages.mjs';
+import { parseRichDescription } from '@/lib/descriptionDocument.mjs';
+import RichDescription from './RichDescription';
+import { isMatureVideo } from '@/lib/videoUtils';
+import { usePosterPreference } from '@/lib/usePosterPreference';
+import DescriptionGallery from './DescriptionGallery';
+import DescriptionLinkChip, { parseDescriptionLink } from './DescriptionLinkChip';
+import { DescriptionHashtag, DescriptionTimestamp } from './DescriptionInlineTokens';
+import styles from './RichDescription.module.css';
 
 /**
  * Parses timestamp string "MM:SS" or "HH:MM:SS" to total seconds
@@ -17,120 +26,6 @@ function parseTimestampToSeconds(timeStr) {
     return parts[0] * 60 + parts[1];
   }
   return null;
-}
-
-const CHANNEL_ALIAS_MAP = {
-  'UCSrC9Jb_eUeQkpVn2OfRauw': '@theetrexofficial',
-};
-
-/**
- * Recognizes and extracts social media info from URL (TikTok, YouTube, Facebook, Instagram, etc.)
- */
-function getSocialLinkInfo(parsed) {
-  try {
-    const host = parsed.hostname.replace(/^www\./, '');
-    const pathname = decodeURIComponent(parsed.pathname);
-
-    // 1. TikTok: tiktok.com/@teerapong_6 or tiktok.com/@username
-    if (host.includes('tiktok.com')) {
-      const match = pathname.match(/^\/@?([a-zA-Z0-9_.-]+)/);
-      const username = match ? match[1] : pathname.replace(/^\//, '');
-      return {
-        label: username ? `/ ${username}` : '/ tiktok',
-      };
-    }
-
-    // 2. YouTube: youtube.com/@theetrexofficial, youtube.com/channel/..., youtu.be/...
-    if (host.includes('youtube.com') || host.includes('youtu.be')) {
-      if (pathname.startsWith('/@')) {
-        return {
-          label: `/ ${pathname.slice(1).split('/')[0]}`,
-        };
-      }
-      if (pathname.includes('/channel/') || pathname.includes('/c/') || pathname.includes('/user/')) {
-        const parts = pathname.split('/').filter(Boolean);
-        const name = parts[parts.length - 1] || 'channel';
-        const alias = CHANNEL_ALIAS_MAP[name];
-        const display = alias || (name.startsWith('@') ? name : (name.length > 18 ? `${name.slice(0, 15)}...` : name));
-        return {
-          label: `/ ${display}`,
-        };
-      }
-      const clean = pathname.replace(/^\//, '').split('/')[0];
-      return {
-        label: clean ? `/ ${clean}` : '/ youtube',
-      };
-    }
-
-    // 3. Facebook: facebook.com/theetrexfanpage or fb.com/...
-    if (host.includes('facebook.com') || host.includes('fb.com') || host.includes('fb.me')) {
-      const clean = pathname.replace(/^\//, '').split('/')[0];
-      return {
-        label: clean ? `/ ${clean}` : '/ facebook',
-      };
-    }
-
-    // 4. Instagram: instagram.com/teerapong_6
-    if (host.includes('instagram.com')) {
-      const clean = pathname.replace(/^\//, '').split('/')[0];
-      return {
-        label: clean ? `/ ${clean}` : '/ instagram',
-      };
-    }
-
-    // 5. Twitter / X: twitter.com/username or x.com/username
-    if (host === 'twitter.com' || host === 'x.com') {
-      const clean = pathname.replace(/^\//, '').split('/')[0];
-      return {
-        label: clean ? `/ @${clean}` : '/ x',
-      };
-    }
-
-    // 6. Spotify
-    if (host.includes('spotify.com')) {
-      return {
-        label: '/ spotify',
-      };
-    }
-
-    // 7. LINE
-    if (host.includes('line.me')) {
-      return {
-        label: '/ line',
-      };
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function LinkFavicon({ hostname }) {
-  const [attempt, setAttempt] = useState(0);
-  const isDomain = /^(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*$/i.test(hostname);
-
-  if (!isDomain || attempt >= 2) {
-    return <ExternalLink aria-hidden="true" className="size-3.5 shrink-0 opacity-70" />;
-  }
-
-  const alternateHost = hostname.startsWith('www.') ? hostname.slice(4) : `www.${hostname}`;
-  const iconHost = attempt === 0 ? hostname : alternateHost;
-
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={`https://a.favicon.im/${encodeURIComponent(iconHost)}?throw-error-on-404=true`}
-      alt=""
-      width={14}
-      height={14}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setAttempt(attempt + 1)}
-      className="size-3.5 shrink-0 rounded-sm object-contain"
-    />
-  );
 }
 
 /**
@@ -167,85 +62,17 @@ function parseDescriptionTokens(text = '', onSeek) {
     if (timestamp) {
       const seconds = parseTimestampToSeconds(timestamp);
       elements.push(
-        <button
-          key={`ts-${match.index}`}
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (seconds !== null && typeof onSeek === 'function') {
-              onSeek(seconds);
-            }
-          }}
-          className="inline-flex items-center gap-1 px-1.5 py-0 mx-0.5 h-[20px] rounded bg-[#065FD4]/10 text-[#065FD4] dark:text-[#3EA6FF] hover:bg-[#065FD4]/20 hover:underline font-mono text-[11.5px] font-semibold transition cursor-pointer select-none align-[-2px]"
-          title={`กระโดดไปที่ ${timestamp}`}
-        >
-          <Clock className="w-2.5 h-2.5 inline-block opacity-70" />
+        <DescriptionTimestamp key={`ts-${match.index}`} seconds={seconds} label={timestamp} onSeek={onSeek}>
           {timestamp}
-        </button>
+        </DescriptionTimestamp>
       );
     } else if (url) {
-      let parsed;
-      try {
-        parsed = new URL(url);
-      } catch {
-        elements.push(url);
-        lastIndex = regex.lastIndex;
-        continue;
-      }
-
-      const hostname = parsed.hostname;
-      const social = getSocialLinkInfo(parsed);
-
-      if (social) {
-        // YouTube-Style Social Capsule Badge (Pill) - compact & flush with line height
-        elements.push(
-          <a
-            key={`social-${match.index}`}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1.5 px-2 py-0 mx-1 h-[21px] rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000014] dark:hover:bg-white/20 text-[#0F0F0F] dark:text-[#F1F1F1] text-[12px] font-normal transition cursor-pointer select-none align-[-3px]"
-            title={url}
-          >
-            <LinkFavicon key={hostname} hostname={hostname} />
-            <span className="font-normal text-[#0F0F0F] dark:text-[#F1F1F1] tracking-tight whitespace-nowrap">
-              {social.label}
-            </span>
-          </a>
-        );
-      } else {
-        // General Clean URL Link
-        const displayHost = hostname.replace(/^www\./, '') +
-          (parsed.pathname.length > 1 ? parsed.pathname.slice(0, 15) : '');
-
-        elements.push(
-          <a
-            key={`url-${match.index}`}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 px-2 py-0 mx-1 h-[21px] rounded-full bg-[#0000000a] dark:bg-white/10 hover:bg-[#00000014] dark:hover:bg-white/20 text-[#065FD4] dark:text-[#3EA6FF] text-[12px] font-normal transition align-[-3px]"
-            title={url}
-          >
-            <LinkFavicon key={hostname} hostname={hostname} />
-            <span className="hover:underline truncate max-w-[200px]">{displayHost}</span>
-          </a>
-        );
-      }
+      const parsed = parseDescriptionLink(url);
+      elements.push(parsed
+        ? <DescriptionLinkChip key={`url-${match.index}`} href={url} url={parsed} />
+        : url);
     } else if (hashtag) {
-      const cleanTag = hashtag.replace(/^#+/, '').trim();
-      elements.push(
-        <Link
-          key={`tag-${match.index}`}
-          href={`/hashtag/${encodeURIComponent(cleanTag)}`}
-          onClick={(e) => e.stopPropagation()}
-          className="text-[#FF7A00] hover:underline cursor-pointer font-medium mx-0.5"
-        >
-          {hashtag}
-        </Link>
-      );
+      elements.push(<DescriptionHashtag key={`tag-${match.index}`}>{hashtag}</DescriptionHashtag>);
     }
 
     lastIndex = regex.lastIndex;
@@ -266,14 +93,22 @@ function DescriptionBox({
   formatDuration,
   resBadge = '4K',
   onSeek,
+  initialShowAdultPosters = false,
 }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const rawDescription = video?.description || (video ? 'ไม่มีคำอธิบายสำหรับวิดีโอนี้' : '');
+  const rawDescription = video?.description || '';
+  const richDescription = useMemo(() => parseRichDescription(rawDescription), [rawDescription]);
+  const { text, images } = useMemo(() => parseDescriptionImages(rawDescription), [rawDescription]);
+  const showAttachmentSummary = !isOpen && images.length > 0;
+  const showRichDescription = richDescription && !showAttachmentSummary;
+  const descriptionText = (showAttachmentSummary ? text.trim() : text) || (video && images.length === 0 ? 'ไม่มีคำอธิบายสำหรับวิดีโอนี้' : '');
+  const hideImagesByDefault = images.length > 0 && isMatureVideo(video);
+  const showAdultImages = usePosterPreference(hideImagesByDefault, initialShowAdultPosters);
 
   const parsedContent = useMemo(() => {
-    return parseDescriptionTokens(rawDescription, onSeek);
-  }, [rawDescription, onSeek]);
+    return parseDescriptionTokens(descriptionText, onSeek);
+  }, [descriptionText, onSeek]);
 
   // Formatted upload date
   let formattedDate = '';
@@ -356,16 +191,27 @@ function DescriptionBox({
           })}
         </div>
       )}
-      <div
-        onClick={(e) => {
-          // When open, clicking on the text body does NOT close the card so user can select freely
-          if (isOpen) e.stopPropagation();
-        }}
-        className={`text-[13px] sm:text-[14px] leading-[20px] text-[#0F0F0F] dark:text-[#F1F1F1] font-normal whitespace-pre-wrap font-sans select-text cursor-text selection:bg-[#FF7A00]/25 selection:text-[#0F0F0F] dark:selection:text-[#FFFFFF] transition-all duration-300 ${isOpen ? 'block mt-2' : 'line-clamp-2'
-          }`}
-      >
-        {parsedContent}
-      </div>
+      {(parsedContent || showRichDescription) && (
+        <div
+          onFocusCapture={() => { if (showRichDescription && !isOpen) setIsOpen(true); }}
+          onClick={(e) => {
+            // When open, clicking on the text body does NOT close the card so user can select freely
+            if (isOpen) e.stopPropagation();
+          }}
+          className={`${styles.typography} select-text cursor-text selection:bg-[#FF7A00]/25 selection:text-[#0F0F0F] dark:selection:text-[#FFFFFF] transition-all duration-300 ${isOpen ? 'block mt-2' : showRichDescription ? 'max-h-80 overflow-hidden' : 'line-clamp-2'
+            }`}
+        >
+          {showRichDescription ? <RichDescription document={richDescription.document} albums={richDescription.albums} expanded={isOpen} concealed={hideImagesByDefault && !showAdultImages} onSeek={onSeek} /> : parsedContent}
+        </div>
+      )}
+      {isOpen && !richDescription && images.length > 0 && (
+        <DescriptionGallery
+          key={video?.id}
+          images={images}
+          expanded={isOpen}
+          concealed={hideImagesByDefault && !showAdultImages}
+        />
+      )}
 
       {/* 3. Expanded Extra Details (Chapters, Technical Specs, Storage) */}
       {isOpen && (
@@ -416,23 +262,23 @@ function DescriptionBox({
       <div className="flex items-center justify-end pt-1 select-none">
         <button
           type="button"
+          aria-expanded={isOpen}
           onClick={(e) => {
             e.stopPropagation();
             setIsOpen((prev) => !prev);
           }}
-          className="text-xs font-bold text-[#0F0F0F] dark:text-[#F1F1F1] hover:text-[#FF7A00] flex items-center gap-1 transition cursor-pointer p-1 rounded-md"
+          className={`flex cursor-pointer items-center gap-2 rounded-md p-1 text-xs font-bold text-[#0F0F0F] transition hover:text-[#FF7A00] dark:text-[#F1F1F1] ${showAttachmentSummary ? 'w-full' : ''}`}
         >
-          {isOpen ? (
-            <>
-              แสดงน้อยลง
-              <ChevronUp className="w-3.5 h-3.5" />
-            </>
-          ) : (
-            <>
-              ...เพิ่มเติม
-              <ChevronDown className="w-3.5 h-3.5" />
-            </>
+          {showAttachmentSummary && (
+            <span className="flex items-center gap-1.5 font-semibold text-[#606060] dark:text-[#AAAAAA]">
+              <Images aria-hidden="true" className="size-3.5" />
+              รูปแนบ ({images.length})
+            </span>
           )}
+          <span className="ml-auto flex items-center gap-1">
+            {isOpen ? 'แสดงน้อยลง' : '...เพิ่มเติม'}
+            {isOpen ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+          </span>
         </button>
       </div>
     </div>

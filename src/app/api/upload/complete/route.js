@@ -3,6 +3,7 @@ import {
   normalizeSubtitlePrompt, triggerGitHubWorkflow,
 } from '@/lib/subtitleWorkflow';
 import { randomUUID } from 'node:crypto';
+import { validateSavedDescription } from '@/lib/descriptionDocument.mjs';
 import { getCachedServerSession, isAdmin, accessError } from '@/lib/access';
 import { apiError } from '@/lib/apiError';
 import { NextResponse } from 'next/server';
@@ -62,6 +63,9 @@ export async function POST(request) {
       );
     }
 
+    let savedDescription;
+    try { savedDescription = validateSavedDescription(description ?? '', videoId); }
+    catch (error) { return NextResponse.json({ success: false, error: error.message }, { status: 400 }); }
     const sql = getDb();
     const userId = (await getCachedServerSession())?.id;
     if (userId == null) return accessError(401);
@@ -245,7 +249,7 @@ export async function POST(request) {
     }
     const finalRawFileName = currentVideo.raw_file_name;
     const finalTitle = title || currentVideo.title;
-    const finalDescription = typeof description === 'string' ? description : '';
+    const finalDescription = savedDescription;
     const finalSourceLanguage = normalizeVideoLanguageCode(sourceLanguage || currentVideo.source_language || '');
     const selectedLangMeta = getVideoLanguage(finalSourceLanguage);
     if (!selectedLangMeta) {

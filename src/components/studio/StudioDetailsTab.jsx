@@ -16,6 +16,9 @@ import {
   Lock,
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
+import UploadDescriptionEditor from '@/components/upload/UploadDescriptionEditor';
+import { parseDescriptionDocument, parseRichDescription, serializeDescriptionDocument, DESCRIPTION_IMAGE_LIMIT, DESCRIPTION_FILE_LIMIT } from '@/lib/descriptionDocument.mjs';
+import { stageDescriptionImages } from '@/lib/descriptionImageUpload.mjs';
 import PlaylistPicker from '@/components/playlist/PlaylistPicker';
 import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 import { isRatingEvaluated } from '@/lib/ratingStatus';
@@ -42,6 +45,7 @@ function formatModerationText(text) {
 }
 
 export default function StudioDetailsTab({
+  videoId,
   title,
   setTitle,
   description,
@@ -85,7 +89,12 @@ export default function StudioDetailsTab({
 
   const handleInsertTimestamp = () => {
     const sample = `\n\nไทม์แสตมป์:\n00:00 บทนำ\n00:30 ช่วงสำคัญ\n01:00 สรุป`;
-    setDescription((prev) => (prev ? prev + sample : sample.trim()));
+    setDescription((prev) => {
+      const rich = parseRichDescription(prev);
+      if (!rich) return prev ? prev + sample : sample.trim();
+      const appended = parseDescriptionDocument(sample.trim()).document.content;
+      return serializeDescriptionDocument({ ...rich, document: { ...rich.document, content: [...(rich.document.content || []), ...appended] } });
+    });
   };
 
   const handleCustomThumbnailUpload = async (e) => {
@@ -182,12 +191,16 @@ export default function StudioDetailsTab({
               + เพิ่มโครงร่างไทม์แสตมป์
             </button>
           </div>
-          <textarea
-            rows={5}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="บอกข้อมูลเกี่ยวกับวิดีโอของคุณให้ผู้ชมทราบ เช่น เรื่องย่อ เครดิต หรือไทม์แสตมป์..."
-            className="w-full px-3.5 py-2.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 focus:bg-white dark:focus:bg-[#181818] focus:border-[#FF7A00] focus:ring-3 focus:ring-[#FF7A00]/15 text-[#212529] dark:text-[#F1F1F1] placeholder-[#8C857B] dark:placeholder-[#71717A] text-sm outline-none transition resize-y"
+          <UploadDescriptionEditor
+            value={parseDescriptionDocument(description)}
+            title={title}
+            tags={tags}
+            attachmentLimit={DESCRIPTION_IMAGE_LIMIT}
+            fileOptions={{ types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], maxBytes: DESCRIPTION_FILE_LIMIT, help: 'JPEG, PNG, WebP, GIF: 4 MB' }}
+            onSave={async (next) => {
+              const staged = await stageDescriptionImages({ videoId, ...next });
+              setDescription(serializeDescriptionDocument(staged));
+            }}
           />
         </div>
       </section>

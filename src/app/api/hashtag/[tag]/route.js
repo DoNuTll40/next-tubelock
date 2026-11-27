@@ -1,4 +1,5 @@
 import { apiError } from '@/lib/apiError';
+import { parseDescriptionImages } from '@/lib/descriptionImages.mjs';
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getCachedServerSession } from '@/lib/access';
@@ -7,7 +8,7 @@ import { encodeVideoSlug, isMusicVideo, protectVideoPoster } from '@/lib/videoUt
 export const dynamic = 'force-dynamic';
 
 function extractHashtagTokens(text = '') {
-  const matches = String(text || '').match(/#([a-zA-Z0-9_\u0E00-\u0E7F]+)/g) || [];
+  const matches = parseDescriptionImages(text).text.match(/#([a-zA-Z0-9_\u0E00-\u0E7F]+)/g) || [];
   return matches.map((m) => m.slice(1).toLowerCase());
 }
 

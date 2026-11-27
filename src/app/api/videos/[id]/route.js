@@ -1,4 +1,6 @@
 import { apiError } from '@/lib/apiError';
+import { validateSavedDescription } from '@/lib/descriptionDocument.mjs';
+import { descriptionImageFolder } from '@/lib/descriptionImageService.mjs';
 import { protectVideoPoster, decodeVideoSlug } from '@/lib/videoUtils';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { NextResponse } from 'next/server';
@@ -199,6 +201,7 @@ export async function DELETE(request, context) {
         };
 
         const cleanupTasks = [
+          fetch(`https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(driveId)}/root:${descriptionImageFolder(id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }),
           deleteFolderByPath(`stream_vid_${id}`),
           deleteItemById(vid.onedrive_folder_id),
           vid.onedrive_item_id !== vid.onedrive_folder_id ? deleteItemById(vid.onedrive_item_id) : null,
@@ -371,7 +374,11 @@ export async function PATCH(request, context) {
     }
 
     const sanitizedTitle = typeof title === 'string' && title.trim() ? title.trim().slice(0, 150) : null;
-    const sanitizedDesc = typeof description === 'string' ? description : null;
+    let sanitizedDesc = null;
+    if (description !== undefined) {
+      try { sanitizedDesc = validateSavedDescription(description, id); }
+      catch (error) { return NextResponse.json({ success: false, error: error.message }, { status: 400 }); }
+    }
     const hasSourceLanguageUpdate = typeof sourceLanguage === 'string';
     const sanitizedSourceLanguage = hasSourceLanguageUpdate ? normalizeVideoLanguageCode(sourceLanguage) : null;
     const sanitizedCategory = typeof category === 'string' && category.trim() ? category.trim().slice(0, 100) : null;

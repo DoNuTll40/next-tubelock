@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { validateSavedDescription } from '@/lib/descriptionDocument.mjs';
 import { getSessionUserId, isAdmin, accessError } from '@/lib/access';
 import { apiError } from '@/lib/apiError';
 import { getDb } from '@/lib/db';
@@ -42,6 +43,9 @@ export async function POST(request) {
       versionAspectLabel = '',
       versionDescription = '',
     } = body;
+
+    try { validateSavedDescription(description, targetVideoId); }
+    catch (error) { return NextResponse.json({ success: false, error: error.message }, { status: 400 }); }
 
     if (typeof fileName !== 'string' || !fileName.trim()) {
       return NextResponse.json(

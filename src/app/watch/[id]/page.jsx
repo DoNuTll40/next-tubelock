@@ -6,6 +6,7 @@ import { notFound, redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { cache } from 'react';
 import { getDb } from '@/lib/db';
+import { parseDescriptionImages } from '@/lib/descriptionImages.mjs';
 import { parseTimestamp, isMusicVideo, decodeVideoSlug, encodeVideoSlug } from '@/lib/videoUtils';
 import { prewarmVideoSourceServer, getCachedVideoSourceSync } from '@/lib/videoSourceService';
 import {
@@ -99,7 +100,7 @@ export async function generateMetadata({ params }) {
     const socialTitle = rawTitle.length > 58 ? `${rawTitle.slice(0, 55).trim()}...` : rawTitle;
 
     // Clean description: remove newlines/tabs and truncate cleanly (< 150 chars)
-    const rawDesc = (video.description || '')
+    const rawDesc = parseDescriptionImages(video.description).text
       .replace(/\r?\n+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();

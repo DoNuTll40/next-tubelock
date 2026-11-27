@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { formatResolutionBadge, encodeVideoSlug, isMusicVideo, isMatureVideo, getVideoResumeTime, RESTRICTED_POSTER } from '@/lib/videoUtils';
 import { formatThaiRelativeTime, formatThaiViews } from '@/lib/formatThaiMeta';
+import { parseDescriptionImages } from '@/lib/descriptionImages.mjs';
 import { usePosterPreference } from '@/lib/usePosterPreference';
 import { prewarmVideoSourceClient, preloadHlsModule } from '@/lib/playbackResolver';
 import { primeGlobalWatchVideo } from '@/context/GlobalPlayerContext';
@@ -149,7 +150,7 @@ export default function ResultsClient({ initialQuery = '' }) {
 
       const title = (video.title || '').toLowerCase();
       const titleNormalized = title.replace(/\s+/g, '');
-      const desc = (video.description || '').toLowerCase();
+      const desc = parseDescriptionImages(video.description).text.toLowerCase();
       const descNormalized = desc.replace(/\s+/g, '');
       const author = (video.author_name || '').toLowerCase();
       const authorNormalized = author.replace(/\s+/g, '');
@@ -628,7 +629,7 @@ function HorizontalVideoCard({ video }) {
 
         {/* Description snippet */}
         <p className="text-[12px] text-[#606060] dark:text-[#AAAAAA] line-clamp-1 sm:line-clamp-2 leading-relaxed mt-0.5">
-          {video.description ||
+          {parseDescriptionImages(video.description).text.trim() ||
             `วิดีโอคุณภาพสูงรับชมผ่าน TubeLock Private HLS Stream ระบบสตรีมมิ่งความละเอียดคมชัด รองรับการเล่นบนทุกอุปกรณ์`}
         </p>
 

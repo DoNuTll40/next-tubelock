@@ -11,6 +11,8 @@ import {
   Loader2,
 } from 'lucide-react';
 import { extractVideoMetadata } from '@/lib/uploader';
+import { DESCRIPTION_TEXT_LIMIT, descriptionDocumentText, serializeDescriptionDocument } from '@/lib/descriptionDocument.mjs';
+import { stageDescriptionImages } from '@/lib/descriptionImageUpload.mjs';
 import {
   formatAspectRatio,
   detectResolutionLabel,
@@ -364,6 +366,30 @@ export default function UploadPage() {
       return null;
     }
   }, []);
+
+  async function saveDescription(value) {
+    if (descriptionDocumentText(value.document).length > DESCRIPTION_TEXT_LIMIT) {
+      throw new Error(`คำอธิบายยาวเกิน ${DESCRIPTION_TEXT_LIMIT.toLocaleString()} ตัวอักษร`);
+    }
+    const videoId = activeVideoIdRef.current;
+    const hasFiles = value.albums.some(album => album.images.some(image => image.file));
+    if (hasFiles && !videoId) throw new Error('รอให้ระบบสร้างงานอัปโหลดวิดีโอก่อน แล้วกดเสร็จสิ้นอีกครั้ง');
+    const staged = hasFiles ? await stageDescriptionImages({ videoId, ...value }) : value;
+    if (videoId !== activeVideoIdRef.current) throw new Error('งานอัปโหลดเปลี่ยนระหว่างเก็บคำอธิบาย กรุณาลองใหม่');
+    const next = serializeDescriptionDocument(staged, { videoId });
+    if (videoId) {
+      const key = `tubelock_upload_${videoId}`;
+      try {
+        let draft;
+        try { draft = JSON.parse(localStorage.getItem(key)); } catch { /* Replace unreadable draft metadata. */ }
+        localStorage.setItem(key, JSON.stringify({ ...draft, description: next }));
+      } catch {
+        throw new Error('เก็บคำอธิบายในฉบับร่างของเบราว์เซอร์ไม่สำเร็จ กรุณาลองอีกครั้ง');
+      }
+    }
+    descriptionRef.current = next;
+    setDescription(next);
+  }
 
   // Dispatch lightweight GitHub Action to extract 3 segment thumbnails (15% / 50% / 85%)
   const handleDispatchThumbnails = useCallback(
@@ -1456,10 +1482,7 @@ export default function UploadPage() {
                       titleRef.current = val;
                     }}
                     description={description}
-                    setDescription={(val) => {
-                      setDescription(val);
-                      descriptionRef.current = val;
-                    }}
+                    onSaveDescription={saveDescription}
                     sourceLanguage={sourceLanguage}
                     setSourceLanguage={(val) => {
                       const next = normalizeVideoLanguageCode(val);

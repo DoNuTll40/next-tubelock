@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import {
   X,
   Plus,
@@ -11,8 +11,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import Select from '@/components/ui/Select';
+import UploadDescriptionEditor from '@/components/upload/UploadDescriptionEditor';
 import VideoLanguagePicker from '@/components/upload/VideoLanguagePicker';
 import PlaylistPicker from '@/components/playlist/PlaylistPicker';
+import { DESCRIPTION_FILE_LIMIT, DESCRIPTION_IMAGE_LIMIT, parseDescriptionDocument } from '@/lib/descriptionDocument.mjs';
 import {
   UPLOAD_CATEGORIES,
   SUGGESTED_TAGS,
@@ -21,11 +23,17 @@ import {
   resizeThumbnailFile,
 } from '@/lib/videoEditorUtils';
 
+const descriptionFileOptions = {
+  types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+  maxBytes: DESCRIPTION_FILE_LIMIT,
+  help: 'เลือกรูป JPEG, PNG, WebP หรือ GIF ขนาดไม่เกิน 4 MB ต่อรูป',
+};
+
 export default function StepDetails({
   title,
   setTitle,
   description,
-  setDescription,
+  onSaveDescription,
   sourceLanguage = '',
   setSourceLanguage,
   category,
@@ -50,6 +58,7 @@ export default function StepDetails({
   const [aiAnalysisSuccess, setAiAnalysisSuccess] = useState(false);
   const [thumbError, setThumbError] = useState('');
   const thumbInputRef = useRef(null);
+  const descriptionValue = useMemo(() => parseDescriptionDocument(description), [description]);
 
   const handleCustomThumbnailUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -68,12 +77,6 @@ export default function StepDetails({
   const handleCleanTitle = () => {
     if (!title) return;
     setTitle(cleanVideoTitle(title));
-  };
-
-  // Insert timestamp sample helper
-  const handleInsertTimestamp = () => {
-    const sample = `\n\nไทม์แสตมป์:\n00:00 บทนำ\n00:30 จุดเด่น\n01:00 สรุป`;
-    setDescription((prev) => (prev ? prev + sample : sample.trim()));
   };
 
   // Add tag
@@ -193,28 +196,15 @@ export default function StepDetails({
         required
       />
 
-      {/* Description Field */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <label className="text-xs sm:text-sm font-semibold text-[#212529] dark:text-[#F1F1F1]">
-            คำอธิบายวิดีโอ
-          </label>
-          <button
-            type="button"
-            onClick={handleInsertTimestamp}
-            className="text-[11px] px-2.5 py-1 rounded-lg bg-[#F4F0E8] dark:bg-[#222222] hover:bg-[#EFECE6] dark:hover:bg-[#2c2c2c] text-[#6C655D] dark:text-[#CCCCCC] border border-[#EFECE6] dark:border-white/10 transition cursor-pointer"
-          >
-            + เพิ่มโครงร่างไทม์แสตมป์
-          </button>
-        </div>
-        <textarea
-          rows={4}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="เล่าเนื้อหาวิดีโอนี้ บทสรุป หรือข้อมูลเครดิต..."
-          className="w-full px-3.5 py-2.5 rounded-xl bg-[#F4F0E8] dark:bg-[#222222] border border-[#EFECE6] dark:border-white/10 focus:bg-white dark:focus:bg-[#181818] focus:border-[#FF7A00] focus:ring-3 focus:ring-[#FF7A00]/15 text-[#212529] dark:text-[#F1F1F1] placeholder-[#8C857B] dark:placeholder-[#71717A] text-sm outline-none transition resize-y"
-        />
-      </div>
+      <UploadDescriptionEditor
+        value={descriptionValue}
+        onSave={onSaveDescription}
+        title={title}
+        tags={tags}
+        attachmentLimit={DESCRIPTION_IMAGE_LIMIT}
+        fileOptions={descriptionFileOptions}
+        includeTimestamp
+      />
 
       {/* Thumbnail Picker Section (YouTube Studio style) */}
       <div className="space-y-2">

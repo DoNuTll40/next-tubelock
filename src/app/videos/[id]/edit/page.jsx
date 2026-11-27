@@ -986,6 +986,7 @@ function StudioEditorInner() {
             <AnimatedTabPanel id={tabsId} value={activeTab} className="min-w-0">
               {activeTab === 'details' && (
                 <StudioDetailsTab
+                  videoId={video.id}
                   title={title}
                   setTitle={setTitle}
                   description={description}

@@ -479,6 +479,7 @@ export default function WatchClient({
               formatDuration={formatDuration}
               resBadge={resBadge}
               onSeek={handleSeek}
+              initialShowAdultPosters={initialShowAdultPosters}
             />
           </div>
         </div>

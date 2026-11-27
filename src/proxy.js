@@ -10,8 +10,9 @@ export async function proxy(request) {
   const isMaintenanceCron = isReadRequest && pathname === '/api/cron/maintenance';
   const isPublicStreamImage = isReadRequest && pathname.startsWith('/streams/') && isPreviewImage(pathname);
   const isVideoPlaylistApi = /^\/api\/videos\/[^/]+\/playlists$/.test(pathname);
-  // These handlers validate with getCachedServerSession and return their own 401 response.
-  const playlistApiHandlesAuth = isVideoPlaylistApi
+  // These handlers resolve sessions and enforce their own read/write permissions.
+  const apiHandlesAuth = /^\/api\/videos\/[1-9]\d*\/description-images(?:\/[a-f0-9]{64}\.(?:jpg|png|webp|gif))?$/.test(pathname)
+    || isVideoPlaylistApi
     || /^\/api\/playlists(?:\/[^/]+(?:\/items(?:\/reorder)?)?)?$/.test(pathname);
   const playlistPageHandlesAuth = isReadRequest && pathname === '/playlists';
 
@@ -65,7 +66,7 @@ export async function proxy(request) {
   const token = request.cookies.get('tubelock_session')?.value;
 
   // ไม่มี token + ไม่ใช่ public path → redirect /login
-  if (!token && !isPublicPath && !playlistApiHandlesAuth) {
+  if (!token && !isPublicPath && !apiHandlesAuth) {
     if (pathname.startsWith('/api/') || pathname.startsWith('/streams/')) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
@@ -75,7 +76,7 @@ export async function proxy(request) {
   }
 
   // Public routes perform their own optional session lookups when needed.
-  if (token && !playlistApiHandlesAuth && !playlistPageHandlesAuth && (!isPublicPath || pathname === '/login')) {
+  if (token && !apiHandlesAuth && !playlistPageHandlesAuth && (!isPublicPath || pathname === '/login')) {
     try {
       const session = await getServerSessionByToken(token);
       if (session && pathname === '/login') {
