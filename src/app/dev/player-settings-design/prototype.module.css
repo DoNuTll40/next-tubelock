@@ -1,0 +1,81 @@
+/* Match /settings chrome while this isolated route is mounted. */
+:global(aside):has(+ :global(main) .prototype),
+:global(div):has(> :global(aside)):has(+ :global(main) .prototype) > :global(aside),
+:global(body):has(.prototype) :global(footer.fixed):has(a[href="/upload"]) {
+  display: none;
+}
+
+@media (width < 768px) {
+  :global(header.sticky):has(+ :global(div) > :global(main) .prototype) {
+    display: none;
+  }
+
+  :global(main):has(> .prototype) {
+    padding-bottom: 0;
+  }
+}
+
+.volume {
+  accent-color: #c55700;
+}
+
+:global(.dark) .volume {
+  accent-color: #ff963d;
+}
+
+.dialog {
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  max-width: none;
+  height: fit-content;
+  max-height: calc(100dvh - 1rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 0 env(safe-area-inset-bottom);
+  border: 1px solid #efece6;
+  border-radius: 1rem 1rem 0 0;
+}
+
+:global(.dark) .dialog {
+  border-color: rgb(255 255 255 / 12%);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+
+@media (width >= 768px) {
+  .dialog {
+    inset: 0;
+    margin: auto;
+    width: min(26rem, calc(100% - 2rem));
+    padding: 0;
+    border-radius: 1rem;
+  }
+}
+
+.frame {
+  position: relative;
+  display: grid;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 0.25rem;
+  background: #29241f;
+}
+
+.frame > span {
+  position: absolute;
+  height: 100%;
+  box-sizing: border-box;
+  aspect-ratio: 4 / 3;
+  border-block: 3px solid #c08463;
+  background: radial-gradient(circle, #824912 0 23%, transparent 25%),
+    repeating-linear-gradient(90deg, #f3cb98 0 10px, #ebba7f 10px 12px);
+}
+
+.frame[data-fit='fill'] > span {
+  height: auto;
+  width: 100%;
+}

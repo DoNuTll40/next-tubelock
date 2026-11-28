@@ -18,7 +18,6 @@ import PlayerSection from '@/components/settings/PlayerSection';
 import StorageSection from '@/components/settings/StorageSection';
 import SystemSection from '@/components/settings/SystemSection';
 import SupportSection from '@/components/settings/SupportSection';
-import ActionSheetModal from '@/components/settings/ActionSheetModal';
 import { AnimatedTabPanel } from '@/components/ui/AnimatedTabs';
 
 const VALID_TABS = ['account', 'channel', 'general', 'player', 'system', 'onedrive', 'support'];
@@ -114,9 +113,6 @@ function SettingsContent() {
   const dbSyncTimerRef = useRef(null);
   const statusClearTimerRef = useRef(null);
   const sessionRef = useRef(null);
-
-  // Action Sheet (Mobile)
-  const [sheet, setSheet] = useState(null);
 
   // Ensure desktop URL reflects default tab if opened without query parameters
   useEffect(() => {
@@ -341,7 +337,7 @@ function SettingsContent() {
             setAutoplay={setAutoplay}
             autoStats={autoStats}
             setAutoStats={setAutoStats}
-            openActionSheet={setSheet}
+            showHeading={!isMobile}
           />
         );
       case 'onedrive':
@@ -384,8 +380,6 @@ function SettingsContent() {
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="w-full max-w-7xl mx-auto px-0 sm:px-8 sm:py-8 select-none min-h-[80]">
-      <ActionSheetModal sheet={sheet} onClose={() => setSheet(null)} />
-
       {/* ── DESKTOP ──────────────────────────────────────────────────────────── */}
       {isDesktop && (
         <div className="flex gap-10 items-start">
