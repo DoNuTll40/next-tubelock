@@ -755,12 +755,30 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
 
     const masterPath = path.join(hlsOutputDir, 'master.m3u8');
     let publishedMaster = '';
-    for (let syncTry = 0; syncTry < 3; syncTry++) {
+    for (let syncTry = 0; syncTry < 6; syncTry++) {
         const master = buildMasterM3U8(mergedQualities);
         if (mergedQualities.length && master !== publishedMaster) {
             fs.writeFileSync(masterPath, master);
-            await uploadFileToOneDrive(driveId, streamFolderId, 'master.m3u8', masterPath);
-            publishedMaster = master;
+            try {
+                await uploadFileToOneDrive(
+                    driveId,
+                    streamFolderId,
+                    'master.m3u8',
+                    masterPath,
+                    { retryConflict: syncTry >= 5 }
+                );
+                publishedMaster = master;
+            } catch (err) {
+                if (syncTry < 5 && /\(409\)|resourceModified/i.test(String(err?.message || ''))) {
+                    const waitMs = 350 * (syncTry + 1) + Math.floor(Math.random() * 500);
+                    console.warn(`⏳ [master.m3u8 409 Conflict] Another lane updated master.m3u8 concurrently; re-syncing DB in ${waitMs}ms (try ${syncTry + 1}/6)...`);
+                    await new Promise((r) => setTimeout(r, waitMs));
+                    const refreshed = await readRunQualitiesFromDb();
+                    if (refreshed.length > 0) mergedQualities = refreshed;
+                    continue;
+                }
+                throw err;
+            }
         }
         // Re-check DB once in case another lane registered a new quality during our PUT
         const latest = await readRunQualitiesFromDb();
@@ -898,8 +916,8 @@ async function ensureFolderExists(driveId, folderPath) {
     return currentParentId;
 }
 
-async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
-    const token = await getGraphToken();
+async function uploadFileToOneDrive(driveId, folderId, fileName, filePath, options = {}) {
+    const maxConflictRetries = options.retryConflict === false ? 0 : 4;
     const stat = await fs.promises.stat(filePath);
     const fileSize = stat.size;
 
@@ -923,38 +941,58 @@ async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
                                     : 'video/mp2t';
 
         const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/content`;
-        const res = await fetchWithRetry(url, {
-            method: 'PUT',
-            headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Length': fileSize.toString(),
-                'Content-Type': contentType,
-            },
-            body: fileBuffer,
-        });
+        for (let conflictTry = 0; conflictTry <= maxConflictRetries; conflictTry++) {
+            const token = await getGraphToken();
+            const res = await fetchWithRetry(url, {
+                method: 'PUT',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Length': fileSize.toString(),
+                    'Content-Type': contentType,
+                },
+                body: fileBuffer,
+            });
 
-        if (!res.ok) {
-            const err = await res.text();
-            throw new Error(`Failed to upload ${fileName} (${res.status}): ${err}`);
+            if (res.status === 409 && conflictTry < maxConflictRetries) {
+                const waitMs = 400 * (conflictTry + 1) + Math.floor(Math.random() * 500);
+                console.warn(`⏳ [OneDrive 409 Conflict] ${fileName} modified concurrently; retrying in ${waitMs}ms (${conflictTry + 1}/${maxConflictRetries})...`);
+                await new Promise((r) => setTimeout(r, waitMs));
+                continue;
+            }
+            if (!res.ok) {
+                const err = await res.text();
+                throw new Error(`Failed to upload ${fileName} (${res.status}): ${err}`);
+            }
+            return await res.json();
         }
-        return await res.json();
     }
 
     // Files >= 4MB use chunked upload sessions streamed directly from disk.
     const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
-    const sessionRes = await fetchWithRetry(sessionUrl, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            item: {
-                '@microsoft.graph.conflictBehavior': 'replace',
-                name: fileName,
+    let sessionRes = null;
+    for (let conflictTry = 0; conflictTry <= maxConflictRetries; conflictTry++) {
+        const token = await getGraphToken();
+        sessionRes = await fetchWithRetry(sessionUrl, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
             },
-        }),
-    });
+            body: JSON.stringify({
+                item: {
+                    '@microsoft.graph.conflictBehavior': 'replace',
+                    name: fileName,
+                },
+            }),
+        });
+        if (sessionRes.status === 409 && conflictTry < maxConflictRetries) {
+            const waitMs = 400 * (conflictTry + 1) + Math.floor(Math.random() * 500);
+            console.warn(`⏳ [OneDrive 409 Conflict] Upload session for ${fileName} conflicted; retrying in ${waitMs}ms (${conflictTry + 1}/${maxConflictRetries})...`);
+            await new Promise((r) => setTimeout(r, waitMs));
+            continue;
+        }
+        break;
+    }
 
     if (!sessionRes.ok) {
         const err = await sessionRes.text();

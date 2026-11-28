@@ -389,3 +389,49 @@ for (const settings of [
     assert.match(rendition, /^https:\/\/example\.test\/atmos_000\.m4s$/m);
   });
 }
+
+test('registerQualitiesAndPublishMaster recovers from concurrent 409 resourceModified and publishes merged master.m3u8', async () => {
+  const run = 'run-409';
+  const base = { width: 1280, height: 720, bitrate: 3500000, is_fmp4: true, audio_channels: 2, run_id: run };
+  const competing = { name: '1080p', width: 1920, height: 1080, bitrate: 8500000, is_fmp4: true, audio_channels: 2, run_id: run };
+  const rows = [];
+  let uploadCalls = 0;
+  let writtenMaster = '';
+  let publishedMaster = '';
+
+  const sql = (strings, ...values) => {
+    const statement = strings.join('?').trim();
+    if (statement.startsWith('UPDATE')) {
+      const payload = values.find((value) => typeof value === 'string' && value.startsWith('[{'));
+      rows.push(...JSON.parse(payload));
+      return [{ ready_qualities: JSON.stringify(rows) }];
+    }
+    return [{ ready_qualities: JSON.stringify(rows) }];
+  };
+
+  const { registerQualitiesAndPublishMaster } = loadWorker([
+    'normalizeQualitiesList', 'readRunQualitiesFromDb', 'registerQualitiesAndPublishMaster', 'buildMasterM3U8',
+  ], {
+    sql,
+    path,
+    TRANSCODE_RUN_ID: run,
+    versionNum: null,
+    vidNum: 906,
+    ensureDbSchemaOnce: async () => {},
+    fs: { writeFileSync: (_file, content) => { writtenMaster = content; } },
+    uploadFileToOneDrive: async () => {
+      uploadCalls += 1;
+      if (uploadCalls === 1) {
+        rows.push(competing);
+        throw new Error('Failed to upload master.m3u8 (409): {"error":{"code":"resourceModified"}}');
+      }
+      publishedMaster = writtenMaster;
+    },
+  });
+
+  const merged = await registerQualitiesAndPublishMaster('drive', 'folder', 'work', [{ ...base, name: '720p' }]);
+  assert.equal(uploadCalls, 2);
+  assert.deepEqual(merged.map((q) => q.name), ['720p', '1080p']);
+  assert.match(publishedMaster, /^720p\.m3u8$/m);
+  assert.match(publishedMaster, /^1080p\.m3u8$/m);
+});

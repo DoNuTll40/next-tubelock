@@ -117,6 +117,142 @@ export function formatHevcCodec(config) {
     ].join('.');
 }
 
+function readDescriptorHeader(bytes, offset, end) {
+    if (offset >= end) return null;
+    const tag = bytes[offset++];
+    let size = 0;
+    let count = 0;
+    while (offset < end && count < 4) {
+        const byte = bytes[offset++];
+        size = (size << 7) | (byte & 0x7f);
+        count += 1;
+        if (!(byte & 0x80)) break;
+        if (count === 4) return null;
+    }
+    if (offset + size > end) return null;
+    return { tag, start: offset, end: offset + size, next: offset + size };
+}
+
+function readEsdsAudioSpecificConfig(esdsBytes) {
+    if (!esdsBytes || esdsBytes.length < 6 || esdsBytes[0] !== 0) return null;
+    const es = readDescriptorHeader(esdsBytes, 4, esdsBytes.length);
+    if (!es || es.tag !== 0x03 || es.end - es.start < 3) return null;
+
+    let pos = es.start + 2;
+    const flags = esdsBytes[pos++];
+    if (flags & 0x80) pos += 2;
+    if (flags & 0x40) {
+        if (pos >= es.end) return null;
+        pos += 1 + esdsBytes[pos];
+    }
+    if (flags & 0x20) pos += 2;
+    if (pos > es.end) return null;
+
+    while (pos < es.end) {
+        const child = readDescriptorHeader(esdsBytes, pos, es.end);
+        if (!child) return null;
+        if (child.tag === 0x04) {
+            if (child.end - child.start < 13) return null;
+            const objectTypeIndication = esdsBytes[child.start];
+            const streamType = esdsBytes[child.start + 1] >>> 2;
+            if (objectTypeIndication !== 0x40 || streamType !== 0x05) return null;
+            let dcPos = child.start + 13;
+            while (dcPos < child.end) {
+                const sub = readDescriptorHeader(esdsBytes, dcPos, child.end);
+                if (!sub) return null;
+                if (sub.tag === 0x05) return esdsBytes.subarray(sub.start, sub.end);
+                dcPos = sub.next;
+            }
+            return null;
+        }
+        pos = child.next;
+    }
+    return null;
+}
+
+function isAacLcAudioSpecificConfig(config) {
+    if (!config || config.length < 2) return false;
+    const totalBits = config.length * 8;
+    let bitPos = 0;
+    const readBits = (n) => {
+        let value = 0;
+        for (let i = 0; i < n; i++) {
+            const byteIndex = bitPos >> 3;
+            const bitIndex = 7 - (bitPos & 7);
+            value = (value << 1) | ((config[byteIndex] >> bitIndex) & 1);
+            bitPos += 1;
+        }
+        return value;
+    };
+
+    if (totalBits - bitPos < 5) return false;
+    let audioObjectType = readBits(5);
+    if (audioObjectType === 31) {
+        if (totalBits - bitPos < 6) return false;
+        audioObjectType = 32 + readBits(6);
+    }
+    if (audioObjectType !== 2) return false;
+
+    if (totalBits - bitPos < 4) return false;
+    const samplingFrequencyIndex = readBits(4);
+    if (samplingFrequencyIndex === 0x0f) {
+        if (totalBits - bitPos < 24 || readBits(24) === 0) return false;
+    } else if (samplingFrequencyIndex > 12) {
+        return false;
+    }
+
+    if (totalBits - bitPos < 4) return false;
+    const channelConfiguration = readBits(4);
+    if (channelConfiguration < 1 || channelConfiguration > 7) return false;
+
+    if (totalBits - bitPos < 3) return false;
+    const frameLengthFlag = readBits(1);
+    const dependsOnCoreCoder = readBits(1);
+    if (frameLengthFlag !== 0) return false;
+    if (dependsOnCoreCoder === 1) {
+        if (totalBits - bitPos < 15) return false;
+        readBits(14);
+    }
+    const extensionFlag = readBits(1);
+    if (extensionFlag !== 0) return false;
+
+    if (totalBits - bitPos >= 16) {
+        const syncExtensionType = readBits(11);
+        if (syncExtensionType === 0x2b7) {
+            let extAot = readBits(5);
+            if (extAot === 31) {
+                if (totalBits - bitPos < 6) return false;
+                extAot = 32 + readBits(6);
+            }
+            if (extAot === 5 || extAot === 22) {
+                if (totalBits - bitPos < 1) return false;
+                if (readBits(1) === 1) return false;
+            }
+        }
+    }
+    return true;
+}
+
+export function hasVerifiedAacLcTrack(bytes) {
+    const movie = findMp4Box(bytes, { start: 0, end: bytes.length }, 'moov');
+    if (!movie) return false;
+    for (const track of mp4Boxes(bytes, movie.start, movie.end)) {
+        if (track.type !== 'trak') continue;
+        const media = findMp4Box(bytes, track, 'mdia');
+        const info = findMp4Box(bytes, media, 'minf');
+        const table = findMp4Box(bytes, info, 'stbl');
+        const descriptions = findMp4Box(bytes, table, 'stsd');
+        if (!descriptions || descriptions.start + 8 > descriptions.end) continue;
+        const entry = findMp4Box(bytes, { ...descriptions, start: descriptions.start + 8 }, 'mp4a');
+        if (!entry || entry.start + 28 > entry.end) continue;
+        const esds = findMp4Box(bytes, { ...entry, start: entry.start + 28 }, 'esds');
+        if (!esds) continue;
+        const asc = readEsdsAudioSpecificConfig(bytes.subarray(esds.start, esds.end));
+        if (isAacLcAudioSpecificConfig(asc)) return true;
+    }
+    return false;
+}
+
 function parseMediaPlaylist(content) {
     const lines = content.trim().split(/\r?\n/).map((line) => line.trim());
     const init = lines.find((line) => line.startsWith('#EXT-X-MAP:'))?.match(/^#EXT-X-MAP:URI="([^"]+)"$/)?.[1];
@@ -184,8 +320,15 @@ export async function validateDolbyVisionHls({ playlistPath, dolbyVision, ffprob
         throw new Error('Packaged Dolby Vision init segment is missing a matching profile or base layer');
     }
     const audio = JSON.parse(streamProbe.stdout).streams.find((stream) => stream.codec_type === 'audio');
-    if (audio && (audio.codec_name !== 'aac' || audio.profile !== 'LC')) {
-        throw new Error('Unsupported audio codec in Dolby Vision rendition');
+    if (audio) {
+        const explicitProfile = audio.profile && audio.profile !== 'unknown' ? audio.profile : null;
+        if (
+            audio.codec_name !== 'aac'
+            || (explicitProfile && explicitProfile !== 'LC')
+            || !hasVerifiedAacLcTrack(initData)
+        ) {
+            throw new Error('Unsupported audio codec in Dolby Vision rendition');
+        }
     }
     const codecs = formatHevcCodec(readHevcConfiguration(initData));
     const inspectSegment = async (segment) => {

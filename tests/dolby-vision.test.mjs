@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-    buildDolbyVisionHlsArgs, formatHevcCodec, getDolbyVisionSource, validateDolbyVisionHls,
+    buildDolbyVisionHlsArgs, formatHevcCodec, getDolbyVisionSource, hasVerifiedAacLcTrack, validateDolbyVisionHls,
 } from '../scripts/dolby-vision.mjs';
 
 const record = {
@@ -57,6 +57,37 @@ test('a truncated or incomplete local Dolby playlist is rejected before publicat
     const playlistPath = path.join(await testDirectory(t), 'dv.m3u8');
     await writeFile(playlistPath, '#EXTM3U\n#EXT-X-ENDLIST\n');
     await assert.rejects(validateDolbyVisionHls({ playlistPath, dolbyVision: getDolbyVisionSource(videoStream()) }), /playlist/);
+});
+
+function makeMp4Box(type, payload) {
+    const header = Buffer.alloc(8);
+    header.writeUInt32BE(8 + payload.length, 0);
+    header.write(type, 4, 'ascii');
+    return Buffer.concat([header, payload]);
+}
+
+function makeEsdsInit({ objectTypeIndication = 0x40, ascBytes = [0x11, 0x90], omitEsds = false } = {}) {
+    const dsi = Buffer.from([0x05, ascBytes.length, ...ascBytes]);
+    const decConfigPayload = Buffer.concat([
+        Buffer.from([objectTypeIndication, 0x15, 0x00, 0x00, 0x00, 0x00, 0x07, 0xd0, 0x00, 0x00, 0x07, 0xd0, 0x00]),
+        dsi,
+    ]);
+    const decConfig = Buffer.concat([Buffer.from([0x04, decConfigPayload.length]), decConfigPayload]);
+    const esPayload = Buffer.concat([Buffer.from([0x00, 0x02, 0x00]), decConfig]);
+    const esdsBox = makeMp4Box('esds', Buffer.concat([Buffer.from([0, 0, 0, 0, 0x03, esPayload.length]), esPayload]));
+    const mp4aBox = makeMp4Box('mp4a', omitEsds ? Buffer.alloc(28) : Buffer.concat([Buffer.alloc(28), esdsBox]));
+    const stsdBox = makeMp4Box('stsd', Buffer.concat([Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]), mp4aBox]));
+    return makeMp4Box('moov', makeMp4Box('trak', makeMp4Box('mdia', makeMp4Box('minf', makeMp4Box('stbl', stsdBox)))));
+}
+
+test('hasVerifiedAacLcTrack accepts stereo and 7.1 AAC-LC AudioSpecificConfig and rejects non-LC profiles', () => {
+    assert.equal(hasVerifiedAacLcTrack(makeEsdsInit({ ascBytes: [0x11, 0x90] })), true);
+    assert.equal(hasVerifiedAacLcTrack(makeEsdsInit({ ascBytes: [0x11, 0xb8, 0x56, 0xe5, 0x00] })), true);
+    assert.equal(hasVerifiedAacLcTrack(makeEsdsInit({ ascBytes: [0x2b, 0x92, 0x08, 0x00] })), false);
+    assert.equal(hasVerifiedAacLcTrack(makeEsdsInit({ ascBytes: [0x11, 0x90, 0x56, 0xe5, 0x80] })), false);
+    assert.equal(hasVerifiedAacLcTrack(makeEsdsInit({ ascBytes: [0x09, 0x90] })), false);
+    assert.equal(hasVerifiedAacLcTrack(makeEsdsInit({ objectTypeIndication: 0x6b, ascBytes: [0x11, 0x90] })), false);
+    assert.equal(hasVerifiedAacLcTrack(makeEsdsInit({ omitEsds: true })), false);
 });
 
 // Optional real-media regression. The fixtures are distributed separately by Chromium
