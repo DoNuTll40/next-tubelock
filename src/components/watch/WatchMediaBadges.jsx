@@ -18,14 +18,63 @@ const TONE_CLASSES = {
   slate: 'bg-[#2B3038]/10 text-[#2B3038] border-black/12 dark:bg-[#2B3038] dark:text-zinc-100 dark:border-white/15',
 };
 
-function DolbyDoubleDIcon() {
+const DOLBY_TOP_LOCKUP_PATH = [
+  // Double-D symbol (same 180-unit cap height as 'Dolby')
+  'M0 0H27A90 90 0 0 1 27 180H0Z',
+  'M258 0H231A90 90 0 0 0 231 180H258Z',
+  // 'D'
+  'M312 0H376A90 90 0 0 1 376 180H312ZM339 26V154H374A64 64 0 0 0 374 26Z',
+  // 'o'
+  'M482.5 118A62.5 62.5 0 1 1 607.5 118A62.5 62.5 0 1 1 482.5 118ZM507.5 118A37.5 37.5 0 1 0 582.5 118A37.5 37.5 0 1 0 507.5 118Z',
+  // 'l'
+  'M626 0H653V180H626Z',
+  // 'b'
+  'M676 0H703V66.6A62.5 62.5 0 1 1 703 169.4V180H676ZM702 118A37.5 37.5 0 1 0 777 118A37.5 37.5 0 1 0 702 118Z',
+  // 'y' with official curved descender hook
+  'M801.5 56.5H831.5L866.5 135L902 56.5H931.5L859 219C851 232 838 236 821.5 235C814 234.5 808.5 232 806 228.5L816 204.5C820 206.8 825.5 207.5 831 205.5C836.5 203.5 841 198 845.5 188L852.5 172.5Z',
+].join('');
+
+const DOLBY_VISION_BOTTOM_PATH = [
+  // V
+  'M232 269H246.5L273.5 344L300.5 269H315L279.8 363H267.2Z',
+  // I
+  'M344 269H357.5V363H344Z',
+  // S
+  'M416 267.5C427.5 267.5 436.8 271.2 443.2 278.2L434.2 287.2C429.2 282 423 279.4 415.2 279.4C405.6 279.4 399.5 284.2 399.5 291.6C399.5 299 405.2 302.8 418 307.6C434.2 313.8 444.5 320.8 444.5 336.5C444.5 353 431.8 364 413.5 364C399.8 364 389.5 359.2 383.5 351.5L393.2 342.5C398.2 348.6 405.2 352.2 413.8 352.2C424.5 352.2 431.2 346.4 431.2 337.5C431.2 328.8 425 324.6 411.5 319.4C396 313.4 386.5 306.6 386.5 292.2C386.5 277.4 398.6 267.5 416 267.5Z',
+  // I
+  'M476 269H489.5V363H476Z',
+  // O
+  'M522 316A48 48 0 1 1 618 316A48 48 0 1 1 522 316ZM535.5 316A34.5 34.5 0 1 0 604.5 316A34.5 34.5 0 1 0 535.5 316Z',
+  // N
+  'M648 269H660.8L714.5 340.5V269H728V363H715.2L661.5 291.5V363H648Z',
+].join('');
+
+const DOLBY_ATMOS_BOTTOM_PATH = [
+  // A
+  'M354 269H366.8L406.8 363H392.4L383 340.5H337.8L328.4 363H314ZM342.8 328.5H378L360.4 285.2Z',
+  // T
+  'M414 269H481V281.5H454.2V363H440.8V281.5H414Z',
+  // M
+  'M504 269H518.5L556 339.2L593.5 269H608V363H594.8V294L561.2 356.5H550.8L517.2 294V363H504Z',
+  // O
+  'M632 316A48 48 0 1 1 728 316A48 48 0 1 1 632 316ZM645.5 316A34.5 34.5 0 1 0 714.5 316A34.5 34.5 0 1 0 645.5 316Z',
+  // S
+  'M778 267.5C789.5 267.5 798.8 271.2 805.2 278.2L796.2 287.2C791.2 282 785 279.4 777.2 279.4C767.6 279.4 761.5 284.2 761.5 291.6C761.5 299 767.2 302.8 780 307.6C796.2 313.8 806.5 320.8 806.5 336.5C806.5 353 793.8 364 775.5 364C761.8 364 751.5 359.2 745.5 351.5L755.2 342.5C760.2 348.6 767.2 352.2 775.8 352.2C786.5 352.2 793.2 346.4 793.2 337.5C793.2 328.8 787 324.6 773.5 319.4C758 313.4 748.5 306.6 748.5 292.2C748.5 277.4 760.6 267.5 778 267.5Z',
+].join('');
+
+function DolbyBrandLogo({ sublabel }) {
+  const bottomPath = String(sublabel || '').toUpperCase() === 'ATMOS'
+    ? DOLBY_ATMOS_BOTTOM_PATH
+    : DOLBY_VISION_BOTTOM_PATH;
+
   return (
     <svg
       aria-hidden="true"
-      viewBox="0 0 18 12"
-      className="w-[14px] h-[10px] shrink-0 fill-current"
+      viewBox="0 0 932 372"
+      className="h-[18px] w-auto shrink-0 fill-current"
     >
-      <path d="M0 1h3.6C6.4 1 8.4 3.1 8.4 6S6.4 11 3.6 11H0V1zm18 0h-3.6C11.6 1 9.6 3.1 9.6 6s2 5 4.8 5H18V1z" />
+      <path fillRule="evenodd" clipRule="evenodd" d={DOLBY_TOP_LOCKUP_PATH} />
+      <path fillRule="evenodd" clipRule="evenodd" d={bottomPath} opacity="0.94" />
     </svg>
   );
 }
@@ -46,25 +95,20 @@ function MediaBadgePill({ badge }) {
     >
       {badge.kind === 'dolby' ? (
         <span
-          className={`inline-flex items-center gap-1.5 h-[23px] px-2 rounded-[5px] border shadow-2xs select-none ${toneClass} ${mutedDeviceClass}`}
+          className={`inline-flex items-center justify-center h-[26px] px-2 rounded-[5px] border shadow-2xs select-none ${toneClass} ${mutedDeviceClass}`}
         >
-          <DolbyDoubleDIcon />
-          <span className="flex flex-col leading-none">
-            <span className="text-[8.5px] font-bold tracking-tight leading-[0.95]">Dolby</span>
-            <span className="text-[6.5px] font-extrabold tracking-[0.14em] uppercase text-zinc-200 leading-[0.95]">
-              {badge.sublabel}
-            </span>
-          </span>
+          <DolbyBrandLogo sublabel={badge.sublabel} />
+          <span className="sr-only">Dolby {badge.sublabel}</span>
         </span>
       ) : badge.kind === 'bolt' ? (
         <span
-          className={`inline-flex items-center justify-center h-[23px] w-[23px] rounded-[5px] border shadow-2xs select-none ${toneClass}`}
+          className={`inline-flex items-center justify-center h-[26px] w-[26px] rounded-[5px] border shadow-2xs select-none ${toneClass}`}
         >
           <Zap aria-hidden="true" className="w-3.5 h-3.5 fill-current" />
         </span>
       ) : (
         <span
-          className={`inline-flex items-center justify-center h-[23px] px-2 rounded-[5px] border text-[10.5px] font-extrabold tracking-wide leading-none shadow-2xs select-none ${toneClass} ${mutedDeviceClass}`}
+          className={`inline-flex items-center justify-center h-[26px] px-2 rounded-[5px] border text-[10.5px] font-extrabold tracking-wide leading-none shadow-2xs select-none ${toneClass} ${mutedDeviceClass}`}
         >
           {badge.label}
         </span>
