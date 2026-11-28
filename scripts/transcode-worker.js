@@ -3,7 +3,7 @@
  * Optimized for GitHub Actions Public Repo Runner (5x 4 vCPU / 16GB RAM / Freed NVMe + RAM Disk)
  *
  * Parallel Multi-Lane Architecture (100% Output & API Compatible):
- * - Lane 1 (`fast_sd`):  poster.jpg + Pass 1 (144p + Storyboard SD/HD -> instant READY) + Pass 2/3 (360p + 480p) + Smart Hi-Res WAV/FLAC
+ * - Lane 1 (`fast_sd`):  poster.jpg + Pass 1 (144p + Storyboard SD/HD -> instant READY) + Pass 2/3 (360p + 480p) + Hi-Res FLAC
  * - Lane 2 (`hd`):       Pass 4 (720p HD dedicated)
  * - Lane 3 (`fhd`):      Pass 5 (1080p Full HD dedicated)
  * - Lane 4 (`qhd`):      Pass 6 (1440p 2K dedicated — skips download via remote ffprobe if < 1440p)
@@ -17,6 +17,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { neon } from '@neondatabase/serverless';
+import { buildDolbyVisionHlsArgs, getDolbyVisionSource, validateDolbyVisionHls } from './dolby-vision.mjs';
 import {
     ensureWorkerLogsColumn,
     createWorkerLogger,
@@ -654,6 +655,8 @@ function normalizeQualitiesList(rawList) {
             is_hdr: Boolean(item.is_hdr),
             is_fmp4: Boolean(item.is_fmp4 || item.is_hdr),
             hdr_type: item.hdr_type || null,
+            ...(item.hdr_codec ? { hdr_codec: item.hdr_codec } : {}),
+            ...(item.dolby_vision ? { dolby_vision: item.dolby_vision } : {}),
             audio_channels: item.audio_channels != null ? Number(item.audio_channels) : null,
             audio_layout: item.audio_layout || null,
             hires_audio: item.hires_audio && typeof item.hires_audio === 'object' ? item.hires_audio : null,
@@ -685,6 +688,8 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
         is_hdr: Boolean(q.is_hdr),
         is_fmp4: Boolean(q.is_fmp4 || q.is_hdr),
         hdr_type: q.hdr_type || null,
+        ...(q.hdr_codec ? { hdr_codec: q.hdr_codec } : {}),
+        ...(q.dolby_vision ? { dolby_vision: q.dolby_vision } : {}),
         audio_channels: q.audio_channels != null ? Number(q.audio_channels) : null,
         audio_layout: q.audio_layout || null,
         ...(q.hires_audio ? { hires_audio: q.hires_audio } : {}),
@@ -747,23 +752,17 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
     }
 
     const masterPath = path.join(hlsOutputDir, 'master.m3u8');
-    const buildSyncKey = (list) => {
-        const namesKey = list.map((q) => q.name).join(',');
-        const hr = list.find((q) => q.hires_audio)?.hires_audio;
-        return hr ? `${namesKey}|hires:${hr.file}:${hr.bytes || 0}` : namesKey;
-    };
-    let publishedKey = '';
+    let publishedMaster = '';
     for (let syncTry = 0; syncTry < 3; syncTry++) {
-        const key = buildSyncKey(mergedQualities);
-        if (key && key !== publishedKey) {
-            fs.writeFileSync(masterPath, buildMasterM3U8(mergedQualities));
+        const master = buildMasterM3U8(mergedQualities);
+        if (mergedQualities.length && master !== publishedMaster) {
+            fs.writeFileSync(masterPath, master);
             await uploadFileToOneDrive(driveId, streamFolderId, 'master.m3u8', masterPath);
-            publishedKey = key;
+            publishedMaster = master;
         }
         // Re-check DB once in case another lane registered a new quality during our PUT
         const latest = await readRunQualitiesFromDb();
-        const latestKey = buildSyncKey(latest);
-        if (!latestKey || latestKey === publishedKey) {
+        if (!latest.length || buildMasterM3U8(latest) === publishedMaster) {
             return latest.length > 0 ? latest : mergedQualities;
         }
         mergedQualities = latest;
@@ -939,7 +938,7 @@ async function uploadFileToOneDrive(driveId, folderId, fileName, filePath) {
         return await res.json();
     }
 
-    // Files >= 4MB use chunked upload session streamed directly from disk (low RAM even for 1.5GB WAV)
+    // Files >= 4MB use chunked upload sessions streamed directly from disk.
     const sessionUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${folderId}:/${encodeURIComponent(fileName)}:/createUploadSession`;
     const sessionRes = await fetchWithRetry(sessionUrl, {
         method: 'POST',
@@ -1079,9 +1078,8 @@ function probeVideo(inputTarget, timeoutMs = 30000) {
 }
 
 const LOSSLESS_AUDIO_CODEC_RE = /^(?:pcm_|flac|alac|truehd|mlp|wavpack|ape|tta|tak|dsd_|shorten|wmalossless)/i;
-const MAX_HIRES_WAV_BYTES = 1.5 * 1024 * 1024 * 1024; // 1.5 GB cap -> auto-fallback to bit-perfect FLAC
 
-function resolveAudioProfile(aStream, durationSec = 0) {
+function resolveAudioProfile(aStream) {
     if (!aStream) {
         return {
             hasAudio: false,
@@ -1099,8 +1097,6 @@ function resolveAudioProfile(aStream, durationSec = 0) {
             hiResFileName: null,
             hiResBitDepth: 0,
             hiResSampleRate: 0,
-            hiResEstimatedBytes: 0,
-            hiResFallbackReason: null,
         };
     }
 
@@ -1156,13 +1152,6 @@ function resolveAudioProfile(aStream, durationSec = 0) {
 
     const hiResBitDepth = inferredBits >= 24 ? 24 : 16;
     const hiResSampleRate = Math.min(192000, Math.max(44100, srcSampleRate));
-    const bytesPerSample = hiResBitDepth === 24 ? 3 : 2;
-    const hiResEstimatedBytes = hiResEligible
-        ? Math.round(hiResSampleRate * bytesPerSample * baseProfile.audioChannels * Math.max(1, Number(durationSec) || 0))
-        : 0;
-    const shouldFallbackFlac = hiResEligible && hiResEstimatedBytes > MAX_HIRES_WAV_BYTES;
-    const hiResFormat = hiResEligible ? (shouldFallbackFlac ? 'flac' : 'wav') : null;
-    const hiResFileName = hiResFormat ? `audio_hires.${hiResFormat}` : null;
 
     return {
         hasAudio: true,
@@ -1173,12 +1162,10 @@ function resolveAudioProfile(aStream, durationSec = 0) {
         srcBitDepth: rawBits || inferredBits,
         ...baseProfile,
         hiResEligible,
-        hiResFormat,
-        hiResFileName,
+        hiResFormat: hiResEligible ? 'flac' : null,
+        hiResFileName: hiResEligible ? 'audio_hires.flac' : null,
         hiResBitDepth: hiResEligible ? hiResBitDepth : 0,
         hiResSampleRate: hiResEligible ? hiResSampleRate : 0,
-        hiResEstimatedBytes,
-        hiResFallbackReason: shouldFallbackFlac ? 'wav_exceeds_1.5gb' : null,
     };
 }
 
@@ -1196,29 +1183,16 @@ function buildAudioEncodeArgs(meta) {
 }
 
 function buildHiResAudioEncodeArgs(meta, inputPath, outputPath) {
-    if (meta.hiResFormat === 'flac') {
-        const is24 = meta.hiResBitDepth >= 24;
-        return [
-            '-y', '-threads', '0', '-i', inputPath,
-            '-vn', '-map', '0:a:0',
-            '-filter:a', `aformat=channel_layouts=${meta.audioLayout}`,
-            '-c:a', 'flac', '-compression_level', '5',
-            '-sample_fmt', is24 ? 's32' : 's16',
-            ...(is24 ? ['-bits_per_raw_sample', '24'] : []),
-            '-ar', String(meta.hiResSampleRate),
-            '-ac', String(meta.audioChannels),
-            outputPath,
-        ];
-    }
-    const pcmCodec = meta.hiResBitDepth >= 24 ? 'pcm_s24le' : 'pcm_s16le';
+    const is24 = meta.hiResBitDepth >= 24;
     return [
         '-y', '-threads', '0', '-i', inputPath,
         '-vn', '-map', '0:a:0',
         '-filter:a', `aformat=channel_layouts=${meta.audioLayout}`,
-        '-c:a', pcmCodec,
+        '-c:a', 'flac', '-compression_level', '5',
+        '-sample_fmt', is24 ? 's32' : 's16',
+        ...(is24 ? ['-bits_per_raw_sample', '24'] : []),
         '-ar', String(meta.hiResSampleRate),
         '-ac', String(meta.audioChannels),
-        '-rf64', 'auto',
         outputPath,
     ];
 }
@@ -1228,15 +1202,13 @@ async function exportAndUploadHiResAudio({ driveId, streamFolderId, hlsOutputDir
 
     const outPath = path.join(hlsOutputDir, meta.hiResFileName);
     const rateKhz = (meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1);
-    const fmtUpper = meta.hiResFormat === 'flac' ? 'FLAC Lossless' : 'Full PCM WAV';
-    const fallbackNote = meta.hiResFallbackReason === 'wav_exceeds_1.5gb' ? ' (WAV > 1.5GB → Auto-FLAC)' : '';
 
     try {
         await logger.log(
-            `🎧 Hi-Res Audio: กำลังสกัดเสียง ${fmtUpper} (${meta.hiResBitDepth}-bit / ${rateKhz} kHz • ${meta.audioLabel})${fallbackNote}...`
+            `🎧 Hi-Res Audio: กำลังสกัดเสียง FLAC Lossless (${meta.hiResBitDepth}-bit / ${rateKhz} kHz • ${meta.audioLabel})...`
         );
         const args = buildHiResAudioEncodeArgs(meta, rawFilePath, outPath);
-        await runFFmpeg(args, null, `Hi-Res Audio (${fmtUpper})`, meta.duration);
+        await runFFmpeg(args, null, 'Hi-Res Audio (FLAC Lossless)', meta.duration);
 
         const stat = await fs.promises.stat(outPath);
         const sizeMb = (stat.size / (1024 * 1024)).toFixed(1);
@@ -1352,6 +1324,7 @@ function buildX265HdrParams(meta, maxrateK, bufsizeK) {
     const parts = [
         'repeat-headers=1',
         'open-gop=0',
+        ...(meta.dolbyVision?.supported ? ['scenecut=0'] : []),
         'colorprim=bt2020',
         `transfer=${isHlg ? 'arib-std-b67' : 'smpte2084'}`,
         'colormatrix=bt2020nc',
@@ -1367,6 +1340,21 @@ function buildX265HdrParams(meta, maxrateK, bufsizeK) {
     return parts.join(':');
 }
 
+function buildHlsKeyframeArgs(meta, isSdPass) {
+    // The Dolby Vision copy can only start a segment at an existing source keyframe.
+    // Put keyframes at those same timestamps in the adaptive SDR and HDR encodes.
+    if (meta.dolbyVision?.supported) {
+        return [
+            '-fps_mode', 'passthrough', '-enc_time_base:v', 'demux',
+            '-g', '65535', '-keyint_min', '1', '-sc_threshold', '0',
+            '-force_key_frames', 'source', '-forced-idr', '1',
+        ];
+    }
+    return isSdPass
+        ? ['-g', meta.gopSize, '-keyint_min', meta.gopSize, '-sc_threshold', '0']
+        : ['-g', meta.gopSize, '-force_key_frames', 'expr:gte(t,n_forced*4)'];
+}
+
 function parseProbeMeta(probeData) {
     const streams = probeData.streams || [];
     const vStream = streams.find((s) => s.codec_type === 'video') || streams[0] || {};
@@ -1375,7 +1363,7 @@ function parseProbeMeta(probeData) {
     const srcHeight = Number(vStream.height) || 1080;
     const hasDimensions = Number(vStream.width) > 0 && Number(vStream.height) > 0;
     const duration = Math.round(parseFloat(probeData.format?.duration || vStream.duration || '0')) || 0;
-    const audioProfile = resolveAudioProfile(aStream, duration);
+    const audioProfile = resolveAudioProfile(aStream);
 
     let fps = 30;
     if (vStream.r_frame_rate) {
@@ -1431,6 +1419,7 @@ function parseProbeMeta(probeData) {
         colorTransfer,
         colorPrimaries,
         isHdr,
+        dolbyVision: getDolbyVisionSource(vStream),
         hdrType,
         hdrColorTrc,
         ...hdr10Meta,
@@ -1504,7 +1493,12 @@ function buildMasterM3U8(qualities) {
     }
     const hasAudioTrack = !audioSample || audioSample.audio_channels > 0;
     for (const q of sorted) {
-        if (q.is_hdr) {
+        if (q.dolby_vision) {
+            const { codecs, supplementalCodecs, videoRange, averageBandwidth, fps } = q.dolby_vision;
+            lines.push(
+                `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},AVERAGE-BANDWIDTH=${averageBandwidth},RESOLUTION=${q.width}x${q.height},FRAME-RATE=${fps.toFixed(3)},CODECS="${codecs}",SUPPLEMENTAL-CODECS="${supplementalCodecs}",VIDEO-RANGE=${videoRange}`
+            );
+        } else if (q.is_hdr) {
             const videoRange = q.hdr_type === 'HLG' ? 'HLG' : 'PQ';
             if (q.hdr_codec === 'av01') {
                 // Backward compatibility for existing AV1 HDR renditions
@@ -1605,7 +1599,6 @@ async function runHighQualityPass({
 }) {
     const {
         duration,
-        gopSize,
         resolutionLabel,
         fps,
         codec,
@@ -1651,8 +1644,7 @@ async function runHighQualityPass({
             '-profile:v', 'main10',
             '-tag:v', 'hvc1',
             '-x265-params', x265Params,
-            '-g', gopSize,
-            '-force_key_frames', 'expr:gte(t,n_forced*4)',
+            ...buildHlsKeyframeArgs(meta, false),
             '-b:v', `${bitrateK}k`, '-maxrate', `${maxrateK}k`, '-bufsize', `${bufsizeK}k`,
             '-color_primaries', 'bt2020',
             '-color_trc', hdrColorTrc,
@@ -1672,8 +1664,7 @@ async function runHighQualityPass({
             '-pix_fmt', 'yuv420p',
             '-c:v', 'libx264', '-preset', 'fast',
             '-profile:v', 'high', '-level', level,
-            '-g', gopSize,
-            '-force_key_frames', 'expr:gte(t,n_forced*4)',
+            ...buildHlsKeyframeArgs(meta, false),
             '-x264-params', 'deblock=-1,-1',
             '-b:v', `${bitrateK}k`, '-maxrate', `${maxrateK}k`, '-bufsize', `${bufsizeK}k`,
             ...(isHdr ? ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv'] : []),
@@ -1771,9 +1762,56 @@ async function runHighQualityPass({
     });
 }
 
-/**
- * LANE 1 (`fast_sd`): Poster + Pass 1 (144p + Storyboards SD/HD -> instant READY) + Pass 2/3 (360p + 480p)
- */
+async function publishDolbyVisionRendition({ driveId, streamFolderId, hlsOutputDir, rawFilePath, meta }) {
+    if (!meta.dolbyVision?.supported) return;
+
+    const name = `${meta.srcHeight}p_dolby_vision`;
+    const playlist = `${name}.m3u8`;
+    const label = `Dolby Vision 8.${meta.dolbyVision.compatibilityId}`;
+    await updateLaneProgress({
+        lane: 'fast_sd', lanePct: 98, status: 'READY',
+        stageDetail: `กำลังเตรียม ${label} ที่ความละเอียดต้นฉบับ ${meta.srcWidth}×${meta.srcHeight}`,
+    });
+    const args = buildDolbyVisionHlsArgs(rawFilePath, playlist, {
+        initSegmentName: `init_${name}.mp4`,
+        segmentPattern: `stream_${name}_%03d.m4s`,
+        audioArgs: buildAudioEncodeArgs(meta),
+        dolbyVision: meta.dolbyVision,
+    });
+    await runFFmpeg(args, null, label, meta.duration, { cwd: hlsOutputDir });
+    const verified = await validateDolbyVisionHls({
+        playlistPath: path.join(hlsOutputDir, playlist), dolbyVision: meta.dolbyVision,
+    });
+    const fallback = await fs.promises.readFile(path.join(hlsOutputDir, '144p.m3u8'), 'utf8');
+    const durations = [...fallback.matchAll(/^#EXTINF:([\d.]+),/gm)].map((match) => Number(match[1]));
+    if (durations.length !== verified.segmentStarts.length) {
+        throw new Error('Dolby Vision and SDR playlists have different segment counts');
+    }
+    let start = 0;
+    for (const [index, duration] of durations.entries()) {
+        if (Math.abs(start - verified.segmentStarts[index]) > 1 / meta.fps + 0.001) {
+            throw new Error(`Dolby Vision and SDR segment ${index + 1} start at different times`);
+        }
+        start += duration;
+    }
+    await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir, verified.files, true, label);
+    await registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOutputDir, [{
+        name, width: meta.srcWidth, height: meta.srcHeight, bitrate: verified.bandwidth,
+        is_hdr: true, is_fmp4: true, hdr_type: verified.videoRange, hdr_codec: 'hevc',
+        audio_channels: meta.audioChannels, audio_layout: meta.audioLayout,
+        dolby_vision: {
+            codecs: [verified.codecs, verified.audioCodec].filter(Boolean).join(','),
+            supplementalCodecs: verified.supplementalCodecs, videoRange: verified.videoRange,
+            averageBandwidth: verified.averageBandwidth, fps: meta.fps,
+        },
+    }]);
+    await logger.log(`ตรวจข้อมูล Dolby Vision ใน HLS แล้ว เผยแพร่ ${label} ${meta.srcHeight}p เรียบร้อย`, { level: 'success' });
+    await updateLaneProgress({
+        lane: 'fast_sd', lanePct: 100, status: 'READY', stageDetail: `${label} ${meta.srcHeight}p พร้อมรับชม`, invalidateCache: true,
+    });
+}
+
+/** Lane 1 publishes the SD ladder, Hi-Res audio, and the verified Dolby Vision source rendition. */
 async function runLaneFastSd({
     driveId,
     streamFolderId,
@@ -1792,7 +1830,6 @@ async function runLaneFastSd({
         codec,
         bitrate,
         resolutionLabel,
-        gopSize,
         isHdr,
         hdrType,
         hdrColorTrc,
@@ -1801,6 +1838,13 @@ async function runLaneFastSd({
         audioLayout,
     } = meta;
     const audioArgs = buildAudioEncodeArgs(meta);
+    const hasDolbyVision = Boolean(meta.dolbyVision?.supported);
+    const afterAudio = hasDolbyVision ? 'กำลังเตรียม Dolby Vision' : 'Lane 1 เสร็จสมบูรณ์';
+    const afterSd = meta.hiResEligible ? `กำลังสกัดเสียง Hi-Res Lossless (${meta.hiResFormat?.toUpperCase()})` : afterAudio;
+    const sdProgress = meta.hiResEligible || hasDolbyVision ? 96 : 100;
+    if (meta.dolbyVision && !hasDolbyVision) {
+        await logger.log(`พบ Dolby Vision Profile ${meta.dolbyVision.profile} (compatibility ID ${meta.dolbyVision.compatibilityId}) ข้ามแทร็ก Dolby Vision เนื่องจากต้องใช้ HEVC Profile 8.1 (PQ) หรือ 8.4 (HLG) แบบชั้นเดียวที่มี RPU`, { level: 'warn' });
+    }
     const mapAudioArgs = hasAudio ? ['-map', '0:a?'] : [];
     const posterPath = path.join(hlsOutputDir, 'poster.jpg');
     const thumbnailUrl = `/streams/${streamFolderName}/poster.jpg`;
@@ -1936,7 +1980,7 @@ async function runLaneFastSd({
         '-pix_fmt', 'yuv420p',
         '-c:v', 'libx264', '-preset', 'ultrafast',
         '-profile:v', 'high', '-level', '2.1',
-        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        ...buildHlsKeyframeArgs(meta, true),
         '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
         ...sdColorArgs,
         ...audioArgs,
@@ -1953,7 +1997,7 @@ async function runLaneFastSd({
         '-pix_fmt', 'yuv420p',
         '-c:v', 'libx264', '-preset', 'ultrafast',
         '-profile:v', 'high', '-level', '2.1',
-        '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+        ...buildHlsKeyframeArgs(meta, true),
         '-b:v', '200k', '-maxrate', '250k', '-bufsize', '400k',
         ...sdColorArgs,
         ...audioArgs,
@@ -2071,7 +2115,7 @@ async function runLaneFastSd({
             '-pix_fmt', 'yuv420p',
             '-c:v', 'libx264', '-preset', 'veryfast',
             '-profile:v', 'high', '-level', '3.0',
-            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+            ...buildHlsKeyframeArgs(meta, true),
             '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
             ...sdColorArgs,
             ...audioArgs,
@@ -2081,7 +2125,7 @@ async function runLaneFastSd({
             '-pix_fmt', 'yuv420p',
             '-c:v', 'libx264', '-preset', 'veryfast',
             '-profile:v', 'high', '-level', '3.0',
-            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+            ...buildHlsKeyframeArgs(meta, true),
             '-b:v', '1000k', '-maxrate', '1200k', '-bufsize', '2000k',
             ...sdColorArgs,
             ...audioArgs,
@@ -2142,11 +2186,9 @@ async function runLaneFastSd({
         const readyNames = merged.map((q) => q.name).join(', ');
         await updateLaneProgress({
             lane: 'fast_sd',
-            lanePct: meta.hiResEligible ? 96 : 100,
+            lanePct: sdProgress,
             status: 'READY',
-            stageDetail: meta.hiResEligible
-                ? `⚡ พร้อมรับชม (${readyNames}) • กำลังสกัดเสียง Hi-Res Lossless (${meta.hiResFormat?.toUpperCase()})...`
-                : `⚡ พร้อมรับชม (${readyNames}) • Lane 1 (SD) เสร็จสมบูรณ์`,
+            stageDetail: `⚡ พร้อมรับชม (${readyNames}) • ${afterSd}`,
             invalidateCache: true,
         });
         await logger.log(`✅ อัปโหลด 360p + 480p และซิงก์ master.m3u8 เรียบร้อย (พร้อมแล้ว: ${readyNames})`, {
@@ -2161,7 +2203,7 @@ async function runLaneFastSd({
             '-pix_fmt', 'yuv420p',
             '-c:v', 'libx264', '-preset', 'veryfast',
             '-profile:v', 'high', '-level', '3.0',
-            '-g', gopSize, '-keyint_min', gopSize, '-sc_threshold', '0',
+            ...buildHlsKeyframeArgs(meta, true),
             '-b:v', '600k', '-maxrate', '700k', '-bufsize', '1200k',
             ...sdColorArgs,
             ...audioArgs,
@@ -2194,15 +2236,13 @@ async function runLaneFastSd({
         const readyNames = merged.map((q) => q.name).join(', ');
         await updateLaneProgress({
             lane: 'fast_sd',
-            lanePct: meta.hiResEligible ? 96 : 100,
+            lanePct: sdProgress,
             status: 'READY',
-            stageDetail: meta.hiResEligible
-                ? `⚡ พร้อมรับชม (${readyNames}) • กำลังสกัดเสียง Hi-Res Lossless (${meta.hiResFormat?.toUpperCase()})...`
-                : `⚡ พร้อมรับชม (${readyNames}) • Lane 1 (SD) เสร็จสมบูรณ์`,
+            stageDetail: `⚡ พร้อมรับชม (${readyNames}) • ${afterSd}`,
             invalidateCache: true,
         });
         await logger.log(`✅ อัปโหลด 360p สำเร็จ (พร้อมแล้ว: ${readyNames})`, { level: 'success' });
-    } else if (!meta.hiResEligible) {
+    } else if (!meta.hiResEligible && !hasDolbyVision) {
         await updateLaneProgress({
             lane: 'fast_sd',
             lanePct: 100,
@@ -2238,20 +2278,21 @@ async function runLaneFastSd({
             const readyNames = mergedWithHiRes.map((q) => q.name).join(', ');
             await updateLaneProgress({
                 lane: 'fast_sd',
-                lanePct: 100,
+                lanePct: hasDolbyVision ? 97 : 100,
                 status: 'READY',
-                stageDetail: `⚡ พร้อมรับชม (${readyNames}) + 🎧 Hi-Res ${hiResInfo.format.toUpperCase()} • Lane 1 เสร็จสมบูรณ์`,
+                stageDetail: `⚡ พร้อมรับชม (${readyNames}) + 🎧 Hi-Res ${hiResInfo.format.toUpperCase()} • ${afterAudio}`,
                 invalidateCache: true,
             });
         } else {
             await updateLaneProgress({
                 lane: 'fast_sd',
-                lanePct: 100,
+                lanePct: hasDolbyVision ? 97 : 100,
                 status: 'READY',
-                stageDetail: `⚡ พร้อมรับชม • Lane 1 (SD) เสร็จสมบูรณ์`,
+                stageDetail: `⚡ พร้อมรับชม • ${afterAudio}`,
             });
         }
     }
+    await publishDolbyVisionRendition({ driveId, streamFolderId, hlsOutputDir, rawFilePath, meta });
 }
 
 /**
@@ -2731,7 +2772,7 @@ async function main() {
             ? ` | 🌈 Dual-Range HDR (${meta.hdrType} • ${meta.pixFmt}${meta.hdrMaxNits ? ` • ${meta.hdrMaxNits}nit / MaxCLL ${meta.hdrMaxCll}` : ''}) -> 144p–4K H.264 SDR + 720p–4K HEVC 10-bit (hvc1) HDR10 fMP4`
             : ` | SDR (${meta.pixFmt}) -> H.264`;
         const hiResTag = meta.hiResEligible
-            ? ` + 🎧 Hi-Res ${meta.hiResBitDepth}-bit/${(meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1)}kHz ${meta.hiResFormat.toUpperCase()}${meta.hiResFallbackReason ? ' (Auto-FLAC >1.5GB)' : ''}`
+            ? ` + 🎧 Hi-Res ${meta.hiResBitDepth}-bit/${(meta.hiResSampleRate / 1000).toFixed(meta.hiResSampleRate % 1000 === 0 ? 0 : 1)}kHz ${meta.hiResFormat.toUpperCase()}`
             : '';
         const audioTag = meta.hasAudio
             ? ` | 🔊 Audio: ${meta.audioLabel} (${meta.srcAudioCodec} -> ${meta.audioBitrateK}k AAC${hiResTag})`

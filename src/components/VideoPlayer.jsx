@@ -5,8 +5,19 @@ import { useState, useRef, useCallback, useEffect, useEffectEvent, useLayoutEffe
 import dynamic from 'next/dynamic';
 import { Play, Pause, Volume2, VolumeX, X, SkipBack, SkipForward } from 'lucide-react';
 import { formatResolutionBadge, formatQualityLevel, watchTimeThreshold } from '@/lib/videoUtils';
-import { getHlsVideoRange, getSavedQualityLevel, getSdrFallbackLevel, isHdrLevel, supportsHdrDisplay } from '@/lib/playerQuality.mjs';
+import {
+  filterDolbyVisionPlaybackLevels,
+  getDolbyVisionBufferController,
+  getHlsDolbyVisionCodec,
+  getHlsVideoRange,
+  getSavedQualityLevel,
+  getSdrFallbackLevel,
+  getVisibleQualityLevels,
+  isHdrLevel,
+  supportsHdrDisplay,
+} from '@/lib/playerQuality.mjs';
 import { preloadHlsModule } from '@/lib/playbackResolver';
+import { connectHiResAudio } from '@/lib/hiResAudio.mjs';
 import { useSession } from '@/context/SessionContext';
 import {
   formatTime,
@@ -51,6 +62,7 @@ export default function VideoPlayer({
   onCloseMiniplayer = null,
   onRefreshStream = null,
   togglePlayRef = null,
+  audioControlsRef = null,
   src,
   poster,
   storyboard = null,
@@ -338,9 +350,10 @@ export default function VideoPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
 
-  // Hi-Res Lossless Audio Engine (Synced Uncompressed Full WAV / Auto-FLAC <audio> track)
+  // Hi-Res lossless audio playback for FLAC and legacy WAV tracks.
   const hiResAudioRef = useRef(null);
-  const hiResFailedUrlRef = useRef(null);
+  const hiResPlaybackRef = useRef(null);
+  const resumeStandardAudioRef = useRef(false);
   const [preferHiResAudio, setPreferHiResAudio] = useState(() => {
     if (typeof window === 'undefined') return false;
     try {
@@ -351,15 +364,9 @@ export default function VideoPlayer({
   });
   const [hiResStatus, setHiResStatus] = useState('idle');
   const hasHiResAudio = Boolean(hiResAudio?.url);
-  const isHiResActive = Boolean(
-    hasHiResAudio &&
-    preferHiResAudio &&
-    hiResFailedUrlRef.current !== hiResAudio?.url
-  );
-  const isHiResActiveRef = useRef(isHiResActive);
-  useEffect(() => {
-    isHiResActiveRef.current = isHiResActive;
-  }, [isHiResActive]);
+  const isHiResActive = hasHiResAudio && preferHiResAudio;
+  const isPlayRequested = isPlaying || (isHiResActive && hiResStatus === 'loading');
+  const isHiResSelectedRef = useRef(false);
   const [isCurrentLevelHdr, setIsCurrentLevelHdr] = useState(false);
   const autoCapLevelIndexRef = useRef(-1);
 
@@ -909,7 +916,7 @@ export default function VideoPlayer({
       setVolume(defaultVolume);
       if (!isTransitioningStreamRef.current && isActiveRef.current && !isSwitchingVideoRef.current) {
         const targetVol = isUserMutedRef.current ? 0 : defaultVolume;
-        if (isHiResActiveRef.current && hiResAudioRef.current) {
+        if (isHiResSelectedRef.current && hiResAudioRef.current) {
           video.current.muted = true;
           hiResAudioRef.current.volume = targetVol;
           hiResAudioRef.current.muted = isUserMutedRef.current;
@@ -1117,7 +1124,7 @@ export default function VideoPlayer({
       isTransitioningStreamRef.current = false;
     }
     try {
-      if (isHiResActiveRef.current && hiResAudioRef.current) {
+      if (isHiResSelectedRef.current && hiResAudioRef.current) {
         v.muted = true;
         hiResAudioRef.current.muted = targetMuted;
         hiResAudioRef.current.volume = targetVol;
@@ -1139,6 +1146,11 @@ export default function VideoPlayer({
     const nearEnd = v.currentTime > 0 && v.duration > 0 && v.currentTime >= v.duration - 0.5;
     if (isEndedRef.current || (v.readyState >= 2 && (v.ended || nearEnd))) {
       setIsBuffering(false);
+      return;
+    }
+
+    if (hiResPlaybackRef.current) {
+      if (!hiResPlaybackRef.current.isPlayRequested()) hiResPlaybackRef.current.play();
       return;
     }
 
@@ -1164,8 +1176,8 @@ export default function VideoPlayer({
       }
       // The playing event clears the loading state and fades out the poster.
     } catch (error) {
-      // A load/seek can interrupt play() without a user pause. Let canplay retry.
-      if (error?.name === 'AbortError') return;
+      // An interrupted play() or decoder failure can be retried by the media handlers.
+      if (error?.name === 'AbortError' || v.error) return;
       if (isCurrent() && v.paused) {
         isUserPausedRef.current = true;
         setIsPlaying(false);
@@ -1192,7 +1204,7 @@ export default function VideoPlayer({
   useEffect(() => {
     const v = video.current;
     if (!v || !src || isSwitchingVideo) return;
-    const { targetInitialTime } = getPlaybackOptions();
+    const { targetInitialTime, onHdrStateChange: resetHdrState } = getPlaybackOptions();
 
     isTransitioningStreamRef.current = true;
     try {
@@ -1204,6 +1216,8 @@ export default function VideoPlayer({
     setIsBuffering(true);
     setLevels([]);
     setCurrentLevelIndex(-1);
+    setIsCurrentLevelHdr(false);
+    resetHdrState?.(false);
     setActiveLevelLabel(formatResolutionBadge(resolutionRef.current) || 'Auto');
     hlsRetryCountRef.current = 0;
 
@@ -1260,8 +1274,14 @@ export default function VideoPlayer({
             }
           }
 
+          const displaySupportsHdr = supportsHdrDisplay();
+          const mediaSource = Hls.getMediaSource();
+          const supportsDolbyVision = (codec) => Boolean(
+            displaySupportsHdr && mediaSource?.isTypeSupported(`video/mp4;codecs=${codec}`)
+          );
           const hls = new Hls({
             fLoader: SegmentHydrationLoader,
+            bufferController: getDolbyVisionBufferController(Hls, supportsDolbyVision),
             startPosition: targetInitialTime > 0 ? targetInitialTime : -1,
             // Defer fragment load until MANIFEST_PARSED so we can pick the exact fast-start or saved level before chunk #0!
             autoStartLoad: false,
@@ -1310,26 +1330,37 @@ export default function VideoPlayer({
           hls.attachMedia(v);
           hlsInstanceRef.current = hls;
 
-          const describeLevels = (playlistLevels, fps) => playlistLevels.map((level, index) => {
+          const describeLevel = (level, index, fps) => {
             const levelFps = level.attrs?.['FRAME-RATE'] ? parseFloat(level.attrs['FRAME-RATE']) : Number(fps) || 0;
-            const isHdr = isHdrLevel(level);
-            const { label, badge, fullLabel } = formatQualityLevel(level.height, levelFps, isHdr);
+            const dolbyCodec = getHlsDolbyVisionCodec(level);
+            const isDolbyVision = Boolean(dolbyCodec && supportsDolbyVision(dolbyCodec));
+            const isHdr = isDolbyVision || isHdrLevel(level);
+            const formatted = formatQualityLevel(level.height, levelFps, isHdr);
+            const label = isDolbyVision ? formatted.label.replace(/ HDR$/, ' Dolby Vision') : formatted.label;
             return {
               index, height: level.height, width: level.width, bitrate: level.bitrate,
-              isHdr, videoRange: getHlsVideoRange(level), label, badge, fullLabel,
+              isHdr, isDolbyVision, videoRange: getHlsVideoRange(level), label, badge: formatted.badge,
+              fullLabel: formatted.badge ? `${label} ${formatted.badge}` : label,
             };
-          });
+          };
+          const describeLevels = (playlistLevels, fps) =>
+            playlistLevels.map((level, index) => describeLevel(level, index, fps));
 
           let hdrFallbackUsed = false;
           let resettingToSdr = false;
           let resumeAfterHdrFallback = false;
-          const recoverHdrPlayback = (reportedLevel = hls.currentLevel) => {
+          const recoverHdrPlayback = (reportedLevel) => {
             if (resettingToSdr) return true;
             if (!isMounted || hdrFallbackUsed || hlsInstanceRef.current !== hls) return false;
 
-            const failedIndex = [reportedLevel, hls.loadLevel, hls.currentLevel, hls.startLevel]
-              .find((index) => hls.levels[index]);
-            const fallback = getSdrFallbackLevel(hls.levels, failedIndex);
+            // A quality switch can load HDR while the previous SDR fragment still plays.
+            const fallback = getSdrFallbackLevel(
+              hls.levels,
+              reportedLevel,
+              hls.currentLevel,
+              hls.inFlightFragments.main.frag?.level,
+              hls.loadLevel,
+            );
             if (!fallback) return false;
 
             const { fps, isPlaying, onHdrStateChange } = getPlaybackOptions();
@@ -1338,6 +1369,7 @@ export default function VideoPlayer({
             resumeAfterHdrFallback = !isUserPausedRef.current && (isPlaying || !v.paused);
             hdrFallbackUsed = true;
             resettingToSdr = true;
+            autoplayAttemptRef.current = null;
             setHlsError(null);
             setIsBuffering(true);
             isTransitioningStreamRef.current = true;
@@ -1368,7 +1400,7 @@ export default function VideoPlayer({
           };
           recoverHdrPlaybackRef.current = recoverHdrPlayback;
 
-          hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
             const { attemptAutoPlay, fps, onHdrStateChange, updateRatio } = getPlaybackOptions();
             if (!shouldAutoplay || isUserPausedRef.current) setIsBuffering(false);
             isEndedRef.current = false;
@@ -1382,13 +1414,16 @@ export default function VideoPlayer({
             }
             lastReportedSecondRef.current = Math.floor(startSec);
             initialSeekDoneRef.current = true;
-            if (data.levels && data.levels.length > 0) {
-              const parsed = describeLevels(data.levels, fps);
+            if (hls.levels.length > 0) {
+              const available = new Set(filterDolbyVisionPlaybackLevels(hls.levels, supportsDolbyVision));
+              for (let index = hls.levels.length - 1; index >= 0; index--) {
+                if (!available.has(hls.levels[index])) hls.removeLevel(index);
+              }
+              const parsed = describeLevels(hls.levels, fps);
               setLevels(parsed);
 
               // ✨ Quality Persistence vs YouTube-style Fast-Start ABR
               let appliedSaved = false;
-              const displaySupportsHdr = supportsHdrDisplay();
               const screenPhysHeight =
                 typeof window !== 'undefined'
                   ? Math.round((window.screen?.height || 1080) * (window.devicePixelRatio || 1))
@@ -1427,7 +1462,9 @@ export default function VideoPlayer({
                   const sortedByHeight = [...parsed].sort((a, b) => (a.height || 0) - (b.height || 0));
                   // On HDR-capable displays, prefer starting directly on the lowest HDR tier (e.g. 1080p HDR)
                   // so Android Chrome initializes SurfaceFlinger directly in 10-bit HDR mode without getting stuck in SDR!
-                  const firstHdrLevel = displaySupportsHdr ? sortedByHeight.find((l) => l.isHdr) : null;
+                  const firstHdrLevel = displaySupportsHdr
+                    ? getVisibleQualityLevels(parsed.filter((level) => level.isHdr), true).at(-1)
+                    : null;
                   const fastStart = firstHdrLevel
                     ? firstHdrLevel
                     : isMobile
@@ -1444,7 +1481,7 @@ export default function VideoPlayer({
               }
 
               // Auto-detect aspect ratio from highest HLS level
-              const bestLevel = data.levels[data.levels.length - 1] || data.levels[0];
+              const bestLevel = hls.levels.at(-1);
               if (bestLevel?.width && bestLevel?.height) {
                 updateRatio(bestLevel.width / bestLevel.height);
               }
@@ -1460,12 +1497,10 @@ export default function VideoPlayer({
             const { checkAndUpdateRatio, fps, onHdrStateChange, updateRatio } = getPlaybackOptions();
             const lvl = hls.levels[data.level];
             if (lvl) {
-              const lvlFps = lvl.attrs?.['FRAME-RATE'] ? parseFloat(lvl.attrs['FRAME-RATE']) : Number(fps) || 0;
-              const isLevelHdr = isHdrLevel(lvl);
-              const formatted = formatQualityLevel(lvl.height, lvlFps, isLevelHdr);
-              setActiveLevelLabel(formatted.label);
-              setIsCurrentLevelHdr(isLevelHdr);
-              onHdrStateChange?.(isLevelHdr);
+              const quality = describeLevel(lvl, data.level, fps);
+              setActiveLevelLabel(quality.label);
+              setIsCurrentLevelHdr(quality.isHdr);
+              onHdrStateChange?.(quality.isHdr);
               if (lvl.width && lvl.height) {
                 updateRatio(lvl.width / lvl.height);
               }
@@ -1487,7 +1522,10 @@ export default function VideoPlayer({
             checkAndUpdateRatio();
             if (resumeAfterHdrFallback && data.frag?.type === 'main') {
               resumeAfterHdrFallback = false;
-              if (!shouldAutoplay && isActiveRef.current && !isUserPausedRef.current) v.play().catch(() => {});
+              if (!shouldAutoplay && isActiveRef.current && !isUserPausedRef.current) {
+                if (hiResPlaybackRef.current) hiResPlaybackRef.current.play();
+                else v.play().catch(() => {});
+              }
             }
             attemptAutoPlay();
           });
@@ -1550,7 +1588,7 @@ export default function VideoPlayer({
                 data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
                 data.details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
               ) {
-                if (!isUserPausedRef.current && v && v.paused) {
+                if (!hiResPlaybackRef.current && !isUserPausedRef.current && v.paused) {
                   v.play().catch(() => { });
                 }
               }
@@ -1625,7 +1663,8 @@ export default function VideoPlayer({
       fadeBlackOverlayRef.current.style.transition = 'opacity 300ms ease-out';
       fadeBlackOverlayRef.current.style.opacity = '0';
     }
-    current.play()
+    if (hiResPlaybackRef.current) hiResPlaybackRef.current.play();
+    else current.play()
       .then(() => setIsPlaying(true))
       .catch(() => setIsPlaying(false));
     resetControlsTimer();
@@ -1655,11 +1694,21 @@ export default function VideoPlayer({
       return;
     }
 
+    const hiResPlayback = hiResPlaybackRef.current;
+    if (hiResPlayback) {
+      isUserPausedRef.current = hiResPlayback.isPlayRequested();
+      if (isUserPausedRef.current) hiResPlayback.pause();
+      else hiResPlayback.play();
+      resetControlsTimer();
+      return;
+    }
+
     if (v.paused) {
       const currentSource = prevSrcRef.current;
       isUserPausedRef.current = false;
       restoreAudioAfterTransition();
-      v.play().catch(() => {
+      v.play().catch((error) => {
+        if (error?.name === 'AbortError' || v.error || isTransitioningStreamRef.current) return;
         if (isSwitchingVideoRef.current || prevSrcRef.current !== currentSource || !v.paused) return;
         isUserPausedRef.current = true;
         setIsPlaying(false);
@@ -1687,7 +1736,7 @@ export default function VideoPlayer({
     setVolume(val);
     isUserMutedRef.current = val === 0;
     isTransitioningStreamRef.current = false;
-    if (isHiResActiveRef.current && hiResAudioRef.current) {
+    if (isHiResSelectedRef.current && hiResAudioRef.current) {
       if (video.current) video.current.muted = true;
       hiResAudioRef.current.volume = val;
       hiResAudioRef.current.muted = val === 0;
@@ -1710,7 +1759,7 @@ export default function VideoPlayer({
       volumeRef.current = 0.5;
       setVolume(0.5);
     }
-    if (isHiResActiveRef.current && hiResAudioRef.current) {
+    if (isHiResSelectedRef.current && hiResAudioRef.current) {
       video.current.muted = true;
       hiResAudioRef.current.volume = targetVol;
       hiResAudioRef.current.muted = nextMuted;
@@ -1723,10 +1772,23 @@ export default function VideoPlayer({
     resetControlsTimer();
   }, [isMuted, resetControlsTimer, showToast, video, volume]);
 
+  useLayoutEffect(() => {
+    if (!audioControlsRef) return;
+    audioControlsRef.current = { toggleMute, usesHiRes: () => isHiResSelectedRef.current };
+    return () => { audioControlsRef.current = null; };
+  }, [audioControlsRef, toggleMute]);
+
   const handleSelectAudioMode = useCallback((mode) => {
     const nextPrefer = mode === 'hires';
-    if (nextPrefer) {
-      hiResFailedUrlRef.current = null;
+    if (nextPrefer && hiResAudio?.url) {
+      isHiResSelectedRef.current = true;
+      if (video.current) video.current.muted = true;
+      if (hiResStatus === 'error') {
+        isUserPausedRef.current = false;
+        hiResPlaybackRef.current?.play();
+      }
+    } else {
+      resumeStandardAudioRef.current = hiResPlaybackRef.current?.isPlayRequested() ?? false;
     }
     setPreferHiResAudio(nextPrefer);
     try {
@@ -1735,186 +1797,62 @@ export default function VideoPlayer({
     if (nextPrefer && hiResAudio) {
       const rateKhz = (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1);
       const fmtLabel = hiResAudio.format === 'flac' ? 'FLAC' : 'PCM WAV';
-      showToast(`🎧 เปิดเสียง Hi-Res Lossless (${hiResAudio.bits}-bit / ${rateKhz} kHz ${fmtLabel})`);
+      showToast(`🎧 กำลังเตรียมเสียง Hi-Res Lossless (${hiResAudio.bits}-bit / ${rateKhz} kHz ${fmtLabel})`);
     } else {
       showToast('สลับเป็นเสียงมาตรฐาน (AAC)');
     }
     resetControlsTimer();
-  }, [hiResAudio, showToast, resetControlsTimer]);
+  }, [hiResAudio, hiResStatus, showToast, resetControlsTimer, video]);
 
-  // Synced Hi-Res Full WAV / FLAC <audio> Engine (keeps <video> muted & drift-locked <= 120ms)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const v = video.current;
     const a = hiResAudioRef.current;
     if (!v || !a) return;
 
-    const hiResUrl = hiResAudio?.url || '';
-    if (!isHiResActive || !hiResUrl || isSwitchingVideo) {
-      try {
-        a.pause();
-        if (a.getAttribute('src')) {
-          a.removeAttribute('src');
-          a.load();
-        }
-      } catch (_) { }
+    isHiResSelectedRef.current = isHiResActive;
+    const muted = isUserMutedRef.current;
+    const url = hiResAudio?.url || '';
+    if (!isHiResActive || !url || isSwitchingVideo) {
+      a.pause();
+      if (a.hasAttribute('src')) {
+        a.removeAttribute('src');
+        a.load();
+      }
       setHiResStatus('idle');
       if (!isSwitchingVideo && !isTransitioningStreamRef.current) {
-        const targetMuted = isUserMutedRef.current;
-        const targetVol = targetMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : (defaultVolume || 0.8));
-        try {
-          v.muted = targetMuted;
-          v.volume = targetVol;
-        } catch (_) { }
+        v.muted = muted;
+        v.volume = muted ? 0 : volumeRef.current;
+      }
+      if (!isSwitchingVideo && resumeStandardAudioRef.current) {
+        resumeStandardAudioRef.current = false;
+        v.play().catch(() => {});
       }
       return;
     }
 
-    let cancelled = false;
-    setHiResStatus('loading');
-
-    const applyAudioLevels = () => {
-      const targetMuted = isUserMutedRef.current;
-      const targetVol = targetMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : (defaultVolume || 0.8));
-      try {
-        v.muted = true;
-        a.muted = targetMuted;
-        a.volume = targetVol;
-        a.playbackRate = v.playbackRate || 1;
-        a.loop = Boolean(v.loop);
-      } catch (_) { }
-    };
-
-    const syncPlayState = (forceSeek = false) => {
-      if (cancelled) return;
-      applyAudioLevels();
-      const targetTime = Number.isFinite(v.currentTime) ? v.currentTime : 0;
-      if (forceSeek || Math.abs((a.currentTime || 0) - targetTime) > 0.12) {
-        try {
-          if (a.readyState >= 1) {
-            a.currentTime = targetTime;
-          }
-        } catch (_) { }
-      }
-      if (!v.paused && !v.ended && isActiveRef.current) {
-        if (a.paused) {
-          a.play().catch((err) => {
-            if (err?.name === 'NotAllowedError') {
-              isUserMutedRef.current = true;
-              a.muted = true;
-              setIsMuted(true);
-              a.play().catch(() => { });
-            }
-          });
-        }
-      } else if (!a.paused) {
-        a.pause();
-      }
-    };
-
-    if (a.src !== hiResUrl) {
-      a.src = hiResUrl;
-      a.load();
-    }
-    applyAudioLevels();
-
-    const onVideoPlay = () => syncPlayState(true);
-    const onVideoPlaying = () => syncPlayState(false);
-    const onVideoPause = () => { try { a.pause(); } catch (_) { } };
-    const onVideoWaiting = () => { try { a.pause(); } catch (_) { } };
-    const onVideoSeek = () => {
-      try {
-        if (a.readyState >= 1 && Number.isFinite(v.currentTime)) {
-          a.currentTime = v.currentTime;
-        }
-      } catch (_) { }
-    };
-    const onVideoRateChange = () => {
-      try { a.playbackRate = v.playbackRate || 1; } catch (_) { }
-    };
-
-    const onAudioLoadedMetadata = () => {
-      if (cancelled) return;
-      syncPlayState(true);
-    };
-    const onAudioCanPlay = () => {
-      if (cancelled) return;
-      setHiResStatus('ready');
-      syncPlayState(false);
-    };
-    const onAudioWaiting = () => {
-      if (!cancelled) setHiResStatus('loading');
-    };
-    const onAudioPlaying = () => {
-      if (!cancelled) setHiResStatus('ready');
-    };
-    const onAudioError = () => {
-      if (cancelled) return;
-      hiResFailedUrlRef.current = hiResUrl;
-      setHiResStatus('error');
-      setPreferHiResAudio(false);
-      try {
-        a.pause();
-        const targetMuted = isUserMutedRef.current;
-        const targetVol = targetMuted ? 0 : (volumeRef.current > 0 ? volumeRef.current : (defaultVolume || 0.8));
-        v.muted = targetMuted;
-        v.volume = targetVol;
-      } catch (_) { }
-      showToast('ไม่สามารถโหลดเสียง Hi-Res ได้ สลับกลับเป็น AAC อัตโนมัติ');
-    };
-
-    v.addEventListener('play', onVideoPlay);
-    v.addEventListener('playing', onVideoPlaying);
-    v.addEventListener('pause', onVideoPause);
-    v.addEventListener('waiting', onVideoWaiting);
-    v.addEventListener('ended', onVideoPause);
-    v.addEventListener('seeking', onVideoSeek);
-    v.addEventListener('seeked', onVideoSeek);
-    v.addEventListener('ratechange', onVideoRateChange);
-
-    a.addEventListener('loadedmetadata', onAudioLoadedMetadata);
-    a.addEventListener('canplay', onAudioCanPlay);
-    a.addEventListener('waiting', onAudioWaiting);
-    a.addEventListener('playing', onAudioPlaying);
-    a.addEventListener('error', onAudioError);
-
-    const driftInterval = setInterval(() => {
-      if (cancelled || v.paused || v.ended || a.readyState < 2) return;
-      if (!v.muted) v.muted = true;
-      const drift = (a.currentTime || 0) - (v.currentTime || 0);
-      if (Math.abs(drift) > 0.12) {
-        try {
-          a.currentTime = v.currentTime;
-        } catch (_) { }
-      }
-      if (a.paused && isActiveRef.current) {
-        a.play().catch(() => { });
-      }
-    }, 250);
-
-    if (a.readyState >= 2) {
-      setHiResStatus('ready');
-      syncPlayState(true);
-    }
-
+    a.muted = muted;
+    a.volume = muted ? 0 : volumeRef.current;
+    const playback = connectHiResAudio(v, a, {
+      url,
+      isActive: () => isActiveRef.current && !isSwitchingVideoRef.current,
+      startPlaying: !v.paused || (shouldAutoplay && !isUserPausedRef.current),
+      onStatus: (status) => {
+        setHiResStatus(status);
+        if (status === 'error') isUserPausedRef.current = true;
+        if (status !== 'ready') setIsPlaying(false);
+      },
+      onPlayBlocked: () => {
+        isUserPausedRef.current = true;
+        setIsBuffering(false);
+        showToast('กดเล่นเพื่อเริ่มฟังเสียง Hi-Res');
+      },
+    });
+    hiResPlaybackRef.current = playback;
     return () => {
-      cancelled = true;
-      clearInterval(driftInterval);
-      v.removeEventListener('play', onVideoPlay);
-      v.removeEventListener('playing', onVideoPlaying);
-      v.removeEventListener('pause', onVideoPause);
-      v.removeEventListener('waiting', onVideoWaiting);
-      v.removeEventListener('ended', onVideoPause);
-      v.removeEventListener('seeking', onVideoSeek);
-      v.removeEventListener('seeked', onVideoSeek);
-      v.removeEventListener('ratechange', onVideoRateChange);
-      a.removeEventListener('loadedmetadata', onAudioLoadedMetadata);
-      a.removeEventListener('canplay', onAudioCanPlay);
-      a.removeEventListener('waiting', onAudioWaiting);
-      a.removeEventListener('playing', onAudioPlaying);
-      a.removeEventListener('error', onAudioError);
-      try { a.pause(); } catch (_) { }
+      playback.disconnect();
+      hiResPlaybackRef.current = null;
     };
-  }, [isHiResActive, hiResAudio?.url, isSwitchingVideo, defaultVolume, video, showToast]);
+  }, [isHiResActive, hiResAudio?.url, isSwitchingVideo, shouldAutoplay, video, showToast]);
 
   // 1. วาง updateStoryboardThumbnail ไว้ก่อน (ข้างบน)
   const loadScrubSheet = useCallback(function loadSheet(url, priority = 'high', retry = true) {
@@ -2795,7 +2733,7 @@ export default function VideoPlayer({
         setVolume(nextVol);
         isUserMutedRef.current = false;
         setIsMuted(false);
-        if (isHiResActiveRef.current && hiResAudioRef.current) {
+        if (isHiResSelectedRef.current && hiResAudioRef.current) {
           if (video.current) video.current.muted = true;
           hiResAudioRef.current.muted = false;
           hiResAudioRef.current.volume = nextVol;
@@ -2811,7 +2749,7 @@ export default function VideoPlayer({
         setVolume(nextVol);
         isUserMutedRef.current = nextVol === 0;
         setIsMuted(nextVol === 0);
-        if (isHiResActiveRef.current && hiResAudioRef.current) {
+        if (isHiResSelectedRef.current && hiResAudioRef.current) {
           if (video.current) video.current.muted = true;
           hiResAudioRef.current.muted = nextVol === 0;
           hiResAudioRef.current.volume = nextVol;
@@ -2891,12 +2829,12 @@ export default function VideoPlayer({
     try {
       navigator.mediaSession.playbackState = (!isActive || !src || isSwitchingVideo)
         ? 'none'
-        : (isPlaying && !isEnded ? 'playing' : 'paused');
+        : (isPlayRequested && !isEnded ? 'playing' : 'paused');
     } catch (_) { }
     if (isActive) {
       syncMediaPositionState();
     }
-  }, [isActive, src, isSwitchingVideo, isPlaying, isEnded, syncMediaPositionState]);
+  }, [isActive, src, isSwitchingVideo, isPlayRequested, isEnded, syncMediaPositionState]);
 
   // Bind OS notification, lockscreen, and Bluetooth media transport buttons
   useEffect(() => {
@@ -2911,15 +2849,17 @@ export default function VideoPlayer({
     safeSetHandler('play', () => {
       const v = video.current;
       if (!v) return;
-      if (v.paused || v.ended || isEndedRef.current) {
+      if ((v.paused || v.ended || isEndedRef.current) && !hiResPlaybackRef.current?.isPlayRequested()) {
         togglePlay();
       }
     });
     safeSetHandler('pause', () => {
       const v = video.current;
-      if (!v || v.paused) return;
+      const hiResPlayback = hiResPlaybackRef.current;
+      if (!v || (v.paused && !hiResPlayback?.isPlayRequested())) return;
       isUserPausedRef.current = true;
-      v.pause();
+      if (hiResPlayback) hiResPlayback.pause();
+      else v.pause();
       setIsPlaying(false);
       syncMediaPositionState(v.currentTime);
     });
@@ -2954,7 +2894,8 @@ export default function VideoPlayer({
       const v = video.current;
       if (!v) return;
       isUserPausedRef.current = true;
-      v.pause();
+      if (hiResPlaybackRef.current) hiResPlaybackRef.current.pause();
+      else v.pause();
       setIsPlaying(false);
     });
 
@@ -3114,10 +3055,10 @@ export default function VideoPlayer({
         variant="backdrop"
       />
 
-      {/* Hidden Synced Hi-Res Lossless Audio Element (Full PCM WAV / Auto-FLAC) */}
+      {/* Hi-Res lossless audio track */}
       <audio
         ref={hiResAudioRef}
-        preload="none"
+        preload="auto"
         crossOrigin="anonymous"
         className="hidden"
         aria-hidden="true"
@@ -3132,14 +3073,14 @@ export default function VideoPlayer({
         playsInline
         webkit-playsinline="true"
         x5-playsinline="true"
-        preload="metadata" // Lowers memory contention on mobile!
+        preload={isHiResActive ? 'auto' : 'metadata'}
         controlsList="nodownload nofullscreen noremoteplayback"
         disablePictureInPicture={false}
         disableRemotePlayback
         onRateChange={() => syncMediaPositionState()}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => {
-          if (isSwitchingVideo || isSwitchingVideoRef.current) return;
+          if (isSwitchingVideo || isSwitchingVideoRef.current || video.current?.paused) return;
           if (isTransitioningStreamRef.current) {
             restoreAudioAfterTransition();
           }
@@ -3162,6 +3103,10 @@ export default function VideoPlayer({
             !v ||
             v.readyState < 1
           ) {
+            return;
+          }
+          if (hiResPlaybackRef.current?.isPlayRequested() && !v.ended) {
+            lastTickTimeRef.current = null;
             return;
           }
           const isAtEnd = v.ended || isEndedRef.current ||
@@ -3189,6 +3134,7 @@ export default function VideoPlayer({
 
           // หากเบราว์เซอร์ emit pause เองระหว่างเล่น โดยที่ผู้ใช้ไม่ได้กดหยุด และคลิปยังไม่จบ (เช่น Buffer stall / MSE pipeline hiccup)
           if (
+            !hiResPlaybackRef.current &&
             !isUserPausedRef.current &&
             !isSwitchingVideo &&
             !isSwitchingVideoRef.current &&
@@ -3214,6 +3160,7 @@ export default function VideoPlayer({
           if ((err?.code === 3 || err?.code === 4) && recoverHdrPlaybackRef.current?.()) return;
           const msg = err ? `ข้อผิดพลาดในการเล่น (${err.code}): ${err.message || ''}` : 'Native video error';
           setHlsError(msg);
+          setIsPlaying(false);
           setIsBuffering(false);
           lastTickTimeRef.current = null;
         }}
@@ -3526,10 +3473,10 @@ export default function VideoPlayer({
                   className={`p-1.5 text-white hover:scale-105 drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)] transition active:scale-90 cursor-pointer focus:outline-none ${
                     isHoveringSeek || isScrubbing ? 'pointer-events-none' : 'pointer-events-auto'
                   }`}
-                  title={isPlaying ? 'หยุดชั่วคราว (k)' : 'เล่นต่อ (k)'}
-                  aria-label={isPlaying ? 'หยุดชั่วคราว' : 'เล่นต่อ'}
+                  title={isPlayRequested ? 'หยุดชั่วคราว (k)' : 'เล่นต่อ (k)'}
+                  aria-label={isPlayRequested ? 'หยุดชั่วคราว' : 'เล่นต่อ'}
                 >
-                  {isPlaying ? <Pause className="w-9 h-9 fill-current" /> : <Play className="w-9 h-9 fill-current ml-0.5" />}
+                  {isPlayRequested ? <Pause className="w-9 h-9 fill-current" /> : <Play className="w-9 h-9 fill-current ml-0.5" />}
                 </button>
                 {playlistActive && playPlaylistNext && (
                   <button
@@ -3709,8 +3656,8 @@ export default function VideoPlayer({
         showControls={controlsVisible && !isMobileEndPromptOpen && !(isMobileView && isScrubbing)}
         isPlaying={isPlaying}
         isEnded={isEnded}
-        isBuffering={isBuffering || isSwitchingVideo || isSwitchingVersion}
-        hlsError={hlsError}
+        isBuffering={(isHiResActive ? hiResStatus === 'loading' : isBuffering) || isSwitchingVideo || isSwitchingVersion}
+        hlsError={hlsError || (isHiResActive && hiResStatus === 'error' ? 'เล่นเสียง Hi-Res ไม่สำเร็จ กดเล่นเพื่อลองอีกครั้ง' : null)}
         isMobileView={isMobileView}
         seekStep={seekStep}
         togglePlay={togglePlay}
@@ -3760,6 +3707,7 @@ export default function VideoPlayer({
           audioLayout={audioLayout}
           hiResAudio={hiResAudio}
           isHiResActive={isHiResActive}
+          hiResStatus={hiResStatus}
           hiResAudioRef={hiResAudioRef}
           videoId={videoId}
           videoSlug={videoSlug}
@@ -3874,7 +3822,7 @@ export default function VideoPlayer({
       {/* Modern High-Performance Bottom Controls Bar */}
       <PlayerBottomBar
         showControls={controlsVisible && !isMobileEndPromptOpen}
-        isPlaying={isPlaying}
+        isPlaying={isPlayRequested}
         isEnded={isEnded}
         isScrubbing={isScrubbing}
         isMobileView={isMobileView}

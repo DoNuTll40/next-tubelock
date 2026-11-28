@@ -223,6 +223,7 @@ export function GlobalPlayerProvider({ children }) {
   const activeSlotRef = useRef(null);
   const videoRef = useRef(null);
   const togglePlayRef = useRef(null);
+  const audioControlsRef = useRef(null);
 
   const initialSourceRef = useRef(null);
   const initialVideoIdRef = useRef(null);
@@ -500,7 +501,7 @@ export function GlobalPlayerProvider({ children }) {
     if (!v) return;
     try {
       v.volume = saved && typeof saved.volume === 'number' && saved.volume > 0 ? saved.volume : 1;
-      v.muted = saved ? Boolean(saved.muted) : false;
+      v.muted = Boolean(audioControlsRef.current?.usesHiRes() || saved?.muted);
       if (v.paused) {
         if (v.ended) {
           try { v.currentTime = 0; } catch (_) { }
@@ -649,6 +650,10 @@ export function GlobalPlayerProvider({ children }) {
         }
       } else if (code === 'KeyM' || key === 'm') {
         e.preventDefault();
+        if (audioControlsRef.current) {
+          audioControlsRef.current.toggleMute();
+          return;
+        }
         const v = videoRef.current;
         if (!v) return;
         v.muted = !v.muted;
@@ -1376,7 +1381,7 @@ export function GlobalPlayerProvider({ children }) {
             : null
         );
 
-        // Two-Phase Cold-Batch Hydration (~2.2s later upgrade _002+.ts to direct CF Worker URLs & direct Hi-Res URL)
+        // Upgrade video segment URLs without reloading an already resolved Hi-Res track.
         if (resolved.partial) {
           hydrationTimer = setTimeout(() => {
             if (isStale()) return;
@@ -1418,9 +1423,7 @@ export function GlobalPlayerProvider({ children }) {
                 if (hydratedHiResItem) {
                   setDetectedAudio((prev) => {
                     const base = prev || { channels: null, layout: null, hiRes: null };
-                    if (base.hiRes) {
-                      return { ...base, hiRes: { ...base.hiRes, url: hydratedHiResItem.downloadUrl } };
-                    }
+                    if (base.hiRes?.url) return prev;
                     const file = hydratedHiResItem.name.replace(/^\.?\//, '');
                     return {
                       ...base,
@@ -1763,6 +1766,7 @@ export function GlobalPlayerProvider({ children }) {
                 onCloseMiniplayer={closeMiniplayer}
                 onRefreshStream={refreshActiveStream}
                 togglePlayRef={togglePlayRef}
+                audioControlsRef={audioControlsRef}
                 src={streamUrl}
                 partialSegmentMapRef={partialSegmentMapRef}
                 poster={watchPoster}

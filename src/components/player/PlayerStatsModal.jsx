@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Activity, Copy, X, AlertTriangle, Zap } from 'lucide-react';
+import { getMediaBufferAhead } from '@/lib/hiResAudio.mjs';
+import { getHlsTrackColorInfo, isHdrLevel } from '@/lib/playerQuality.mjs';
 import { encodeVideoSlug } from '@/lib/videoUtils';
 
 export default function PlayerStatsModal({
@@ -19,6 +21,7 @@ export default function PlayerStatsModal({
   audioLayout = null,
   hiResAudio = null,
   isHiResActive = false,
+  hiResStatus = 'idle',
   hiResAudioRef = null,
   videoId = '',
   videoSlug = '',
@@ -34,12 +37,13 @@ export default function PlayerStatsModal({
     optimalRes: '0x0',
     currentRes: '0x0',
     bufferHealth: 0,
+    hiResBufferHealth: 0,
     droppedFrames: 0,
     totalFrames: 0,
     dropRate: '0.0%',
-    protocol: 'Direct MP4 Stream',
-    activeCodec: codec || 'h264',
-    colorInfo: 'bt709 / bt709 (SDR)',
+    protocol: '—',
+    activeCodec: '—',
+    colorInfo: '—',
     isHdr: false,
     isHeavyCodec: false,
     connectionSpeedKbps: 52000,
@@ -195,14 +199,9 @@ export default function PlayerStatsModal({
       const hls = hlsRef?.current;
       if (!v || !c) return;
 
-      const cur = v.currentTime || 0;
-      let bufHealth = 0;
-      for (let i = 0; i < v.buffered.length; i++) {
-        if (v.buffered.start(i) <= cur && cur <= v.buffered.end(i)) {
-          bufHealth = v.buffered.end(i) - cur;
-          break;
-        }
-      }
+      const audio = hiResAudioRef?.current;
+      const bufferHealth = getMediaBufferAhead(v, v.currentTime);
+      const hiResBufferHealth = isHiResActive ? getMediaBufferAhead(audio, v.currentTime) : 0;
 
       let dropped = 0;
       let total = 0;
@@ -214,26 +213,14 @@ export default function PlayerStatsModal({
         dropped = v.webkitDroppedFrameCount || 0;
       }
 
-      const currentLevel =
-        hls?.levels && hls.levels.length > 0
-          ? (hls.currentLevel >= 0 ? hls.levels[hls.currentLevel] : hls.levels[0])
-          : null;
-      const videoRange = String(
-        currentLevel?.attrs?.['VIDEO-RANGE'] || currentLevel?.videoRange || ''
-      ).toUpperCase();
-      const isHdrStream = videoRange === 'PQ' || videoRange === 'HLG';
-      const colorInfo =
-        videoRange === 'PQ'
-          ? 'bt2020 / smpte2084 (HDR10)'
-          : videoRange === 'HLG'
-          ? 'bt2020 / arib-std-b67 (HLG)'
-          : 'bt709 / bt709 (SDR)';
+      const isHls = src?.startsWith('blob:') || src?.includes('.m3u8') || src?.includes('playlist');
+      const currentLevel = hls?.levels?.[hls.currentLevel];
+      const colorInfo = getHlsTrackColorInfo(currentLevel);
       const levelVideoCodec = String(currentLevel?.videoCodec || '');
       const activeCodec = levelVideoCodec
         ? (levelVideoCodec.toLowerCase().startsWith('av01') ? 'av01' : levelVideoCodec.split('.')[0])
-        : (codec || 'h264');
+        : (isHls && !currentLevel ? '—' : codec || '—');
 
-      const isHls = src?.startsWith('blob:') || src?.includes('.m3u8') || src?.includes('playlist');
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
       const dropRate = total > 0 ? ((dropped / total) * 100).toFixed(1) + '%' : '0.0%';
       const isAv1or4K =
@@ -262,7 +249,7 @@ export default function PlayerStatsModal({
         streamBitrate = h >= 2160 ? 18000 : h >= 1440 ? 10000 : h >= 1080 ? 4500 : h >= 720 ? 2500 : 1200;
       }
 
-      const activeAudioEl = isHiResActive && hiResAudioRef?.current ? hiResAudioRef.current : v;
+      const activeAudioEl = isHiResActive && audio ? audio : v;
       const volPct = Math.round((activeAudioEl.muted ? 0 : activeAudioEl.volume) * 100);
 
       setStats((prev) => ({
@@ -271,14 +258,15 @@ export default function PlayerStatsModal({
         dpr: dpr.toFixed(1),
         optimalRes: `${v.videoWidth || 1920}x${v.videoHeight || 1080}`,
         currentRes: `${v.videoWidth || 1920}x${v.videoHeight || 1080}`,
-        bufferHealth: bufHealth,
+        bufferHealth,
+        hiResBufferHealth,
         droppedFrames: dropped,
         totalFrames: total,
         dropRate,
-        protocol: isHls ? 'HLS Adaptive Bitrate' : 'Direct MP4 Stream',
+        protocol: isHls ? (hls ? 'HLS Adaptive Bitrate' : 'Native HLS') : 'Direct MP4 Stream',
         activeCodec,
         colorInfo,
-        isHdr: isHdrStream,
+        isHdr: isHdrLevel(currentLevel),
         isHeavyCodec: isAv1or4K,
         connectionSpeedKbps,
         streamBitrateKbps: streamBitrate,
@@ -304,8 +292,9 @@ export default function PlayerStatsModal({
   }, [videoId, videoSlug, videoCategory]);
 
   const audioDisplay = useMemo(() => {
-    const ch = (isHiResActive ? hiResAudio?.channels : null) ?? (audioChannels != null ? Number(audioChannels) : null);
-    const layout = String((isHiResActive ? hiResAudio?.layout : null) || audioLayout || '').toLowerCase();
+    const selectedHiRes = isHiResActive ? hiResAudio : null;
+    const ch = selectedHiRes?.channels ?? (audioChannels != null ? Number(audioChannels) : null);
+    const layout = String(selectedHiRes?.layout || audioLayout || '').toLowerCase();
     const channelLabel =
       ch === 0 || layout === 'none'
         ? 'ไม่มีเสียง (Silent)'
@@ -318,13 +307,14 @@ export default function PlayerStatsModal({
         : 'Stereo (2.0)';
     const isSurround = ch >= 3 || layout.includes('5.1') || layout.includes('7.1');
 
-    if (isHiResActive && hiResAudio) {
-      const rateKhz = hiResAudio.sampleRate
-        ? (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1)
+    if (selectedHiRes) {
+      const rateKhz = selectedHiRes.sampleRate
+        ? (selectedHiRes.sampleRate / 1000).toFixed(selectedHiRes.sampleRate % 1000 === 0 ? 0 : 1)
         : '48';
-      const fmt = hiResAudio.format === 'flac' ? 'FLAC' : 'PCM WAV';
+      const format = selectedHiRes.format === 'flac' ? 'FLAC' : 'PCM WAV';
+      const status = hiResStatus === 'loading' ? ' • กำลังบัฟเฟอร์' : hiResStatus === 'error' ? ' • โหลดเสียงไม่ได้' : '';
       return {
-        text: `${fmt} ${hiResAudio.bits || 24}-bit/${rateKhz}kHz • ${channelLabel} (Lossless)`,
+        text: `${format} ${selectedHiRes.bits || 24}-bit/${rateKhz}kHz • ${channelLabel} (Lossless)${status}`,
         isSurround,
         isHiRes: true,
       };
@@ -333,9 +323,10 @@ export default function PlayerStatsModal({
     if (ch === 0 || layout === 'none') {
       return { text: channelLabel, isSurround: false, isHiRes: false };
     }
-    const suffix = hiResAudio?.url ? ` • [Hi-Res ${hiResAudio.format === 'flac' ? 'FLAC' : 'WAV'} พร้อมใช้]` : '';
+    const hiResFormat = hiResAudio?.format === 'flac' ? 'FLAC' : 'WAV';
+    const suffix = hiResAudio?.url ? ` • [Hi-Res ${hiResFormat} พร้อมใช้]` : '';
     return { text: `AAC • ${channelLabel}${suffix}`, isSurround, isHiRes: false };
-  }, [audioChannels, audioLayout, hiResAudio, isHiResActive]);
+  }, [audioChannels, audioLayout, hiResAudio, isHiResActive, hiResStatus]);
 
   if (!showStats) return null;
 
@@ -354,7 +345,8 @@ export default function PlayerStatsModal({
       `Connection Speed: ${stats.connectionSpeedKbps.toLocaleString()} Kbps`,
       `Stream Bitrate: ${stats.streamBitrateKbps.toLocaleString()} Kbps (VBR)`,
       `Network Activity: ${stats.networkActivityKB} KB`,
-      `Buffer Health: ${stats.bufferHealth.toFixed(2)} s`,
+      `Buffer Health (Video): ${stats.bufferHealth.toFixed(2)} s`,
+      ...(isHiResActive ? [`Hi-Res Buffer: ${stats.hiResBufferHealth.toFixed(2)} s`] : []),
       `Live FPS: ${isPlaying ? realtimeFps : '0.0'} / ${fps || 30} fps`,
       `Date: ${stats.date || new Date().toString()}`,
     ].join('\n');
@@ -578,7 +570,7 @@ export default function PlayerStatsModal({
         {/* Buffer Health (YouTube-Style with Countdown & Refill) */}
         <div className="flex flex-col gap-1 py-1 border-t border-white/5">
           <div className="flex justify-between items-center">
-            <span className="text-zinc-400">Buffer Health</span>
+            <span className="text-zinc-400">Buffer Health (Video)</span>
             <span
               className={`font-bold font-mono ${
                 stats.bufferHealth > 15
@@ -606,6 +598,13 @@ export default function PlayerStatsModal({
             />
           </div>
         </div>
+
+        {isHiResActive && (
+          <div className="flex justify-between items-center py-1 border-t border-white/5">
+            <span className="text-zinc-400">Hi-Res Buffer</span>
+            <span className="font-bold text-amber-300">{stats.hiResBufferHealth.toFixed(2)} s</span>
+          </div>
+        )}
 
         {/* Live Date / Timestamp */}
         <div className="flex justify-between items-center pt-1.5 text-[9.5px] text-zinc-500 border-t border-white/5 font-mono">

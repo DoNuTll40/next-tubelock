@@ -316,6 +316,8 @@ export default function PlayerSettingsModal({
 
   const hasHiResAudio = Boolean(hiResAudio?.url);
   const hiResFormatLabel = hiResAudio?.format === 'flac' ? 'FLAC' : 'WAV';
+  const hiResPlaybackStatus = hiResStatus === 'loading' ? 'กำลังบัฟเฟอร์' : hiResStatus === 'error' ? 'โหลดเสียงไม่ได้' : '';
+  const hiResQualityLabel = `Hi-Res ${hiResFormatLabel}${hiResPlaybackStatus ? ` · ${hiResPlaybackStatus}` : ''}`;
   const hiResRateKhz = hiResAudio?.sampleRate
     ? (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1)
     : '48';
@@ -531,8 +533,8 @@ export default function PlayerSettingsModal({
                         </div>
                         <div className="flex items-center gap-1.5 text-zinc-400">
                           {isHiResActive ? (
-                            <span className="inline-flex items-center gap-1 text-[12px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
-                              {hiResStatus === 'loading' ? 'กำลังโหลด...' : `Hi-Res ${hiResFormatLabel}`}
+                            <span className="text-right text-[12px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
+                              {hiResQualityLabel}
                             </span>
                           ) : (
                             <span className="text-[13px] text-zinc-300 font-medium">มาตรฐาน (AAC)</span>
@@ -880,6 +882,7 @@ export default function PlayerSettingsModal({
                   >
                     <button
                       type="button"
+                      aria-pressed={isHiResActive}
                       onClick={() => {
                         onSelectAudioMode?.('hires');
                         setShowSettingsMenu?.(false);
@@ -904,6 +907,7 @@ export default function PlayerSettingsModal({
 
                     <button
                       type="button"
+                      aria-pressed={!isHiResActive}
                       onClick={() => {
                         onSelectAudioMode?.('standard');
                         setShowSettingsMenu?.(false);
@@ -1141,8 +1145,8 @@ export default function PlayerSettingsModal({
                   </div>
                   <div className="flex items-center gap-1.5 min-w-0">
                     {isHiResActive ? (
-                      <span className="text-[11.5px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono whitespace-nowrap">
-                        {hiResStatus === 'loading' ? 'กำลังโหลด...' : `Hi-Res ${hiResFormatLabel}`}
+                      <span className="text-right text-[11.5px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
+                        {hiResQualityLabel}
                       </span>
                     ) : (
                       <span className="text-[13px] text-zinc-300 font-medium whitespace-nowrap">มาตรฐาน (AAC)</span>
@@ -1510,6 +1514,7 @@ export default function PlayerSettingsModal({
               <div className="py-1">
                 <button
                   type="button"
+                  aria-pressed={isHiResActive}
                   onClick={() => {
                     onSelectAudioMode?.('hires');
                     setShowSettingsMenu?.(false);
@@ -1534,6 +1539,7 @@ export default function PlayerSettingsModal({
 
                 <button
                   type="button"
+                  aria-pressed={!isHiResActive}
                   onClick={() => {
                     onSelectAudioMode?.('standard');
                     setShowSettingsMenu?.(false);
