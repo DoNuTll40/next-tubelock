@@ -243,6 +243,8 @@ export async function getVideoVersions(sql, videoId, { readyOnly = false } = {})
             master_playlist_path, storyboard_vtt_path, raw_file_name,
             duration, file_size_bytes, resolution, fps, codec, bitrate, thumbnail_url,
             status, transcode_progress, stage_detail, error_message,
+            to_jsonb(video_versions)->'ready_qualities' AS ready_qualities,
+            (to_jsonb(video_versions)->>'audio_channels')::int AS audio_channels,
             subtitle_tracks_override, created_at, updated_at
           FROM video_versions
           WHERE video_id = ${vidNum}
@@ -256,6 +258,8 @@ export async function getVideoVersions(sql, videoId, { readyOnly = false } = {})
             master_playlist_path, storyboard_vtt_path, raw_file_name,
             duration, file_size_bytes, resolution, fps, codec, bitrate, thumbnail_url,
             status, transcode_progress, stage_detail, error_message,
+            to_jsonb(video_versions)->'ready_qualities' AS ready_qualities,
+            (to_jsonb(video_versions)->>'audio_channels')::int AS audio_channels,
             subtitle_tracks_override, created_at, updated_at
           FROM video_versions
           WHERE video_id = ${vidNum}
@@ -273,6 +277,8 @@ export function formatVersionSummary(row) {
   const subOverride = Array.isArray(row.subtitle_tracks_override)
     ? row.subtitle_tracks_override
     : null;
+  const readyQualities = Array.isArray(row.ready_qualities) ? row.ready_qualities : null;
+  const audioChannels = row.audio_channels != null ? Number(row.audio_channels) : null;
   return {
     id: row.id,
     videoId: row.video_id,
@@ -293,6 +299,10 @@ export function formatVersionSummary(row) {
     fps: Number(row.fps) || 0,
     codec: row.codec || 'h264',
     bitrate: Number(row.bitrate) || 0,
+    audioChannels,
+    audio_channels: audioChannels,
+    readyQualities,
+    ready_qualities: readyQualities,
     thumbnailUrl: row.thumbnail_url || '',
     status: row.status || 'READY',
     transcodeProgress: Number(row.transcode_progress) || 0,

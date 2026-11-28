@@ -17,7 +17,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { neon } from '@neondatabase/serverless';
-import { buildDolbyVisionHlsArgs, getDolbyVisionSource, validateDolbyVisionHls } from './dolby-vision.mjs';
+import { buildDolbyVisionHlsArgs, formatHevcCodec, getDolbyVisionSource, readHevcConfiguration, validateDolbyVisionHls } from './dolby-vision.mjs';
 import {
     ensureWorkerLogsColumn,
     createWorkerLogger,
@@ -657,6 +657,7 @@ function normalizeQualitiesList(rawList) {
             hdr_type: item.hdr_type || null,
             ...(item.hdr_codec ? { hdr_codec: item.hdr_codec } : {}),
             ...(item.dolby_vision ? { dolby_vision: item.dolby_vision } : {}),
+            ...(item.atmos_audio ? { atmos_audio: item.atmos_audio } : {}),
             audio_channels: item.audio_channels != null ? Number(item.audio_channels) : null,
             audio_layout: item.audio_layout || null,
             hires_audio: item.hires_audio && typeof item.hires_audio === 'object' ? item.hires_audio : null,
@@ -690,6 +691,7 @@ async function registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOut
         hdr_type: q.hdr_type || null,
         ...(q.hdr_codec ? { hdr_codec: q.hdr_codec } : {}),
         ...(q.dolby_vision ? { dolby_vision: q.dolby_vision } : {}),
+        ...(q.atmos_audio ? { atmos_audio: q.atmos_audio } : {}),
         audio_channels: q.audio_channels != null ? Number(q.audio_channels) : null,
         audio_layout: q.audio_layout || null,
         ...(q.hires_audio ? { hires_audio: q.hires_audio } : {}),
@@ -1359,6 +1361,7 @@ function parseProbeMeta(probeData) {
     const streams = probeData.streams || [];
     const vStream = streams.find((s) => s.codec_type === 'video') || streams[0] || {};
     const aStream = streams.find((s) => s.codec_type === 'audio') || null;
+    const dolbyVision = getDolbyVisionSource(vStream);
     const srcWidth = Number(vStream.width) || 1920;
     const srcHeight = Number(vStream.height) || 1080;
     const hasDimensions = Number(vStream.width) > 0 && Number(vStream.height) > 0;
@@ -1419,7 +1422,9 @@ function parseProbeMeta(probeData) {
         colorTransfer,
         colorPrimaries,
         isHdr,
-        dolbyVision: getDolbyVisionSource(vStream),
+        dolbyVision,
+        hasAtmos: vStream.codec_name === 'hevc' && !dolbyVision
+            && aStream?.codec_name === 'eac3' && aStream.profile === 'Dolby Digital Plus + Dolby Atmos',
         hdrType,
         hdrColorTrc,
         ...hdr10Meta,
@@ -1492,8 +1497,14 @@ function buildMasterM3U8(qualities) {
         );
     }
     const hasAudioTrack = !audioSample || audioSample.audio_channels > 0;
+    const atmos = sorted.find((q) => q.atmos_audio)?.atmos_audio;
+    if (atmos) {
+        lines.push(`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="tubelock-atmos",NAME="Dolby Atmos",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="${atmos.complexity}/JOC"`);
+    }
     for (const q of sorted) {
-        if (q.dolby_vision) {
+        if (q.atmos_audio) {
+            lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},RESOLUTION=${q.width}x${q.height},FRAME-RATE=${q.atmos_audio.fps.toFixed(3)},CODECS="${q.atmos_audio.videoCodec},ec-3",VIDEO-RANGE=${q.hdr_type || 'SDR'},AUDIO="tubelock-atmos"`);
+        } else if (q.dolby_vision) {
             const { codecs, supplementalCodecs, videoRange, averageBandwidth, fps } = q.dolby_vision;
             lines.push(
                 `#EXT-X-STREAM-INF:BANDWIDTH=${q.bitrate},AVERAGE-BANDWIDTH=${averageBandwidth},RESOLUTION=${q.width}x${q.height},FRAME-RATE=${fps.toFixed(3)},CODECS="${codecs}",SUPPLEMENTAL-CODECS="${supplementalCodecs}",VIDEO-RANGE=${videoRange}`
@@ -1811,7 +1822,69 @@ async function publishDolbyVisionRendition({ driveId, streamFolderId, hlsOutputD
     });
 }
 
-/** Lane 1 publishes the SD ladder, Hi-Res audio, and the verified Dolby Vision source rendition. */
+async function publishAtmosAudio({ driveId, streamFolderId, hlsOutputDir, rawFilePath, meta }) {
+    if (!meta.hasAtmos) return;
+    const name = `${meta.srcHeight}p_atmos`;
+    const playlist = `${name}.m3u8`;
+    await updateLaneProgress({
+        lane: 'fast_sd',
+        lanePct: 98,
+        status: 'READY',
+        stageDetail: `กำลังเตรียม Dolby Atmos ที่ความละเอียดต้นฉบับ ${meta.srcWidth}×${meta.srcHeight}`,
+    });
+    await runFFmpeg([
+        '-y', '-i', rawFilePath, '-map', '0:v:0', '-map', '0:a:0', '-c', 'copy', '-tag:v', 'hvc1',
+        '-f', 'hls', '-hls_time', '4', '-hls_playlist_type', 'vod',
+        '-hls_flags', 'independent_segments', '-hls_segment_type', 'fmp4', '-hls_fmp4_init_filename', 'init_atmos.mp4',
+        '-hls_segment_filename', 'atmos_%03d.m4s', playlist,
+    ], null, 'Dolby Atmos', meta.duration, { cwd: hlsOutputDir });
+    const init = await fs.promises.readFile(path.join(hlsOutputDir, 'init_atmos.mp4'));
+    const videoCodec = formatHevcCodec(readHevcConfiguration(init));
+    const box = init.indexOf('dec3', 4);
+    if (box < 0 || box + 6 > init.length) throw new Error('Missing Dolby Digital Plus configuration');
+    const boxStart = box - 4;
+    const boxSize = init.readUInt32BE(boxStart);
+    const end = boxStart + boxSize;
+    if (boxSize < 10 || end > init.length) throw new Error('Invalid Dolby Digital Plus configuration box');
+    let offset = box + 6;
+    const independentStreams = (init[box + 5] & 7) + 1;
+    for (let index = 0; index < independentStreams; index++) {
+        if (offset + 3 > end) throw new Error('Truncated Dolby Digital Plus substream configuration');
+        offset += init[offset + 2] & 0x1e ? 4 : 3;
+    }
+    const complexity = offset + 2 <= end ? init[offset + 1] : 0;
+    if (offset + 2 > end || !(init[offset] & 1) || !complexity) {
+        throw new Error('Packaged audio is missing Dolby Atmos JOC configuration');
+    }
+    const manifest = await fs.promises.readFile(path.join(hlsOutputDir, playlist), 'utf8');
+    const segments = [...manifest.matchAll(/^#EXTINF:([\d.]+),\r?\n(atmos_\d+\.m4s)\r?$/gm)];
+    if (!segments.length || !manifest.includes('#EXT-X-ENDLIST')) throw new Error('Incomplete Atmos playlist');
+    let bandwidth = 0;
+    for (const [, duration, name] of segments) {
+        const { size } = await fs.promises.stat(path.join(hlsOutputDir, name));
+        if (!size || !(Number(duration) > 0)) throw new Error('Invalid Atmos segment');
+        bandwidth = Math.max(bandwidth, Math.ceil(size * 8 / Number(duration)));
+    }
+    await uploadBatchFilesAndCleanup(driveId, streamFolderId, hlsOutputDir,
+        ['init_atmos.mp4', ...segments.map((segment) => segment[2]), playlist], true, 'Dolby Atmos');
+    await registerQualitiesAndPublishMaster(driveId, streamFolderId, hlsOutputDir, [
+        {
+            name, width: meta.srcWidth, height: meta.srcHeight, bitrate: bandwidth, is_fmp4: true,
+            is_hdr: meta.isHdr, hdr_type: meta.hdrType, audio_channels: meta.audioChannels, audio_layout: meta.audioLayout,
+            atmos_audio: { complexity, fps: meta.fps, videoCodec },
+        },
+    ]);
+    await logger.log('Dolby Atmos พร้อมรับชมบนอุปกรณ์ที่รองรับ', { level: 'success' });
+    await updateLaneProgress({
+        lane: 'fast_sd',
+        lanePct: 100,
+        status: 'READY',
+        stageDetail: `Dolby Atmos ${meta.srcHeight}p พร้อมรับชม`,
+        invalidateCache: true,
+    });
+}
+
+/** Lane 1 publishes SD video and optional source audio and video renditions. */
 async function runLaneFastSd({
     driveId,
     streamFolderId,
@@ -1839,9 +1912,11 @@ async function runLaneFastSd({
     } = meta;
     const audioArgs = buildAudioEncodeArgs(meta);
     const hasDolbyVision = Boolean(meta.dolbyVision?.supported);
-    const afterAudio = hasDolbyVision ? 'กำลังเตรียม Dolby Vision' : 'Lane 1 เสร็จสมบูรณ์';
+    const hasAtmos = Boolean(meta.hasAtmos);
+    const hasSourceRendition = hasDolbyVision || hasAtmos;
+    const afterAudio = hasDolbyVision ? 'กำลังเตรียม Dolby Vision' : hasAtmos ? 'กำลังเตรียม Dolby Atmos' : 'Lane 1 เสร็จสมบูรณ์';
     const afterSd = meta.hiResEligible ? `กำลังสกัดเสียง Hi-Res Lossless (${meta.hiResFormat?.toUpperCase()})` : afterAudio;
-    const sdProgress = meta.hiResEligible || hasDolbyVision ? 96 : 100;
+    const sdProgress = meta.hiResEligible || hasSourceRendition ? 96 : 100;
     if (meta.dolbyVision && !hasDolbyVision) {
         await logger.log(`พบ Dolby Vision Profile ${meta.dolbyVision.profile} (compatibility ID ${meta.dolbyVision.compatibilityId}) ข้ามแทร็ก Dolby Vision เนื่องจากต้องใช้ HEVC Profile 8.1 (PQ) หรือ 8.4 (HLG) แบบชั้นเดียวที่มี RPU`, { level: 'warn' });
     }
@@ -2242,7 +2317,7 @@ async function runLaneFastSd({
             invalidateCache: true,
         });
         await logger.log(`✅ อัปโหลด 360p สำเร็จ (พร้อมแล้ว: ${readyNames})`, { level: 'success' });
-    } else if (!meta.hiResEligible && !hasDolbyVision) {
+    } else if (!meta.hiResEligible && !hasSourceRendition) {
         await updateLaneProgress({
             lane: 'fast_sd',
             lanePct: 100,
@@ -2278,7 +2353,7 @@ async function runLaneFastSd({
             const readyNames = mergedWithHiRes.map((q) => q.name).join(', ');
             await updateLaneProgress({
                 lane: 'fast_sd',
-                lanePct: hasDolbyVision ? 97 : 100,
+                lanePct: hasSourceRendition ? 97 : 100,
                 status: 'READY',
                 stageDetail: `⚡ พร้อมรับชม (${readyNames}) + 🎧 Hi-Res ${hiResInfo.format.toUpperCase()} • ${afterAudio}`,
                 invalidateCache: true,
@@ -2286,13 +2361,14 @@ async function runLaneFastSd({
         } else {
             await updateLaneProgress({
                 lane: 'fast_sd',
-                lanePct: hasDolbyVision ? 97 : 100,
+                lanePct: hasSourceRendition ? 97 : 100,
                 status: 'READY',
                 stageDetail: `⚡ พร้อมรับชม • ${afterAudio}`,
             });
         }
     }
     await publishDolbyVisionRendition({ driveId, streamFolderId, hlsOutputDir, rawFilePath, meta });
+    await publishAtmosAudio({ driveId, streamFolderId, hlsOutputDir, rawFilePath, meta });
 }
 
 /**

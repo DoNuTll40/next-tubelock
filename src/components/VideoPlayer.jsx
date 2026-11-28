@@ -137,6 +137,8 @@ export default function VideoPlayer({
   const containerRef = useRef(null);
   const seekTrackRef = useRef(null);
   const hlsInstanceRef = useRef(null);
+  const [atmosAvailable, setAtmosAvailable] = useState(false);
+  const [atmosRequest, setAtmosRequest] = useState(null);
   const hlsRetryCountRef = useRef(0);
   const recoverHdrPlaybackRef = useRef(null);
   const isTransitioningStreamRef = useRef(false);
@@ -1196,6 +1198,7 @@ export default function VideoPlayer({
     isPlaying,
     onHdrStateChange,
     onRefreshStream,
+    restoreAudioAfterTransition,
     targetInitialTime,
     updateRatio,
   }));
@@ -1204,7 +1207,9 @@ export default function VideoPlayer({
   useEffect(() => {
     const v = video.current;
     if (!v || !src || isSwitchingVideo) return;
-    const { targetInitialTime, onHdrStateChange: resetHdrState } = getPlaybackOptions();
+    const { targetInitialTime: initialTime, onHdrStateChange: resetHdrState } = getPlaybackOptions();
+    const audioSwitch = atmosRequest?.src === src ? atmosRequest : null;
+    const targetInitialTime = audioSwitch?.time ?? initialTime;
 
     isTransitioningStreamRef.current = true;
     try {
@@ -1215,13 +1220,14 @@ export default function VideoPlayer({
     setHlsError(null);
     setIsBuffering(true);
     setLevels([]);
+    setAtmosAvailable(false);
     setCurrentLevelIndex(-1);
     setIsCurrentLevelHdr(false);
     resetHdrState?.(false);
     setActiveLevelLabel(formatResolutionBadge(resolutionRef.current) || 'Auto');
     hlsRetryCountRef.current = 0;
 
-    isUserPausedRef.current = false;
+    isUserPausedRef.current = audioSwitch?.paused ?? false;
     if (hlsInstanceRef.current) {
       try { hlsInstanceRef.current.stopLoad(); } catch (_) { }
       hlsInstanceRef.current.destroy();
@@ -1279,6 +1285,7 @@ export default function VideoPlayer({
           const supportsDolbyVision = (codec) => Boolean(
             displaySupportsHdr && mediaSource?.isTypeSupported(`video/mp4;codecs=${codec}`)
           );
+          let resumeAfterAudioSwitch = Boolean(audioSwitch && !audioSwitch.paused);
           const hls = new Hls({
             fLoader: SegmentHydrationLoader,
             bufferController: getDolbyVisionBufferController(Hls, supportsDolbyVision),
@@ -1350,6 +1357,7 @@ export default function VideoPlayer({
           let resettingToSdr = false;
           let resumeAfterHdrFallback = false;
           const recoverHdrPlayback = (reportedLevel) => {
+            if (audioSwitch?.enabled) return false;
             if (resettingToSdr) return true;
             if (!isMounted || hdrFallbackUsed || hlsInstanceRef.current !== hls) return false;
 
@@ -1415,6 +1423,20 @@ export default function VideoPlayer({
             lastReportedSecondRef.current = Math.floor(startSec);
             initialSeekDoneRef.current = true;
             if (hls.levels.length > 0) {
+              const atmosLevel = hls.levels.find((level) =>
+                level.attrs?.AUDIO === 'tubelock-atmos' &&
+                mediaSource?.isTypeSupported(`video/mp4;codecs="${level.videoCodec},ec-3"`)
+              );
+              setAtmosAvailable(Boolean(atmosLevel));
+              if (audioSwitch?.enabled && !atmosLevel) {
+                setHlsError('เบราว์เซอร์นี้เปิดสตรีม Dolby Atmos ไม่ได้');
+                setIsBuffering(false);
+                return;
+              }
+              for (let index = hls.levels.length - 1; index >= 0; index--) {
+                const isAtmos = hls.levels[index].attrs?.AUDIO === 'tubelock-atmos';
+                if (isAtmos !== Boolean(audioSwitch?.enabled)) hls.removeLevel(index);
+              }
               const available = new Set(filterDolbyVisionPlaybackLevels(hls.levels, supportsDolbyVision));
               for (let index = hls.levels.length - 1; index >= 0; index--) {
                 if (!available.has(hls.levels[index])) hls.removeLevel(index);
@@ -1518,8 +1540,16 @@ export default function VideoPlayer({
           });
 
           hls.on(Hls.Events.FRAG_BUFFERED, (event, data) => {
-            const { attemptAutoPlay, checkAndUpdateRatio } = getPlaybackOptions();
+            const { attemptAutoPlay, checkAndUpdateRatio, restoreAudioAfterTransition } = getPlaybackOptions();
             checkAndUpdateRatio();
+            if (resumeAfterAudioSwitch && data.frag?.type === 'main') {
+              resumeAfterAudioSwitch = false;
+              if (!shouldAutoplay && isActiveRef.current && !isUserPausedRef.current) {
+                restoreAudioAfterTransition();
+                if (hiResPlaybackRef.current) hiResPlaybackRef.current.play();
+                else v.play().catch(() => {});
+              }
+            }
             if (resumeAfterHdrFallback && data.frag?.type === 'main') {
               resumeAfterHdrFallback = false;
               if (!shouldAutoplay && isActiveRef.current && !isUserPausedRef.current) {
@@ -1623,7 +1653,7 @@ export default function VideoPlayer({
         hlsInstanceRef.current = null;
       }
     };
-  }, [src, shouldAutoplay, video, showToast, isSwitchingVideo]);
+  }, [src, shouldAutoplay, video, showToast, isSwitchingVideo, atmosRequest]);
 
   // Quality selector (100% Smooth switch: nextLevel only, no stream reload)
   const handleSelectQuality = (levelIdx) => {
@@ -1779,6 +1809,19 @@ export default function VideoPlayer({
   }, [audioControlsRef, toggleMute]);
 
   const handleSelectAudioMode = useCallback((mode) => {
+    const atmosSelected = atmosRequest?.src === src && atmosRequest.enabled;
+    if (mode === 'atmos' && !atmosAvailable) return;
+    if ((mode === 'atmos') !== Boolean(atmosSelected) && video.current) {
+      const shouldStayPaused = hiResPlaybackRef.current
+        ? !hiResPlaybackRef.current.isPlayRequested()
+        : (video.current.paused && (isUserPausedRef.current || (!hlsError && !isBuffering && !isTransitioningStreamRef.current)));
+      setAtmosRequest({
+        src,
+        enabled: mode === 'atmos',
+        time: video.current.currentTime,
+        paused: shouldStayPaused,
+      });
+    }
     const nextPrefer = mode === 'hires';
     if (nextPrefer && hiResAudio?.url) {
       isHiResSelectedRef.current = true;
@@ -1798,11 +1841,13 @@ export default function VideoPlayer({
       const rateKhz = (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1);
       const fmtLabel = hiResAudio.format === 'flac' ? 'FLAC' : 'PCM WAV';
       showToast(`🎧 กำลังเตรียมเสียง Hi-Res Lossless (${hiResAudio.bits}-bit / ${rateKhz} kHz ${fmtLabel})`);
-    } else {
+    } else if (mode !== 'atmos') {
       showToast('สลับเป็นเสียงมาตรฐาน (AAC)');
+    } else {
+      showToast('กำลังเปิดแทร็ก Dolby Atmos');
     }
     resetControlsTimer();
-  }, [hiResAudio, hiResStatus, showToast, resetControlsTimer, video]);
+  }, [atmosAvailable, atmosRequest, hiResAudio, hiResStatus, hlsError, isBuffering, showToast, resetControlsTimer, src, video]);
 
   useLayoutEffect(() => {
     const v = video.current;
@@ -3777,6 +3822,8 @@ export default function VideoPlayer({
           isHiResActive={isHiResActive}
           hiResStatus={hiResStatus}
           onSelectAudioMode={handleSelectAudioMode}
+          atmosAvailable={atmosAvailable}
+          isAtmosSelected={atmosRequest?.src === src && atmosRequest.enabled}
           audioChannels={audioChannels}
           audioLayout={audioLayout}
         />

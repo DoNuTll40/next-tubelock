@@ -11,6 +11,7 @@ import { usePosterPreference } from '@/lib/usePosterPreference';
 import DescriptionGallery from './DescriptionGallery';
 import DescriptionLinkChip, { parseDescriptionLink } from './DescriptionLinkChip';
 import { DescriptionHashtag, DescriptionTimestamp } from './DescriptionInlineTokens';
+import { WatchContentAdvisory, WatchHeaderBadges } from './WatchMediaBadges';
 import styles from './RichDescription.module.css';
 
 /**
@@ -88,6 +89,8 @@ function parseDescriptionTokens(text = '', onSeek) {
 
 function DescriptionBox({
   video,
+  activeVersion = null,
+  streamMeta = null,
   viewsDisplay = '0 ครั้ง',
   fileSizeMB = '0',
   formatDuration,
@@ -160,9 +163,12 @@ function DescriptionBox({
           </>
         )}
         <span className="text-[#8C857B] dark:text-[#AAAAAA]">•</span>
-        <span className="bg-[#FF7A00]/10 text-[#FF7A00] px-2 py-0.5 rounded-md text-[11px] font-bold">
-          {resBadge || 'HD'}
-        </span>
+        <WatchHeaderBadges
+          video={video}
+          activeVersion={activeVersion}
+          streamMeta={streamMeta}
+          fallbackResBadge={resBadge}
+        />
 
         <span className="text-[#606060] dark:text-[#888888] font-normal text-[11px] ml-auto">
           {typeof formatDuration === 'function' && video?.duration
@@ -219,6 +225,8 @@ function DescriptionBox({
           onClick={(e) => e.stopPropagation()}
           className="mt-3.5 pt-3 border-t border-black/5 dark:border-white/10 flex flex-col gap-2.5 text-xs text-[#606060] dark:text-[#AAAAAA] select-text"
         >
+          <WatchContentAdvisory video={video} />
+
           {/* Technical Specs Pills */}
           <div className="flex flex-wrap items-center gap-2 select-none">
             <span className="inline-flex items-center gap-1 bg-white/80 dark:bg-white/10 border border-black/5 dark:border-white/10 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[#212529] dark:text-[#F1F1F1]">

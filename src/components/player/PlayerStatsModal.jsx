@@ -44,6 +44,7 @@ export default function PlayerStatsModal({
     protocol: '—',
     activeCodec: '—',
     colorInfo: '—',
+    isAtmosTrack: false,
     isHdr: false,
     isHeavyCodec: false,
     connectionSpeedKbps: 52000,
@@ -216,6 +217,7 @@ export default function PlayerStatsModal({
       const isHls = src?.startsWith('blob:') || src?.includes('.m3u8') || src?.includes('playlist');
       const currentLevel = hls?.levels?.[hls.currentLevel];
       const colorInfo = getHlsTrackColorInfo(currentLevel);
+      const isAtmosTrack = currentLevel?.attrs?.AUDIO === 'tubelock-atmos';
       const levelVideoCodec = String(currentLevel?.videoCodec || '');
       const activeCodec = levelVideoCodec
         ? (levelVideoCodec.toLowerCase().startsWith('av01') ? 'av01' : levelVideoCodec.split('.')[0])
@@ -266,6 +268,7 @@ export default function PlayerStatsModal({
         protocol: isHls ? (hls ? 'HLS Adaptive Bitrate' : 'Native HLS') : 'Direct MP4 Stream',
         activeCodec,
         colorInfo,
+        isAtmosTrack,
         isHdr: isHdrLevel(currentLevel),
         isHeavyCodec: isAv1or4K,
         connectionSpeedKbps,
@@ -292,6 +295,9 @@ export default function PlayerStatsModal({
   }, [videoId, videoSlug, videoCategory]);
 
   const audioDisplay = useMemo(() => {
+    if (stats.isAtmosTrack && !isHiResActive) {
+      return { text: 'Dolby Digital Plus • แทร็ก Dolby Atmos (JOC)', isSurround: true, isHiRes: false };
+    }
     const selectedHiRes = isHiResActive ? hiResAudio : null;
     const ch = selectedHiRes?.channels ?? (audioChannels != null ? Number(audioChannels) : null);
     const layout = String(selectedHiRes?.layout || audioLayout || '').toLowerCase();
@@ -326,7 +332,7 @@ export default function PlayerStatsModal({
     const hiResFormat = hiResAudio?.format === 'flac' ? 'FLAC' : 'WAV';
     const suffix = hiResAudio?.url ? ` • [Hi-Res ${hiResFormat} พร้อมใช้]` : '';
     return { text: `AAC • ${channelLabel}${suffix}`, isSurround, isHiRes: false };
-  }, [audioChannels, audioLayout, hiResAudio, isHiResActive, hiResStatus]);
+  }, [audioChannels, audioLayout, hiResAudio, isHiResActive, hiResStatus, stats.isAtmosTrack]);
 
   if (!showStats) return null;
 

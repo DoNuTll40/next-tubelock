@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { getVisibleQualityLevels, supportsHdrDisplay } from '@/lib/playerQuality.mjs';
+import { getAudioQualityMenuState, getVisibleQualityLevels, supportsHdrDisplay } from '@/lib/playerQuality.mjs';
 import {
   animate, AnimatePresence, motion, useDragControls, useMotionValue, useReducedMotion, useTransform,
 } from 'framer-motion';
@@ -132,6 +132,8 @@ export default function PlayerSettingsModal({
   hiResAudio = null,
   isHiResActive = false,
   hiResStatus = 'idle',
+  atmosAvailable = false,
+  isAtmosSelected = false,
   onSelectAudioMode = null,
   audioChannels = null,
   audioLayout = null,
@@ -318,6 +320,53 @@ export default function PlayerSettingsModal({
   const hiResFormatLabel = hiResAudio?.format === 'flac' ? 'FLAC' : 'WAV';
   const hiResPlaybackStatus = hiResStatus === 'loading' ? 'กำลังบัฟเฟอร์' : hiResStatus === 'error' ? 'โหลดเสียงไม่ได้' : '';
   const hiResQualityLabel = `Hi-Res ${hiResFormatLabel}${hiResPlaybackStatus ? ` · ${hiResPlaybackStatus}` : ''}`;
+  const {
+    hasAudioOptions,
+    showAtmosOption,
+    standardSelected,
+    isSpecialAudioSelected,
+    summaryBadge,
+  } = getAudioQualityMenuState({
+    hasHiResAudio,
+    isHiResActive,
+    hiResQualityLabel,
+    atmosAvailable,
+    isAtmosSelected,
+  });
+  const renderAtmosOption = (mobile) => {
+    if (!showAtmosOption) return null;
+    const canSelectAtmos = atmosAvailable;
+    return (
+      <button
+        type="button"
+        aria-pressed={isAtmosSelected}
+        disabled={!canSelectAtmos}
+        onClick={() => {
+          if (!canSelectAtmos) return;
+          onSelectAudioMode?.('atmos');
+          setShowSettingsMenu?.(false);
+        }}
+        className={`w-full flex items-center justify-between gap-3 text-left transition ${
+          mobile ? 'px-5 py-3.5' : 'px-4.5 py-2.5'
+        } ${canSelectAtmos ? 'hover:bg-white/10 active:bg-white/15 cursor-pointer' : 'opacity-65 cursor-not-allowed'}`}
+      >
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`${mobile ? 'text-[14px]' : 'text-[13.5px]'} ${isAtmosSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+              Dolby Atmos
+            </span>
+            <span className={`${mobile ? 'text-[10px]' : 'text-[9.5px]'} font-extrabold uppercase tracking-wider px-1.5 py-0.5 rounded bg-[#FF7A00]/20 text-[#FF7A00] border border-[#FF7A00]/40 font-mono`}>
+              DD+
+            </span>
+          </div>
+          <span className={`${mobile ? 'text-[11.5px]' : 'text-[11px]'} text-zinc-400 mt-0.5`}>
+            Dolby Digital Plus (JOC) • ความละเอียดต้นฉบับ{!atmosAvailable && isAtmosSelected ? ' • เล่นไม่ได้บนอุปกรณ์นี้' : ''}
+          </span>
+        </div>
+        {isAtmosSelected && <Check className={`${mobile ? 'w-5 h-5' : 'w-4.5 h-4.5'} text-[#FF7A00] shrink-0`} />}
+      </button>
+    );
+  };
   const hiResRateKhz = hiResAudio?.sampleRate
     ? (hiResAudio.sampleRate / 1000).toFixed(hiResAudio.sampleRate % 1000 === 0 ? 0 : 1)
     : '48';
@@ -521,20 +570,20 @@ export default function PlayerSettingsModal({
                     </button>
 
                     {/* Audio Quality (Hi-Res Lossless WAV / FLAC Switcher — Mobile) */}
-                    {hasHiResAudio && (
+                    {hasAudioOptions && (
                       <button
                         type="button"
                         onClick={() => setActiveMenuTab?.('audio')}
                         className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/10 active:bg-white/15 transition border-t border-white/5 cursor-pointer"
                       >
                         <div className="flex items-center gap-3.5">
-                          <Headphones className={`w-5 h-5 shrink-0 ${isHiResActive ? 'text-amber-400' : 'text-zinc-300'}`} />
+                          <Headphones className={`w-5 h-5 shrink-0 ${isSpecialAudioSelected ? 'text-amber-400' : 'text-zinc-300'}`} />
                           <span className="text-[14px] text-zinc-200 font-medium">คุณภาพเสียง</span>
                         </div>
                         <div className="flex items-center gap-1.5 text-zinc-400">
-                          {isHiResActive ? (
+                          {summaryBadge ? (
                             <span className="text-right text-[12px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
-                              {hiResQualityLabel}
+                              {summaryBadge}
                             </span>
                           ) : (
                             <span className="text-[13px] text-zinc-300 font-medium">มาตรฐาน (AAC)</span>
@@ -874,20 +923,21 @@ export default function PlayerSettingsModal({
                 )}
 
                 {/* Tab: Audio Quality Submenu (Mobile) */}
-                {activeMenuTab === 'audio' && hasHiResAudio && (
+                {activeMenuTab === 'audio' && hasAudioOptions && (
                   <motion.div
                     key="audio"
                     {...panelMotionProps}
                     className="flex flex-col py-1"
                   >
-                    <button
+                    {renderAtmosOption(true)}
+                    {hasHiResAudio && <button
                       type="button"
                       aria-pressed={isHiResActive}
                       onClick={() => {
                         onSelectAudioMode?.('hires');
                         setShowSettingsMenu?.(false);
                       }}
-                      className="w-full flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer"
+                      className={`w-full flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer${showAtmosOption ? ' border-t border-white/5' : ''}`}
                     >
                       <div className="flex flex-col min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -903,11 +953,11 @@ export default function PlayerSettingsModal({
                         </span>
                       </div>
                       {isHiResActive && <Check className="w-5 h-5 text-amber-400 shrink-0" />}
-                    </button>
+                    </button>}
 
                     <button
                       type="button"
-                      aria-pressed={!isHiResActive}
+                      aria-pressed={standardSelected}
                       onClick={() => {
                         onSelectAudioMode?.('standard');
                         setShowSettingsMenu?.(false);
@@ -915,14 +965,14 @@ export default function PlayerSettingsModal({
                       className="w-full flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-white/10 active:bg-white/15 text-left transition cursor-pointer border-t border-white/5"
                     >
                       <div className="flex flex-col min-w-0">
-                        <span className={`text-[14px] ${!isHiResActive ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                        <span className={`text-[14px] ${standardSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
                           มาตรฐาน (AAC)
                         </span>
                         <span className="text-[11.5px] text-zinc-400 mt-0.5">
                           48 kHz • {channelShortLabel} • โหลดไวและประหยัดเน็ต
                         </span>
                       </div>
-                      {!isHiResActive && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
+                      {standardSelected && <Check className="w-5 h-5 text-[#FF7A00] shrink-0" />}
                     </button>
                   </motion.div>
                 )}
@@ -1133,20 +1183,20 @@ export default function PlayerSettingsModal({
               </button>
 
               {/* Audio Quality Item (Hi-Res Lossless WAV / FLAC — Desktop) */}
-              {hasHiResAudio && (
+              {hasAudioOptions && (
                 <button
                   type="button"
                   onClick={() => setActiveMenuTab?.('audio')}
                   className="w-full flex items-center justify-between gap-4 px-5 py-3.5 hover:bg-white/10 transition border-t border-white/5 cursor-pointer group"
                 >
                   <div className="flex items-center gap-3.5 shrink-0">
-                    <Headphones className={`w-4.5 h-4.5 transition shrink-0 ${isHiResActive ? 'text-amber-400' : 'text-zinc-400 group-hover:text-zinc-200'}`} />
+                    <Headphones className={`w-4.5 h-4.5 transition shrink-0 ${isSpecialAudioSelected ? 'text-amber-400' : 'text-zinc-400 group-hover:text-zinc-200'}`} />
                     <span className="text-[13.5px] text-zinc-200 font-medium whitespace-nowrap">คุณภาพเสียง</span>
                   </div>
                   <div className="flex items-center gap-1.5 min-w-0">
-                    {isHiResActive ? (
+                    {summaryBadge ? (
                       <span className="text-right text-[11.5px] font-bold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40 font-mono">
-                        {hiResQualityLabel}
+                        {summaryBadge}
                       </span>
                     ) : (
                       <span className="text-[13px] text-zinc-300 font-medium whitespace-nowrap">มาตรฐาน (AAC)</span>
@@ -1497,7 +1547,7 @@ export default function PlayerSettingsModal({
           )}
 
           {/* Tab: Audio Quality Submenu (Desktop) */}
-          {activeMenuTab === 'audio' && hasHiResAudio && (
+          {activeMenuTab === 'audio' && hasAudioOptions && (
             <motion.div key="audio" {...panelMotionProps} className="flex flex-col w-full">
               <div className="px-2 py-1.5 border-b border-white/10">
                 <button
@@ -1512,14 +1562,15 @@ export default function PlayerSettingsModal({
                 </button>
               </div>
               <div className="py-1">
-                <button
+                {renderAtmosOption(false)}
+                {hasHiResAudio && <button
                   type="button"
                   aria-pressed={isHiResActive}
                   onClick={() => {
                     onSelectAudioMode?.('hires');
                     setShowSettingsMenu?.(false);
                   }}
-                  className="w-full flex items-center justify-between gap-3 px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer"
+                  className={`w-full flex items-center justify-between gap-3 px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer${showAtmosOption ? ' border-t border-white/5' : ''}`}
                 >
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -1535,11 +1586,11 @@ export default function PlayerSettingsModal({
                     </span>
                   </div>
                   {isHiResActive && <Check className="w-4.5 h-4.5 text-amber-400 shrink-0" />}
-                </button>
+                </button>}
 
                 <button
                   type="button"
-                  aria-pressed={!isHiResActive}
+                  aria-pressed={standardSelected}
                   onClick={() => {
                     onSelectAudioMode?.('standard');
                     setShowSettingsMenu?.(false);
@@ -1547,14 +1598,14 @@ export default function PlayerSettingsModal({
                   className="w-full flex items-center justify-between gap-3 px-4.5 py-2.5 hover:bg-white/10 text-left transition cursor-pointer border-t border-white/5"
                 >
                   <div className="flex flex-col min-w-0">
-                    <span className={`text-[13.5px] ${!isHiResActive ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
+                    <span className={`text-[13.5px] ${standardSelected ? 'text-[#FF7A00] font-bold' : 'text-zinc-200 font-medium'}`}>
                       มาตรฐาน (AAC)
                     </span>
                     <span className="text-[11px] text-zinc-400 mt-0.5">
                       48 kHz • {channelShortLabel} • โหลดไวและประหยัดเน็ต
                     </span>
                   </div>
-                  {!isHiResActive && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
+                  {standardSelected && <Check className="w-4.5 h-4.5 text-[#FF7A00] shrink-0" />}
                 </button>
               </div>
             </motion.div>

@@ -78,7 +78,7 @@ function findMp4Box(bytes, parent, type) {
     return [...mp4Boxes(bytes, parent.start, parent.end)].find((box) => box.type === type);
 }
 
-function readHevcConfiguration(bytes) {
+export function readHevcConfiguration(bytes) {
     const movie = findMp4Box(bytes, { start: 0, end: bytes.length }, 'moov');
     if (movie) {
         for (const track of mp4Boxes(bytes, movie.start, movie.end)) {

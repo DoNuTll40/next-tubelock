@@ -57,6 +57,9 @@ export async function GET(request, context) {
           CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_vtt, '') END AS subtitle_vtt,
           v.subtitle_tracks, v.content_rating,
           v.user_id, COALESCE(v.visibility, 'public') AS visibility,
+          to_jsonb(v)->'ready_qualities' AS ready_qualities,
+          (to_jsonb(v)->>'audio_channels')::int AS audio_channels,
+          to_jsonb(v)->'vision_analysis' AS vision_analysis,
           u.name AS author_name,
           u.picture AS author_picture,
           u.handle AS author_handle
@@ -95,6 +98,11 @@ export async function GET(request, context) {
           resolution: activeVersion.resolution || baseVideo.resolution,
           fps: activeVersion.fps ?? baseVideo.fps,
           codec: activeVersion.codec || baseVideo.codec,
+          audio_channels: activeVersion.audio_channels ?? baseVideo.audio_channels ?? null,
+          ready_qualities:
+            Array.isArray(activeVersion.ready_qualities) && activeVersion.ready_qualities.length > 0
+              ? activeVersion.ready_qualities
+              : baseVideo.ready_qualities ?? null,
           source_type: activeVersion.source_type || baseVideo.source_type,
           onedrive_item_id: activeVersion.onedrive_item_id || baseVideo.onedrive_item_id,
           onedrive_folder_id: activeVersion.onedrive_folder_id || baseVideo.onedrive_folder_id,

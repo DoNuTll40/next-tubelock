@@ -12,6 +12,7 @@ function player(play) {
     video: { current: media }, isActiveRef: { current: true }, shouldAutoplay: true,
     isUserPausedRef: { current: false }, isSwitchingVideoRef: { current: false },
     autoplayAttemptRef: { current: null }, isEndedRef: { current: false },
+    hiResPlaybackRef: { current: null },
     isTransitioningStreamRef: { current: false }, restoreAudioAfterTransition: () => {},
     setIsMuted: value => { media.muted = value; }, setIsPlaying: () => {}, setIsBuffering: () => {},
   };
@@ -27,6 +28,17 @@ test('canplay retries an aborted autoplay without marking it as a user pause', a
   assert.equal(fixture.autoplayAttemptRef.current, null);
   await fixture.attempt(); // same callback invoked by onCanPlay
   assert.equal(calls, 2);
+});
+
+test('autoplay delegates to the selected Hi-Res track while both elements buffer', async () => {
+  const fixture = player(async () => assert.fail('The video element started independently'));
+  let requested = false;
+  fixture.hiResPlaybackRef.current = {
+    isPlayRequested: () => requested,
+    play: () => { requested = true; },
+  };
+  await fixture.attempt();
+  assert.equal(requested, true);
 });
 
 test('a real user pause during an interrupted play prevents the canplay retry', async () => {

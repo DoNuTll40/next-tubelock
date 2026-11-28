@@ -619,6 +619,9 @@ export async function resolveVideoSourceServer(
         v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
         v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
         v.content_rating, v.user_id, v.source_cache_expires_at, v.m3u8_cache_br,
+        to_jsonb(v)->'ready_qualities' AS ready_qualities,
+        (to_jsonb(v)->>'audio_channels')::int AS audio_channels,
+        to_jsonb(v)->'vision_analysis' AS vision_analysis,
         CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry}
           THEN v.source_cache_br ELSE NULL END AS source_cache_br,
         CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry} AND v.source_cache_br IS NULL
@@ -651,6 +654,8 @@ export async function resolveVideoSourceServer(
         vv.stage_detail AS vv_stage_detail,
         vv.error_message AS vv_error_message,
         vv.subtitle_tracks_override AS vv_subtitle_tracks_override,
+        to_jsonb(vv)->'ready_qualities' AS vv_ready_qualities,
+        (to_jsonb(vv)->>'audio_channels')::int AS vv_audio_channels,
         vv.source_cache_expires_at AS vv_source_cache_expires_at,
         vv.m3u8_cache_br AS vv_m3u8_cache_br,
         CASE WHEN vv.id IS NOT NULL AND (vv.status = 'READY' OR vv.status IS NULL) AND COALESCE(vv.source_cache_expires_at, 0) > ${cacheMinExpiry}
@@ -689,6 +694,9 @@ export async function resolveVideoSourceServer(
         v.transcode_progress, v.stage_detail, v.error_message, v.source_type,
         v.onedrive_item_id, v.onedrive_folder_id, v.raw_file_name, v.master_playlist_path,
         v.content_rating, v.user_id, v.source_cache_expires_at, v.m3u8_cache_br,
+        to_jsonb(v)->'ready_qualities' AS ready_qualities,
+        (to_jsonb(v)->>'audio_channels')::int AS audio_channels,
+        to_jsonb(v)->'vision_analysis' AS vision_analysis,
         CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry}
           THEN v.source_cache_br ELSE NULL END AS source_cache_br,
         CASE WHEN (v.status = 'READY' OR v.status IS NULL) AND COALESCE(v.source_cache_expires_at, 0) > ${cacheMinExpiry} AND v.source_cache_br IS NULL
@@ -758,7 +766,8 @@ export async function resolveVideoSourceServer(
       vv_master_playlist_path, vv_duration, vv_file_size_bytes, vv_resolution,
       vv_fps, vv_codec, vv_bitrate, vv_thumbnail_url, vv_status,
       vv_transcode_progress, vv_stage_detail, vv_error_message,
-      vv_subtitle_tracks_override, vv_source_cache_expires_at, vv_source_cache_br, vv_m3u8_cache_br,
+      vv_subtitle_tracks_override, vv_ready_qualities, vv_audio_channels,
+      vv_source_cache_expires_at, vv_source_cache_br, vv_m3u8_cache_br,
       ...parentRawVideo
     } = rawRow;
 
@@ -777,6 +786,11 @@ export async function resolveVideoSourceServer(
           fps: vv_fps ?? cleanBaseVideo.fps,
           codec: vv_codec || cleanBaseVideo.codec,
           bitrate: Number(vv_bitrate) || cleanBaseVideo.bitrate,
+          audio_channels: vv_audio_channels != null ? Number(vv_audio_channels) : (cleanBaseVideo.audio_channels ?? null),
+          ready_qualities:
+            Array.isArray(vv_ready_qualities) && vv_ready_qualities.length > 0
+              ? vv_ready_qualities
+              : cleanBaseVideo.ready_qualities ?? null,
           status: vv_status || cleanBaseVideo.status,
           transcode_progress: Number(vv_transcode_progress) || 0,
           stage_detail: vv_stage_detail || '',
@@ -792,6 +806,8 @@ export async function resolveVideoSourceServer(
             aspect_label: vv_aspect_label || '',
             description: vv_description || '',
             is_default: Boolean(vv_is_default),
+            audio_channels: vv_audio_channels != null ? Number(vv_audio_channels) : null,
+            ready_qualities: Array.isArray(vv_ready_qualities) ? vv_ready_qualities : null,
             thumbnail_url: vv_thumbnail_url || '',
           },
         }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import Hls from 'hls.js';
 import {
   filterDolbyVisionPlaybackLevels,
+  getAudioQualityMenuState,
   getDolbyVisionBufferController,
   getHlsDolbyVisionCodec,
   getHlsTrackColorInfo,
@@ -144,4 +145,74 @@ test('prefers compatible Dolby Vision at the same HDR quality height', () => {
     assert.deepEqual(getVisibleQualityLevels(levels, false), [sdr]);
     assert.equal(getSavedQualityLevel(levels, 1080, true), dolby);
   }
+});
+
+test('audio quality menu keeps Dolby Atmos summary and recovery access accurate', () => {
+  assert.deepEqual(
+    getAudioQualityMenuState({
+      hasHiResAudio: false,
+      isHiResActive: false,
+      hiResQualityLabel: 'Hi-Res FLAC',
+      atmosAvailable: true,
+      isAtmosSelected: false,
+    }),
+    {
+      hasAudioOptions: true,
+      showAtmosOption: true,
+      standardSelected: true,
+      isSpecialAudioSelected: false,
+      summaryBadge: null,
+    },
+  );
+
+  assert.deepEqual(
+    getAudioQualityMenuState({
+      hasHiResAudio: false,
+      isHiResActive: false,
+      hiResQualityLabel: 'Hi-Res FLAC',
+      atmosAvailable: true,
+      isAtmosSelected: true,
+    }),
+    {
+      hasAudioOptions: true,
+      showAtmosOption: true,
+      standardSelected: false,
+      isSpecialAudioSelected: true,
+      summaryBadge: 'Dolby Atmos',
+    },
+  );
+
+  assert.deepEqual(
+    getAudioQualityMenuState({
+      hasHiResAudio: false,
+      isHiResActive: false,
+      hiResQualityLabel: 'Hi-Res FLAC',
+      atmosAvailable: false,
+      isAtmosSelected: true,
+    }),
+    {
+      hasAudioOptions: true,
+      showAtmosOption: true,
+      standardSelected: false,
+      isSpecialAudioSelected: true,
+      summaryBadge: 'Dolby Atmos',
+    },
+  );
+
+  assert.deepEqual(
+    getAudioQualityMenuState({
+      hasHiResAudio: true,
+      isHiResActive: true,
+      hiResQualityLabel: 'Hi-Res FLAC',
+      atmosAvailable: true,
+      isAtmosSelected: false,
+    }),
+    {
+      hasAudioOptions: true,
+      showAtmosOption: true,
+      standardSelected: false,
+      isSpecialAudioSelected: true,
+      summaryBadge: 'Hi-Res FLAC',
+    },
+  );
 });

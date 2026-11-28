@@ -86,6 +86,8 @@ export default function WatchClient({
 
   const {
     video: globalVideo,
+    activeVersion: globalActiveVersion,
+    detectedAudio: globalDetectedAudio,
     error,
     videoRatio: globalVideoRatio,
     relatedVideos: globalRelated,
@@ -474,6 +476,8 @@ export default function WatchClient({
 
             <DescriptionBox
               video={video}
+              activeVersion={isDockedInWatch ? globalActiveVersion : initialVideo?.active_version || null}
+              streamMeta={isDockedInWatch ? globalDetectedAudio : null}
               viewsDisplay={viewsDisplay}
               fileSizeMB={fileSizeMB}
               formatDuration={formatDuration}

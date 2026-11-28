@@ -776,6 +776,7 @@ export function GlobalPlayerProvider({ children }) {
       setError(null);
       setStoryboard(null);
       setDetectedRatio(null);
+      setDetectedAudio(null);
       setActiveVersionKey(null);
       setIsSwitchingVersion(false);
       setIsSwitchingVideo(Boolean(streamUrlRef.current));
@@ -924,6 +925,7 @@ export function GlobalPlayerProvider({ children }) {
       setError(null);
       setStoryboard(null);
       setDetectedRatio(null);
+      setDetectedAudio(null);
       setIsSwitchingVersion(false);
       setIsSwitchingVideo(hasPreviousStream);
       setActiveVersionKey(normalizedVersion);
@@ -1069,6 +1071,7 @@ export function GlobalPlayerProvider({ children }) {
       setError(null);
       setStoryboard(null);
       setDetectedRatio(null);
+      setDetectedAudio(null);
       setIsSwitchingVersion(false);
       setIsSwitchingVideo(hasPreviousStream);
       setActiveVersionKey(targetVersionKey);
@@ -1183,6 +1186,7 @@ export function GlobalPlayerProvider({ children }) {
 
       setError(null);
       setDetectedRatio(null);
+      setDetectedAudio(null);
       setIsSwitchingVersion(true);
       setSelection((previous) => ({ ...previous, id, startTime: currentPos }));
       setActiveVersionKey(targetKey);
@@ -1372,11 +1376,12 @@ export function GlobalPlayerProvider({ children }) {
           setDetectedRatio(resolved.aspectRatio);
         }
         setDetectedAudio(
-          resolved.audioChannels != null || resolved.audioLayout || resolved.hiResAudio
+          resolved.audioChannels != null || resolved.audioLayout || resolved.hiResAudio || resolved.streamCapabilities
             ? {
                 channels: resolved.audioChannels ?? null,
                 layout: resolved.audioLayout ?? null,
                 hiRes: resolved.hiResAudio ?? null,
+                capabilities: resolved.streamCapabilities ?? null,
               }
             : null
         );
@@ -1522,6 +1527,7 @@ export function GlobalPlayerProvider({ children }) {
       activeVersionKey,
       activeVersion,
       playableVersions,
+      detectedAudio,
       isSwitchingVersion,
       isSwitchingVideo,
       relatedVideos,
@@ -1563,6 +1569,7 @@ export function GlobalPlayerProvider({ children }) {
       activeVersionKey,
       activeVersion,
       playableVersions,
+      detectedAudio,
       isSwitchingVersion,
       isSwitchingVideo,
       relatedVideos,

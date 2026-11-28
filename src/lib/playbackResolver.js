@@ -2,6 +2,8 @@
  * Playback Resolver for OneDrive Streams (MP4 and HLS with nested ABR Blob URLs)
  */
 
+import { parseMasterStreamCapabilities } from './mediaBadges.mjs';
+
 function resolveSegmentUrl(rawUri, segmentUrlMap, fallbackBaseUrl = '') {
   const trimmed = String(rawUri || '').trim();
   if (!trimmed) return null;
@@ -309,6 +311,8 @@ export async function resolveClientPlaybackSource(sourceData) {
 
       const masterText = await masterTextPromise;
 
+      const streamCapabilities = parseMasterStreamCapabilities(masterText);
+
       let detectedAspect = null;
       const resMatches = [...masterText.matchAll(/RESOLUTION=(\d+)x(\d+)/gi)];
       const bestResMatch = resMatches.length > 0 ? resMatches[resMatches.length - 1] : null;
@@ -426,6 +430,7 @@ export async function resolveClientPlaybackSource(sourceData) {
           audioChannels,
           audioLayout,
           hiResAudio,
+          streamCapabilities,
           segmentUrlMap,
           partial: isPartial,
           streamFolder,
@@ -446,6 +451,7 @@ export async function resolveClientPlaybackSource(sourceData) {
         audioChannels,
         audioLayout,
         hiResAudio,
+        streamCapabilities,
         segmentUrlMap,
         partial: isPartial,
         streamFolder,

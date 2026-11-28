@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { compileFunction } from 'node:vm';
-import { buildDolbyVisionHlsArgs, getDolbyVisionSource } from '../scripts/dolby-vision.mjs';
+import { buildDolbyVisionHlsArgs, formatHevcCodec, getDolbyVisionSource, readHevcConfiguration } from '../scripts/dolby-vision.mjs';
 import { resolveClientPlaybackSource } from '../src/lib/playbackResolver.js';
 
 // The worker starts a real transcode on import. Load its functions with isolated I/O.
@@ -170,5 +170,222 @@ for (const settings of [
     const rendition = await resolveObjectURL(playback[playback.indexOf(info) + 1]).text();
     assert.match(rendition, /#EXT-X-MAP:URI="https:\/\/example\.test\/init\.mp4"/);
     assert.match(rendition, /^https:\/\/example\.test\/chunk\.m4s$/m);
+  });
+}
+
+function makeBox(type, payload) {
+  const header = Buffer.alloc(8);
+  header.writeUInt32BE(8 + payload.length, 0);
+  header.write(type, 4, 'ascii');
+  return Buffer.concat([header, payload]);
+}
+
+function makeAtmosInit({ includeDec3 = true, jocFlag = 1, complexity = 16, truncateDec3 = false } = {}) {
+  const hvccPayload = Buffer.alloc(23);
+  hvccPayload[0] = 1; // configurationVersion
+  hvccPayload[1] = 0x02; // general_profile_idc = 2 (Main 10), tier L
+  hvccPayload.writeUInt32BE(0x20000000, 2); // compatibility flags
+  hvccPayload[6] = 0xB0; // constraint indicator
+  hvccPayload[12] = 150; // level 5.0 (L150)
+
+  const hvc1Header = Buffer.alloc(78);
+  const hvc1Box = makeBox('hvc1', Buffer.concat([hvc1Header, makeBox('hvcC', hvccPayload)]));
+  const stsdHeader = Buffer.alloc(8);
+  stsdHeader.writeUInt32BE(1, 4);
+  const stsdBox = makeBox('stsd', Buffer.concat([stsdHeader, hvc1Box]));
+  const videoMoov = makeBox('moov', makeBox('trak', makeBox('mdia', makeBox('minf', makeBox('stbl', stsdBox)))));
+
+  if (!includeDec3) return videoMoov;
+
+  // dec3: 2-byte header (data_rate + num_ind_sub=0 -> 1 independent stream) + 3-byte substream + 2-byte JOC
+  const dec3Payload = truncateDec3
+    ? Buffer.from([0x06, 0x00, 0x08])
+    : Buffer.from([0x06, 0x00, 0x08, 0x00, 0x00, jocFlag, complexity]);
+  return Buffer.concat([videoMoov, makeBox('dec3', dec3Payload)]);
+}
+
+test('parseProbeMeta detects DD+ JOC Atmos on non-Dolby HEVC and rejects ineligible streams', () => {
+  const { parseProbeMeta } = loadWorker([
+    'parseProbeMeta', 'resolveAudioProfile', 'extractHdr10Metadata', 'parseRatioNum',
+  ], {
+    getDolbyVisionSource,
+    LOSSLESS_AUDIO_CODEC_RE: /^(?:pcm_|flac|alac|truehd|mlp|wavpack|ape|tta|tak|dsd_|shorten|wmalossless)/i,
+  });
+  const hevcVideo = {
+    codec_type: 'video', codec_name: 'hevc', profile: 'Main 10',
+    width: 3840, height: 1920, pix_fmt: 'yuv420p10le', r_frame_rate: '24000/1001',
+    color_primaries: 'bt2020', color_space: 'bt2020nc', color_transfer: 'smpte2084',
+  };
+  const atmosAudio = {
+    codec_type: 'audio', codec_name: 'eac3', profile: 'Dolby Digital Plus + Dolby Atmos',
+    channels: 6, channel_layout: '5.1(side)',
+  };
+
+  assert.equal(parseProbeMeta({ streams: [hevcVideo, atmosAudio] }).hasAtmos, true);
+  assert.equal(parseProbeMeta({ streams: [hevcVideo, { ...atmosAudio, codec_name: 'truehd', profile: 'Dolby TrueHD + Dolby Atmos' }] }).hasAtmos, false);
+  assert.equal(parseProbeMeta({ streams: [hevcVideo, { ...atmosAudio, profile: 'Dolby Digital Plus' }] }).hasAtmos, false);
+  assert.equal(parseProbeMeta({ streams: [{ ...hevcVideo, codec_name: 'h264' }, atmosAudio] }).hasAtmos, false);
+  assert.equal(parseProbeMeta({
+    streams: [{
+      ...hevcVideo,
+      side_data_list: [{
+        side_data_type: 'DOVI configuration record', dv_profile: 8, dv_level: 6,
+        bl_present_flag: 1, el_present_flag: 0, rpu_present_flag: 1, dv_bl_signal_compatibility_id: 1,
+      }],
+    }, atmosAudio],
+  }).hasAtmos, false);
+});
+
+test('publishAtmosAudio skips ineligible sources and rejects missing, truncated, or non-JOC dec3', async () => {
+  let muxCalls = 0;
+  let currentInit = Buffer.alloc(0);
+  const { publishAtmosAudio } = loadWorker(['publishAtmosAudio'], {
+    path,
+    formatHevcCodec,
+    readHevcConfiguration,
+    updateLaneProgress: async () => {},
+    runFFmpeg: async () => { muxCalls += 1; },
+    fs: { promises: { readFile: async () => currentInit } },
+    uploadBatchFilesAndCleanup: () => assert.fail('Uploaded unverified Atmos media'),
+    registerQualitiesAndPublishMaster: () => assert.fail('Published unverified Atmos media'),
+  });
+
+  await publishAtmosAudio({ hlsOutputDir: 'work', rawFilePath: 'source.mkv', meta: { hasAtmos: false } });
+  assert.equal(muxCalls, 0);
+
+  for (const [initOpts, expectedError] of [
+    [{ includeDec3: false }, /Missing Dolby Digital Plus configuration/],
+    [{ truncateDec3: true }, /Truncated Dolby Digital Plus substream configuration/],
+    [{ jocFlag: 0, complexity: 16 }, /missing Dolby Atmos JOC configuration/i],
+    [{ jocFlag: 1, complexity: 0 }, /missing Dolby Atmos JOC configuration/i],
+  ]) {
+    currentInit = makeAtmosInit(initOpts);
+    await assert.rejects(
+      publishAtmosAudio({
+        hlsOutputDir: 'work',
+        rawFilePath: 'source.mkv',
+        meta: { hasAtmos: true, srcWidth: 3840, srcHeight: 1920, duration: 48 },
+      }),
+      expectedError,
+    );
+  }
+  assert.equal(muxCalls, 4);
+});
+
+for (const settings of [
+  { label: 'main upload', versionNum: null, table: 'videos' },
+  { label: 'Studio version', versionNum: 7, table: 'video_versions' },
+]) {
+  test(`${settings.label} publishes verified Dolby Atmos attributes through DB, master, and playback resolver`, async (t) => {
+    const run = 'run-atmos-1';
+    const base = { width: 3840, height: 1920, audio_channels: 6, audio_layout: '5.1(side)' };
+    const fallback = { ...base, name: '1080p', width: 1920, height: 960, bitrate: 4500000, is_fmp4: true, is_hdr: true, hdr_type: 'PQ', run_id: run };
+    const rows = [fallback];
+    let written = '';
+    let published = '';
+
+    const sql = (strings, ...values) => {
+      const statement = strings.join('?').trim();
+      if (statement.startsWith('UPDATE')) {
+        assert.match(statement, new RegExp(`^UPDATE ${settings.table}\\b`));
+        const payload = values.find((value) => typeof value === 'string' && value.startsWith('[{'));
+        rows.push(...JSON.parse(payload));
+      } else {
+        assert.match(statement, new RegExp(`^SELECT ready_qualities FROM ${settings.table}\\b`));
+      }
+      return [{ ready_qualities: JSON.stringify(rows) }];
+    };
+
+    const worker = loadWorker([
+      'normalizeQualitiesList', 'readRunQualitiesFromDb', 'registerQualitiesAndPublishMaster', 'buildMasterM3U8',
+    ], {
+      sql, path, TRANSCODE_RUN_ID: run, versionNum: settings.versionNum, vidNum: 42,
+      ensureDbSchemaOnce: async () => {},
+      fs: { writeFileSync: (_file, value) => { written = value; } },
+      uploadFileToOneDrive: async () => { published = written; },
+    });
+
+    const initBuffer = makeAtmosInit({ complexity: 16 });
+    const expectedVideoCodec = formatHevcCodec(readHevcConfiguration(initBuffer));
+    const playlistName = '1920p_atmos.m3u8';
+    const mediaPlaylist = '#EXTM3U\n#EXT-X-MAP:URI="init_atmos.mp4"\n#EXTINF:4.0,\natmos_000.m4s\n#EXT-X-ENDLIST\n';
+    const progressEvents = [];
+    const calls = [];
+
+    const { publishAtmosAudio } = loadWorker(['publishAtmosAudio'], {
+      path,
+      formatHevcCodec,
+      readHevcConfiguration,
+      updateLaneProgress: async (evt) => { progressEvents.push(evt); },
+      logger: { log: async () => {} },
+      runFFmpeg: async () => { calls.push('mux'); },
+      fs: {
+        promises: {
+          readFile: async (filePath) => (filePath.endsWith('init_atmos.mp4') ? initBuffer : mediaPlaylist),
+          stat: async () => ({ size: 2500000 }),
+        },
+      },
+      uploadBatchFilesAndCleanup: async (_drive, _folder, _dir, batch) => {
+        assert.deepEqual(batch, ['init_atmos.mp4', 'atmos_000.m4s', playlistName]);
+        calls.push('upload');
+      },
+      registerQualitiesAndPublishMaster: worker.registerQualitiesAndPublishMaster,
+    });
+
+    await publishAtmosAudio({
+      driveId: 'drive',
+      streamFolderId: 'folder',
+      hlsOutputDir: 'work',
+      rawFilePath: 'EAC3-JOC ATMOS.mkv',
+      meta: {
+        hasAtmos: true,
+        srcWidth: base.width,
+        srcHeight: base.height,
+        duration: 48,
+        fps: 23.976,
+        isHdr: true,
+        hdrType: 'PQ',
+        audioChannels: base.audio_channels,
+        audioLayout: base.audio_layout,
+      },
+    });
+
+    assert.deepEqual(calls, ['mux', 'upload']);
+    assert.equal(progressEvents[0].lanePct, 98);
+    assert.equal(progressEvents.at(-1).lanePct, 100);
+    assert.equal(progressEvents.at(-1).invalidateCache, true);
+
+    const merged = await worker.readRunQualitiesFromDb();
+    assert.deepEqual(merged.find((item) => item.name === '1920p_atmos')?.atmos_audio, {
+      complexity: 16,
+      fps: 23.976,
+      videoCodec: expectedVideoCodec,
+    });
+    assert.equal(published, worker.buildMasterM3U8(merged));
+
+    const lines = published.trim().split(/\r?\n/);
+    const mediaTag = '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="tubelock-atmos",NAME="Dolby Atmos",DEFAULT=YES,AUTOSELECT=YES,CHANNELS="16/JOC"';
+    const streamTag = `#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=3840x1920,FRAME-RATE=23.976,CODECS="${expectedVideoCodec},ec-3",VIDEO-RANGE=PQ,AUDIO="tubelock-atmos"`;
+    assert.ok(lines.includes(mediaTag));
+    assert.ok(!mediaTag.includes('URI='));
+    assert.equal(lines[lines.indexOf(playlistName) - 1], streamTag);
+
+    const resolved = await resolveClientPlaybackSource({
+      type: 'hls',
+      items: [
+        { name: 'master.m3u8', content: published },
+        { name: playlistName, content: mediaPlaylist },
+        { name: `${fallback.name}.m3u8`, content: mediaPlaylist },
+        { name: 'init_atmos.mp4', downloadUrl: 'https://example.test/init_atmos.mp4' },
+        { name: 'atmos_000.m4s', downloadUrl: 'https://example.test/atmos_000.m4s' },
+      ],
+    });
+    t.after(() => resolved.blobUrls.forEach((url) => URL.revokeObjectURL(url)));
+    const playback = (await resolveObjectURL(resolved.url).text()).split('\n');
+    assert.ok(playback.includes(mediaTag));
+    assert.ok(playback.includes(streamTag));
+    const rendition = await resolveObjectURL(playback[playback.indexOf(streamTag) + 1]).text();
+    assert.match(rendition, /#EXT-X-MAP:URI="https:\/\/example\.test\/init_atmos\.mp4"/);
+    assert.match(rendition, /^https:\/\/example\.test\/atmos_000\.m4s$/m);
   });
 }

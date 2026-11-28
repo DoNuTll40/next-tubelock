@@ -105,3 +105,29 @@ export function getSavedQualityLevel(levels, savedHeight, preferHdr) {
   if (!Number.isInteger(savedHeight) || savedHeight <= 0) return null;
   return getVisibleQualityLevels(levels, preferHdr).find((level) => Number(level.height) === savedHeight) ?? null;
 }
+
+export function getAudioQualityMenuState({
+  hasHiResAudio = false,
+  isHiResActive = false,
+  hiResQualityLabel = '',
+  atmosAvailable = false,
+  isAtmosSelected = false,
+} = {}) {
+  const atmosActive = Boolean(isAtmosSelected);
+  const hiResSelected = Boolean(isHiResActive && hasHiResAudio && !atmosActive);
+  const showAtmosOption = Boolean(atmosAvailable || atmosActive);
+  const hasAudioOptions = Boolean(hasHiResAudio || showAtmosOption);
+  const standardSelected = !hiResSelected && !atmosActive;
+  const summaryBadge = atmosActive
+    ? 'Dolby Atmos'
+    : hiResSelected
+      ? hiResQualityLabel
+      : null;
+  return {
+    hasAudioOptions,
+    showAtmosOption,
+    standardSelected,
+    isSpecialAudioSelected: Boolean(summaryBadge),
+    summaryBadge,
+  };
+}

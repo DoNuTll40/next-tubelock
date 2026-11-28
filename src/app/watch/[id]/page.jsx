@@ -35,6 +35,9 @@ const getVideoById = cache(async (numericId) => {
         CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_srt, '') END AS subtitle_srt,
         CASE WHEN jsonb_array_length(COALESCE(v.subtitle_tracks, '[]'::jsonb)) > 0 THEN '' ELSE COALESCE(v.subtitle_vtt, '') END AS subtitle_vtt,
         v.subtitle_tracks, v.content_rating, COALESCE(v.visibility, 'public') AS visibility,
+        to_jsonb(v)->'ready_qualities' AS ready_qualities,
+        (to_jsonb(v)->>'audio_channels')::int AS audio_channels,
+        to_jsonb(v)->'vision_analysis' AS vision_analysis,
         u.name AS author_name, u.picture AS author_picture, u.handle AS author_handle
       FROM videos v
       LEFT JOIN users u ON v.user_id = u.id
@@ -307,6 +310,11 @@ export default async function WatchPage({ params, searchParams }) {
           resolution: activeVersion.resolution || videoRows[0].resolution,
           fps: activeVersion.fps ?? videoRows[0].fps,
           codec: activeVersion.codec || videoRows[0].codec,
+          audio_channels: activeVersion.audio_channels ?? videoRows[0].audio_channels ?? null,
+          ready_qualities:
+            Array.isArray(activeVersion.ready_qualities) && activeVersion.ready_qualities.length > 0
+              ? activeVersion.ready_qualities
+              : videoRows[0].ready_qualities ?? null,
           ...(Array.isArray(activeVersion.subtitle_tracks_override) &&
           activeVersion.subtitle_tracks_override.length > 0
             ? { subtitle_tracks: activeVersion.subtitle_tracks_override }
